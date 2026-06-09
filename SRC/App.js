@@ -1,4 +1,4 @@
-// H19 Golf v2
+// H19 Golf App v3
 import { useState, useEffect } from "react";
 import { initializeApp } from "firebase/app";
 import { getDatabase, ref, set, onValue } from "firebase/database";
