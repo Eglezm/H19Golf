@@ -1,7 +1,7 @@
-// H19 Golf App v6
 import { useState, useEffect } from "react";
 import { initializeApp } from "firebase/app";
 import { getDatabase, ref, set, onValue } from "firebase/database";
+
 const firebaseConfig = {
   apiKey: "AIzaSyAsWuJRelERz7W2QG3-DPaOprKKT0TJBA4",
   authDomain: "h19golf-4624f.firebaseapp.com",
@@ -13,19 +13,19 @@ const firebaseConfig = {
 };
 const firebaseApp = initializeApp(firebaseConfig);
 const db = getDatabase(firebaseApp);
- 
+
 const DEFAULT_APUESTA = 50;
 const DEFAULT_MARCA_VAL = 10;
 const DEFAULT_TARJETA_VAL = 10;
 const ADMIN_PIN = "1919";
- 
+
 const CAMPOS = {
   huerta:    { nombre: "Club de Golf La Huerta",   pares: [4,3,3,3,3,4,3,3,3,4,3,3,3,3,4,3,3,3] },
   lavista:   { nombre: "La Vista Country Club",    pares: [4,3,4,5,4,4,3,4,5,5,4,3,4,4,5,4,3,4] },
   campestre: { nombre: "Club Campestre de Puebla", pares: [4,3,5,4,4,4,4,3,5,4,4,5,3,4,5,4,3,4] },
   otro:      { nombre: "Otro campo",               pares: null },
 };
- 
+
 const MARCAS_MULTI = [
   { key: "holeinone", label: "🎯 Hole in One", pts: 10 },
   { key: "eagle",     label: "🦅 Eagle",       pts: 3  },
@@ -33,7 +33,7 @@ const MARCAS_MULTI = [
   { key: "holeout",   label: "🕳️ Hole out",   pts: 1  },
   { key: "sandy",     label: "🏖️ Sandy par",  pts: 2  },
 ];
- 
+
 const TARJETAS = [
   { key: "ob",       label: "🚫 Out of Bound", auto: false },
   { key: "water",    label: "💧 Water",         auto: false },
@@ -43,7 +43,7 @@ const TARJETAS = [
   { key: "threeput", label: "🔄 Three putt",    auto: false },
   { key: "doblepar", label: "💀 Doble Par",     auto: true  },
 ];
- 
+
 const D = {
   bg: "#F5F0E8", surface: "#FFFFFF", card: "#FFFFFF", border: "#DDD5C0",
   gold: "#9A6F00", goldLight: "#C49A00", goldDim: "#FDF3D0",
@@ -51,7 +51,7 @@ const D = {
   green: "#1B5E20", greenBg: "#E8F5E9", red: "#B71C1C", redBg: "#FFEBEE",
   success: "#2E7D32", danger: "#C62828",
 };
- 
+
 const COLORS = [
   {bg:"#D6E4F7",fg:"#1A4A8A"},{bg:"#D4EDD8",fg:"#1A5C24"},
   {bg:"#F7E6D4",fg:"#8A3A0A"},{bg:"#F7D4E6",fg:"#8A0A40"},
@@ -59,17 +59,17 @@ const COLORS = [
   {bg:"#D4F0E8",fg:"#0A5A3A"},{bg:"#F7EDD4",fg:"#7A5000"},
   {bg:"#D4D8F7",fg:"#1A1A8A"},{bg:"#F7D8D4",fg:"#8A1A14"},
 ];
- 
+
 const col = (id) => COLORS[(id - 1) % COLORS.length];
 const fmt = (n) => n >= 0 ? `+$${n}` : `−$${Math.abs(n)}`;
 const fmtC = (n) => n >= 0 ? D.success : D.danger;
- 
+
 const emptyMarca = (n) => ({
   multi: Array(n).fill(null).map(() => ({ holeinone:false, eagle:false, birdie:false, holeout:false, sandy:false })),
   oyes: null, regulation: null,
 });
 const emptyTarjetas = () => { const t = {}; TARJETAS.forEach(tj => { t[tj.key] = null; }); return t; };
- 
+
 function Avatar({ name, id, size = 32 }) {
   const c = col(id);
   return (
@@ -78,7 +78,7 @@ function Avatar({ name, id, size = 32 }) {
     </div>
   );
 }
- 
+
 function getBadge(s, par) {
   const d = s - par;
   if (d <= -2) return { label:"Eagle",  bg:"#D6E4F7", fg:"#1A4A8A" };
@@ -88,7 +88,7 @@ function getBadge(s, par) {
   if (d === 2)  return { label:"Doble",  bg:"#FFE0D4", fg:"#8A2A00" };
   return { label:"+"+d, bg:"#FFDBDB", fg:"#C62828" };
 }
- 
+
 function Card({ children, style = {} }) {
   return (
     <div style={{ background:D.card, border:`1px solid ${D.border}`, borderRadius:16, padding:16, marginBottom:12, ...style }}>
@@ -96,11 +96,11 @@ function Card({ children, style = {} }) {
     </div>
   );
 }
- 
+
 function SLabel({ children }) {
   return <div style={{ fontSize:10, fontWeight:700, color:D.gold, textTransform:"uppercase", letterSpacing:2, marginBottom:10 }}>{children}</div>;
 }
- 
+
 function Btn({ children, onClick, disabled, outline, danger, style = {} }) {
   return (
     <button onClick={onClick} disabled={disabled} style={{ width:"100%", padding:14, border:outline ? `1px solid ${danger?D.danger:D.gold}` : "none", borderRadius:12, fontSize:15, fontWeight:700, cursor:disabled?"default":"pointer", marginTop:6, background:outline ? "transparent" : danger ? D.danger : `linear-gradient(135deg,${D.gold},${D.goldLight})`, color:outline ? (danger?D.danger:D.gold) : "#FFFFFF", opacity:disabled?0.4:1, ...style }}>
@@ -108,7 +108,7 @@ function Btn({ children, onClick, disabled, outline, danger, style = {} }) {
     </button>
   );
 }
- 
+
 function TabBar({ tabs, active, onChange }) {
   return (
     <div style={{ display:"flex", gap:6, marginBottom:14 }}>
@@ -120,7 +120,7 @@ function TabBar({ tabs, active, onChange }) {
     </div>
   );
 }
- 
+
 function Pill({ active, danger, onClick, children }) {
   return (
     <div onClick={onClick} style={{ display:"flex", alignItems:"center", gap:6, padding:"7px 14px", border:`1px solid ${active?D.gold:danger?D.danger:D.border}`, borderRadius:20, background:active?D.goldDim:"transparent", color:active?D.gold:danger?D.danger:D.textSub, fontSize:13, fontWeight:600, cursor:"pointer", userSelect:"none" }}>
@@ -128,7 +128,7 @@ function Pill({ active, danger, onClick, children }) {
     </div>
   );
 }
- 
+
 function calcMarcasPts(players, marcas) {
   return players.map((p, pi) => {
     let pts = 0;
@@ -140,7 +140,7 @@ function calcMarcasPts(players, marcas) {
     return pts;
   });
 }
- 
+
 function calcMarcasMoney(players, marcas, marcaVal) {
   const pts = calcMarcasPts(players, marcas);
   return players.map((_, i) => {
@@ -149,7 +149,7 @@ function calcMarcasMoney(players, marcas, marcaVal) {
     return b;
   });
 }
- 
+
 function calcTarjetasMoney(players, tarjetas, tarjetaVal) {
   const count = players.map((_, i) => TARJETAS.filter(t => tarjetas[t.key] === i).length);
   return players.map((_, i) => {
@@ -158,7 +158,7 @@ function calcTarjetasMoney(players, tarjetas, tarjetaVal) {
     return b;
   });
 }
- 
+
 function calcMoney(players, scores, apuesta) {
   const n = players.length;
   const nets = players.map((p, i) => scores[i].reduce((a, b) => a+b, 0) - p.hc);
@@ -178,7 +178,7 @@ function calcMoney(players, scores, apuesta) {
     return -apuesta;
   })};
 }
- 
+
 function calcHC(players, scores) {
   const nets = players.map((p, i) => scores[i].reduce((a, b) => a+b, 0) - p.hc);
   const fnet = Math.min(...nets);
@@ -192,7 +192,7 @@ function calcHC(players, scores) {
   });
   return players.map(p => ({ ...p, before:p.hc, delta:deltas[p.id], after:Math.max(0, p.hc+deltas[p.id]) }));
 }
- 
+
 function calcOrden(players, scores, pars, currentHole) {
   if (currentHole === 0) return players.map((_, i) => i);
   return players.map((_, i) => i).sort((a, b) => {
@@ -205,12 +205,12 @@ function calcOrden(players, scores, pars, currentHole) {
     return na - nb;
   });
 }
- 
+
 // ─── SPECTATOR VIEW ───────────────────────────────
 function SpectatorView({ rondaId }) {
   const [ronda, setRonda] = useState(null);
   const [loading, setLoading] = useState(true);
- 
+
   useEffect(() => {
     const r = ref(db, `rondas/${rondaId}`);
     const unsub = onValue(r, snap => {
@@ -219,9 +219,9 @@ function SpectatorView({ rondaId }) {
     });
     return () => unsub();
   }, [rondaId]);
- 
+
   const appStyle = { fontSize:14, fontFamily:"-apple-system,sans-serif", color:D.text, background:D.bg, minHeight:"100vh", maxWidth:420, margin:"0 auto" };
- 
+
   if (loading) {
     return (
       <div style={{ ...appStyle, display:"flex", alignItems:"center", justifyContent:"center", flexDirection:"column", gap:12 }}>
@@ -230,7 +230,7 @@ function SpectatorView({ rondaId }) {
       </div>
     );
   }
- 
+
   if (!ronda || !ronda.players || !ronda.scores) {
     return (
       <div style={{ ...appStyle, display:"flex", alignItems:"center", justifyContent:"center", flexDirection:"column", gap:12 }}>
@@ -239,12 +239,12 @@ function SpectatorView({ rondaId }) {
       </div>
     );
   }
- 
+
   const { players, scores, pars, hole, campo, tarjetas, status } = ronda;
   const nets = players.map((p, i) => (scores[i]||[]).reduce((a,v)=>a+(v||0),0) - p.hc);
   const ranked = players.map((p, i) => ({ ...p, net:nets[i], gross:(scores[i]||[]).reduce((a,v)=>a+(v||0),0) })).sort((a,b)=>a.net-b.net);
   const campoNombre = CAMPOS[campo]?.nombre || campo;
- 
+
   return (
     <div style={appStyle}>
       <div style={{ background:D.surface, borderBottom:`1px solid ${D.border}`, padding:"20px 16px 14px", textAlign:"center" }}>
@@ -312,7 +312,7 @@ function SpectatorView({ rondaId }) {
   </div>
   );
 }
- 
+
 // ─── APP PRINCIPAL ────────────────────────────────
 export default function H19() {
   const [mode, setMode] = useState(null);
@@ -320,16 +320,16 @@ export default function H19() {
   const [pinError, setPinError] = useState(false);
   const [rondaId, setRondaId] = useState(null);
   const [spectatorInput, setSpectatorInput] = useState("");
- 
+
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const rid = params.get("ronda");
     if (rid) { setRondaId(rid); setMode("spectator"); }
     else setMode("home");
   }, []);
- 
+
   const appStyle = { fontSize:14, fontFamily:"-apple-system,sans-serif", color:D.text, background:D.bg, minHeight:"100vh", maxWidth:420, margin:"0 auto" };
- 
+
   if (mode === null) {
     return (
       <div style={{ ...appStyle, display:"flex", alignItems:"center", justifyContent:"center" }}>
@@ -337,9 +337,9 @@ export default function H19() {
       </div>
     );
   }
- 
+
   if (mode === "spectator" && rondaId) return <SpectatorView rondaId={rondaId} />;
- 
+
   if (mode === "home") {
     return (
       <div style={{ ...appStyle, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:24, gap:16 }}>
@@ -350,7 +350,7 @@ export default function H19() {
       </div>
     );
   }
- 
+
   if (mode === "pin") {
     return (
       <div style={{ ...appStyle, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:24, gap:14 }}>
@@ -364,7 +364,7 @@ export default function H19() {
       </div>
     );
   }
- 
+
   if (mode === "spectator-input") {
     return (
       <div style={{ ...appStyle, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:24, gap:14 }}>
@@ -377,12 +377,12 @@ export default function H19() {
       </div>
     );
   }
- 
+
   if (mode === "admin") return <AdminApp onExit={() => setMode("home")} />;
- 
+
   return null;
 }
- 
+
 // ─── ADMIN APP ────────────────────────────────────
 function AdminApp({ onExit }) {
   const [screen, setScreen] = useState("dir");
@@ -411,7 +411,7 @@ function AdminApp({ onExit }) {
   const [rondaId, setRondaId] = useState(null);
   const [shareMsg, setShareMsg] = useState("");
   const [savedRonda, setSavedRonda] = useState(null);
- 
+
   // Load directory from Firebase
   useEffect(() => {
     const dirRef = ref(db, "directorio");
@@ -430,7 +430,7 @@ function AdminApp({ onExit }) {
     });
     return () => unsub();
   }, []);
- 
+
   // Check localStorage for saved ronda
   useEffect(() => {
     try {
@@ -441,23 +441,23 @@ function AdminApp({ onExit }) {
       }
     } catch(e) {}
   }, []);
- 
+
   const saveDir = (newPlayers, newNidVal) => {
     set(ref(db, "directorio"), { players:newPlayers, nextId:newNidVal||nid });
   };
- 
+
   const saveToLocal = (state) => {
     try { localStorage.setItem("h19-ronda-activa", JSON.stringify({ ...state, savedAt:Date.now() })); } catch(e) {}
   };
- 
+
   const syncFirebase = (state) => {
     if (!rondaId) return;
     try { set(ref(db, `rondas/${rondaId}`), { ...state, updatedAt:Date.now() }); } catch(e) {}
   };
- 
+
   const updateGame = (state) => { saveToLocal(state); syncFirebase(state); };
   const getState = () => ({ players, pars, scores, marcas, tarjetas, hole, campo, status:"en_juego", rondaId });
- 
+
   const resumeRonda = () => {
     if (!savedRonda) return;
     setPlayers(savedRonda.players||[]); setScores(savedRonda.scores||[]);
@@ -466,18 +466,18 @@ function AdminApp({ onExit }) {
     setCampo(savedRonda.campo||"huerta"); setRondaId(savedRonda.rondaId||null);
     setScreen("score"); setSavedRonda(null);
   };
- 
+
   const toggleSel = (id) => { const s = new Set(sel); s.has(id) ? s.delete(id) : s.add(id); setSel(s); };
- 
+
   const addPlayer = () => {
     const name = newName.trim(); if (!name) return;
     const hc = Math.max(0, parseInt(newHC)||0);
     const newPlayers = [...dir, {id:nid, name, hc}];
     saveDir(newPlayers, nid+1); setNid(nid+1); setNewName(""); setNewHC("");
   };
- 
+
   const removePlayer = (id) => { saveDir(dir.filter(p=>p.id!==id)); const s=new Set(sel); s.delete(id); setSel(s); };
- 
+
   const startGame = () => {
     if (sel.size < 2) return;
     const ps = dir.filter(p => sel.has(p.id));
@@ -495,9 +495,9 @@ function AdminApp({ onExit }) {
     try { set(ref(db, `rondas/${rid}`), { ...state, createdAt:Date.now(), updatedAt:Date.now() }); } catch(e) {}
     setScreen("score");
   };
- 
+
   const commitHole = (sc, h) => sc.map(row => row.map((v,j) => j===h && v===null ? pars[j] : v));
- 
+
   const changeScore = (pi, d) => {
     const newScores = scores.map((row, i) => {
       if (i !== pi) return row;
@@ -523,7 +523,7 @@ function AdminApp({ onExit }) {
     setScores(newScores); setMarcas(newMarcas); setTarjetas(newTarjetas);
     updateGame({ ...getState(), scores:newScores, marcas:newMarcas, tarjetas:newTarjetas });
   };
- 
+
   const toggleMultiMarca = (pi, key) => {
     const newMarcas = marcas.map((m, h) => {
       if (h !== hole) return m;
@@ -531,12 +531,12 @@ function AdminApp({ onExit }) {
     });
     setMarcas(newMarcas); updateGame({ ...getState(), marcas:newMarcas });
   };
- 
+
   const setExclusive = (field, pi) => {
     const newMarcas = marcas.map((m, h) => { if (h!==hole) return m; return { ...m, [field]:m[field]===pi?null:pi }; });
     setMarcas(newMarcas); updateGame({ ...getState(), marcas:newMarcas });
   };
- 
+
   const assignTarjeta = (tkey, pi) => {
     const newTarjetas = { ...tarjetas, [tkey]:tarjetas[tkey]===pi?null:pi };
     let newMarcas = marcas;
@@ -546,15 +546,15 @@ function AdminApp({ onExit }) {
     }
     setTarjetas(newTarjetas); updateGame({ ...getState(), tarjetas:newTarjetas, marcas:newMarcas });
   };
- 
+
   const nextHole = () => {
     const sc = commitHole(scores, hole); setScores(sc);
     const nh = hole < nHoles-1 ? hole+1 : hole;
     setHole(nh); setTab("score"); updateGame({ ...getState(), scores:sc, hole:nh });
   };
- 
+
   const prevHole = () => { if (hole>0) { setHole(hole-1); setTab("score"); } };
- 
+
   const finish = () => {
     try { localStorage.removeItem("h19-ronda-activa"); } catch(e) {}
     const sc = commitHole(scores, hole); setScores(sc);
@@ -569,24 +569,24 @@ function AdminApp({ onExit }) {
     updateGame({ ...getState(), scores:sc, status:"finalizada" });
     setScreen("res");
   };
- 
+
   const confirmHC = () => {
     if (!results) return;
     const updated = dir.map(p => { const u=results.hcUpdates.find(u=>u.id===p.id); return u?{...p,hc:u.after}:p; });
     saveDir(updated); setSel(new Set()); setScreen("sel");
   };
- 
+
   const shareRonda = () => {
     const url = `${window.location.origin}${window.location.pathname}?ronda=${rondaId}`;
     if (navigator.clipboard) { navigator.clipboard.writeText(url); setShareMsg("¡Link copiado!"); setTimeout(()=>setShareMsg(""),2500); }
     else { setShareMsg(`Código: ${rondaId}`); setTimeout(()=>setShareMsg(""),4000); }
   };
- 
+
   const getDisplay = (pi, h) => scores[pi]?.[h]===null ? pars[h] : scores[pi]?.[h];
   const liveNets = players.map((p,i) => (scores[i]||[]).reduce((a,v,j)=>a+(v===null?pars[j]:v),0) - p.hc);
   const par = pars[hole] || 4;
   const n = sel.size, pot = apuesta * n;
- 
+
   function marcasPtsHole(pi) {
     if (!marcas[hole]) return 0;
     let pts = 0;
@@ -595,10 +595,10 @@ function AdminApp({ onExit }) {
     if (marcas[hole].regulation===pi) pts += 1;
     return pts;
   }
- 
+
   const appSt = { fontSize:14, fontFamily:"-apple-system,sans-serif", color:D.text, background:D.bg, minHeight:"100vh", maxWidth:420, margin:"0 auto", paddingBottom:32 };
   const tog = (a) => ({ flex:1, padding:9, border:`1px solid ${a?D.gold:D.border}`, borderRadius:10, background:a?D.goldDim:"transparent", color:a?D.gold:D.textSub, fontSize:13, fontWeight:700, cursor:"pointer" });
- 
+
   // ── DIRECTORIO ──
   if (screen==="dir") return (
     <div style={appSt}>
@@ -670,7 +670,7 @@ function AdminApp({ onExit }) {
       </div>
     </div>
   );
- 
+
   // ── SELECCIÓN ──
   if (screen==="sel") return (
     <div style={appSt}>
@@ -771,7 +771,7 @@ function AdminApp({ onExit }) {
       </div>
     </div>
   );
- 
+
   // ── SCORE ──
   if (screen==="score") return (
     <div style={appSt}>
@@ -810,7 +810,7 @@ function AdminApp({ onExit }) {
           </div>
         )}
         <TabBar tabs={[{key:"score",label:"📊 Score"},{key:"marcas",label:"⭐ Marcas"},{key:"tarjetas",label:"🃏 Tarjetas"},{key:"tabla",label:"📋 Tabla"}]} active={tab} onChange={setTab} />
- 
+
         {tab==="score" && (
           <Card>
             {(hole>0 ? calcOrden(players,scores,pars,hole).map(i=>({...players[i],origIdx:i})) : players.map((p,i)=>({...p,origIdx:i}))).map((pl,pos) => {
@@ -835,7 +835,7 @@ function AdminApp({ onExit }) {
             })}
           </Card>
         )}
- 
+
         {tab==="marcas" && marcas[hole] && (
           <div>
             <Card>
@@ -896,7 +896,7 @@ function AdminApp({ onExit }) {
             </Card>
           </div>
         )}
- 
+
         {tab==="tarjetas" && (
           <Card>
             <SLabel>Tarjetas — papa caliente 🃏</SLabel>
@@ -940,7 +940,7 @@ function AdminApp({ onExit }) {
             </div>
           </Card>
         )}
- 
+
         {tab==="tabla" && (
           <div style={{ overflowX:"auto", marginBottom:12 }}>
             <table style={{ borderCollapse:"collapse", width:"100%", fontSize:11, color:D.text }}>
@@ -993,7 +993,7 @@ function AdminApp({ onExit }) {
             </table>
           </div>
         )}
- 
+
         <Card>
           <SLabel>Marcador en vivo</SLabel>
           {players.map((p,i)=>({name:p.name,id:p.id,net:liveNets[i]})).sort((a,b)=>a.net-b.net).map((p,pos) => (
@@ -1005,7 +1005,7 @@ function AdminApp({ onExit }) {
             </div>
           ))}
         </Card>
- 
+
         {rondaId && (
           <div style={{ textAlign:"center", marginBottom:8 }}>
             <button onClick={shareRonda} style={{ padding:"10px 24px", border:`1px solid ${D.gold}`, borderRadius:20, background:D.goldDim, color:D.gold, fontSize:13, fontWeight:700, cursor:"pointer" }}>📤 Compartir ronda en vivo</button>
@@ -1013,14 +1013,14 @@ function AdminApp({ onExit }) {
             <div style={{ color:D.textSub, fontSize:11, marginTop:4 }}>Código: <span style={{ color:D.gold, fontWeight:700 }}>{rondaId}</span></div>
           </div>
         )}
- 
+
         {hole===nHoles-1 && <Btn onClick={finish}>Ver resultados finales 🏆</Btn>}
       </div>
     </div>
   </div>
   </div>
   );
- 
+
   // ── RESULTADOS ──
   if (screen==="res" && results) {
     const { nets, fi, si, pot, money, hcUpdates, marcasMoney, marcasPts, tarjetasMoney, tarjetasCount, fullScores } = results;
@@ -1032,7 +1032,7 @@ function AdminApp({ onExit }) {
     const fn = fi.map(i=>players[i].name).join(" · ");
     const fp = money[fi[0]];
     const nn = players.length;
- 
+
     return (
       <div style={appSt}>
         <div style={{ background:`linear-gradient(135deg,#FDF8EE,#F5EDD0)`, borderBottom:`1px solid ${D.gold}44`, padding:"28px 16px", textAlign:"center", marginBottom:16 }}>
@@ -1056,7 +1056,7 @@ function AdminApp({ onExit }) {
               {showTabla ? "📊 Desglose" : "📋 Tabla"}
             </button>
           </div>
- 
+
           {showTabla && (
             <div style={{ overflowX:"auto", marginBottom:12 }}>
               <table style={{ borderCollapse:"collapse", width:"100%", fontSize:11, color:D.text }}>
@@ -1117,7 +1117,7 @@ function AdminApp({ onExit }) {
               </table>
             </div>
           )}
- 
+
           {!showTabla && ranked.map((p, pos) => (
             <Card key={p.id} style={{ borderColor:pos===0?`${D.gold}66`:D.border }}>
               <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:12, paddingBottom:12, borderBottom:`1px solid ${D.border}` }}>
@@ -1147,7 +1147,7 @@ function AdminApp({ onExit }) {
               ))}
             </Card>
           ))}
- 
+
           <Card>
             <SLabel>Resumen de marcas</SLabel>
             {players.map((pl, pi) => {
@@ -1180,7 +1180,7 @@ function AdminApp({ onExit }) {
               );
             })}
           </Card>
- 
+
           <Card>
             <SLabel>Resumen de tarjetas</SLabel>
             {TARJETAS.map((tj, idx) => {
@@ -1197,7 +1197,7 @@ function AdminApp({ onExit }) {
               );
             })}
           </Card>
- 
+
           <Card>
             <SLabel>Ajuste de handicaps</SLabel>
             {hcUpdates.map((u, i) => {
@@ -1216,7 +1216,7 @@ function AdminApp({ onExit }) {
               );
             })}
           </Card>
- 
+
           <Card>
             <SLabel>Resumen de apuesta</SLabel>
             {[
@@ -1234,13 +1234,13 @@ function AdminApp({ onExit }) {
               </div>
             ))}
           </Card>
- 
+
           <Btn onClick={confirmHC}>Confirmar y guardar handicaps</Btn>
           <Btn outline onClick={() => { setSel(new Set()); setScreen("sel"); }} style={{ marginTop:8 }}>Nueva ronda sin guardar</Btn>
         </div>
       </div>
     );
   }
- 
+
   return null;
 }
