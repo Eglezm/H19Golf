@@ -1017,7 +1017,6 @@ function AdminApp({ onExit }) {
       </div>
     </div>
   </div>
-  </div>
   );
 
   // ── RESULTADOS ──
