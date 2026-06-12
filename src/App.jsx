@@ -309,6 +309,7 @@ function SpectatorView({ rondaId }) {
         <div style={{ textAlign:"center", fontSize:11, color:D.textDim, marginTop:8 }}>Vista de solo lectura · Actualización automática</div>
       </div>
     </div>
+  </div>
   );
 }
 
@@ -1016,6 +1017,8 @@ function AdminApp({ onExit }) {
         {hole===nHoles-1 && <Btn onClick={finish}>Ver resultados finales 🏆</Btn>}
       </div>
     </div>
+  </div>
+  </div>
   );
 
   // ── RESULTADOS ──
@@ -1230,6 +1233,43 @@ function AdminApp({ onExit }) {
                 <span style={{ fontWeight:700, color:D.gold }}>{v}</span>
               </div>
             ))}
+          </Card>
+
+          {/* Compartir resultados */}
+          <Card>
+            <SLabel>📤 Compartir resultados</SLabel>
+            <div style={{ display:"flex", gap:8, marginBottom:8 }}>
+              <button onClick={() => {
+                const url = `${window.location.origin}?ronda=${rondaId}`;
+                if (navigator.clipboard) { navigator.clipboard.writeText(url); }
+                alert("¡Link copiado! Compártelo para ver los resultados finales.");
+              }} style={{ flex:1, padding:"12px", border:`1px solid ${D.gold}`, borderRadius:12, background:D.goldDim, color:D.gold, fontSize:13, fontWeight:700, cursor:"pointer" }}>
+                🔗 Copiar link
+              </button>
+              <button onClick={() => {
+                const winner = fi.map(i => players[i].name).join(" y ");
+                const lines = [
+                  `⛳ *H19 Golf — Resultados finales*`,
+                  `🏆 *Ganador: ${winner}* (${nets[fi[0]]} neto)`,
+                  ``,
+                  `*Clasificación:*`,
+                  ...ranked.map((p,pos) => {
+                    const total = p.scoreMoney + p.marcasMoney + p.tarjetasMoney;
+                    const signo = total >= 0 ? `+$${total}` : `-$${Math.abs(total)}`;
+                    return `${pos+1}. ${p.name} — ${p.net} neto — ${signo}`;
+                  }),
+                  ``,
+                  `Ver detalles: ${window.location.origin}?ronda=${rondaId}`
+                ].join("\n");
+                const url = `https://wa.me/?text=${encodeURIComponent(lines)}`;
+                window.open(url, "_blank");
+              }} style={{ flex:1, padding:"12px", border:"none", borderRadius:12, background:"#25D366", color:"#fff", fontSize:13, fontWeight:700, cursor:"pointer" }}>
+                💬 WhatsApp
+              </button>
+            </div>
+            <div style={{ fontSize:11, color:D.textSub, textAlign:"center" }}>
+              El link muestra los resultados finales en tiempo real
+            </div>
           </Card>
 
           <Btn onClick={confirmHC}>Confirmar y guardar handicaps</Btn>
