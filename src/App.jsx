@@ -1016,7 +1016,6 @@ function AdminApp({ onExit }) {
         {hole===nHoles-1 && <Btn onClick={finish}>Ver resultados finales 🏆</Btn>}
       </div>
     </div>
-  </div>
   );
 
   // ── RESULTADOS ──
