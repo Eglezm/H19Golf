@@ -1013,8 +1013,7 @@ function AdminApp({ onExit }) {
           </div>
         )}
 
-        {hole===nHoles-1 && <Btn onClick={finish}>Ver resultados finales 🏆</Btn>}
-      </div>
+        {hole===nHoles-1 && <Btn onClick={finish}>Ver resultados finales 🏆</Btn>
     </div>
   </div>
   </div>
