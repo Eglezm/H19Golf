@@ -410,6 +410,22 @@ function AdminApp({ onExit }) {
   const [rondaId, setRondaId] = useState(null);
   const [shareMsg, setShareMsg] = useState("");
   const [savedRonda, setSavedRonda] = useState(null);
+  const [nombreRonda, setNombreRonda] = useState("");
+  const [historial, setHistorial] = useState([]);
+
+  // Load historial from Firebase
+  useEffect(() => {
+    const histRef = ref(db, "historial");
+    const unsub = onValue(histRef, snap => {
+      if (snap.exists()) {
+        const data = snap.val();
+        const lista = Object.entries(data).map(([id, r]) => ({id, ...r}))
+          .sort((a,b) => (b.fechaTs||0) - (a.fechaTs||0));
+        setHistorial(lista);
+      }
+    });
+    return () => unsub();
+  }, []);
 
   // Load directory from Firebase
   useEffect(() => {
@@ -556,6 +572,10 @@ function AdminApp({ onExit }) {
 
   const finish = () => {
     try { localStorage.removeItem("h19-ronda-activa"); } catch(e) {}
+    // Auto-nombre si no se puso uno
+    const fecha = new Date();
+    const fechaStr = `${fecha.getDate().toString().padStart(2,'0')}/${(fecha.getMonth()+1).toString().padStart(2,'0')}`;
+    const autoNombre = nombreRonda.trim() || `Ronda ${fechaStr}`;
     const sc = commitHole(scores, hole); setScores(sc);
     const fullScores = sc.map(row => row.map((v,j) => v===null?pars[j]:v));
     const r = calcMoney(players, fullScores, apuesta);
@@ -564,8 +584,21 @@ function AdminApp({ onExit }) {
     const marcasPts = calcMarcasPts(players, marcas);
     const tarjetasMoney = calcTarjetasMoney(players, tarjetas, tarjetaVal);
     const tarjetasCount = players.map((_,i) => TARJETAS.filter(t=>tarjetas[t.key]===i).length);
-    setResults({ ...r, hcUpdates:hc, marcasMoney, marcasPts, tarjetasMoney, tarjetasCount, fullScores });
+    const resultData = { ...r, hcUpdates:hc, marcasMoney, marcasPts, tarjetasMoney, tarjetasCount, fullScores };
+    setResults(resultData);
     updateGame({ ...getState(), scores:sc, status:"finalizada" });
+    // Guardar en historial
+    try {
+      set(ref(db, `historial/${rondaId}`), {
+        nombre: autoNombre,
+        campo, nHoles, fechaTs: Date.now(),
+        fecha: fechaStr,
+        players: players.map(p=>({name:p.name, hc:p.hc})),
+        ganador: fi.map(i=>players[i].name).join(" · "),
+        netGanador: nets[fi[0]],
+        rondaId,
+      });
+    } catch(e) {}
     setScreen("res");
   };
 
@@ -609,7 +642,7 @@ function AdminApp({ onExit }) {
         <div style={{ fontSize:11, color:D.textSub, letterSpacing:2, textTransform:"uppercase", marginTop:2 }}>Admin</div>
       </div>
       <div style={{ padding:"12px 12px" }}>
-        <TabBar tabs={[{key:"dir",label:"👥 Jugadores"},{key:"sel",label:"⛳ Nueva ronda"}]} active="dir" onChange={k => k==="sel" && setScreen("sel")} />
+        <TabBar tabs={[{key:"dir",label:"👥 Jugadores"},{key:"hist",label:"📋 Historial"},{key:"sel",label:"⛳ Nueva ronda"}]} active="dir" onChange={k => { if(k==="sel") setScreen("sel"); if(k==="hist") setScreen("hist"); }} />
         {savedRonda && (
           <div style={{ background:D.greenBg, border:`1px solid ${D.success}`, borderRadius:12, padding:"12px 16px", marginBottom:12 }}>
             <div style={{ fontSize:13, fontWeight:700, color:D.success, marginBottom:4 }}>⛳ Ronda guardada encontrada</div>
@@ -666,6 +699,42 @@ function AdminApp({ onExit }) {
           </div>
         </Card>
         <Btn onClick={() => setScreen("sel")}>⛳ Iniciar ronda</Btn>
+      </div>
+    </div>
+  );
+
+  // ── HISTORIAL ──
+  if (screen==="hist") return (
+    <div style={appSt}>
+      <div style={{ background:D.surface, borderBottom:`1px solid ${D.border}`, padding:"20px 16px 14px" }}>
+        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+          <div style={{ fontSize:28, fontWeight:900, color:D.gold }}>H19</div>
+          <button onClick={onExit} style={{ fontSize:12, color:D.textSub, background:"none", border:`1px solid ${D.border}`, borderRadius:8, padding:"5px 10px", cursor:"pointer" }}>Salir</button>
+        </div>
+      </div>
+      <div style={{ padding:"12px 12px" }}>
+        <TabBar tabs={[{key:"dir",label:"👥 Jugadores"},{key:"hist",label:"📋 Historial"},{key:"sel",label:"⛳ Nueva ronda"}]} active="hist" onChange={k => { if(k==="dir") setScreen("dir"); if(k==="sel") setScreen("sel"); }} />
+        <Card>
+          <SLabel>Rondas jugadas</SLabel>
+          {historial.length === 0 && (
+            <div style={{ textAlign:"center", color:D.textSub, padding:24, fontSize:13 }}>No hay rondas guardadas aún</div>
+          )}
+          {historial.map((r, idx) => (
+            <div key={r.id} style={{ padding:"12px 0", borderBottom:idx<historial.length-1?`1px solid ${D.border}`:"none" }}>
+              <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:4 }}>
+                <div style={{ fontSize:14, fontWeight:700 }}>{r.nombre}</div>
+                <div style={{ fontSize:11, color:D.textSub }}>{r.fecha}</div>
+              </div>
+              <div style={{ fontSize:12, color:D.textSub, marginBottom:6 }}>
+                {CAMPOS[r.campo]?.nombre || r.campo} · {r.nHoles} hoyos · {r.players?.length || 0} jugadores
+              </div>
+              <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                <div style={{ fontSize:12, background:D.goldDim, color:D.gold, padding:"2px 10px", borderRadius:10, fontWeight:700 }}>
+                  🏆 {r.ganador} ({r.netGanador} neto)
+                </div>
+              </div>
+          ))}
+        </Card>
       </div>
     </div>
   );
@@ -765,6 +834,17 @@ function AdminApp({ onExit }) {
             })}
           </Card>
         )}
+        <Card>
+          <SLabel>📝 Nombre de la ronda (opcional)</SLabel>
+          <input
+            value={nombreRonda}
+            onChange={e => setNombreRonda(e.target.value)}
+            placeholder={`Ronda ${new Date().getDate().toString().padStart(2,'0')}/${(new Date().getMonth()+1).toString().padStart(2,'0')}`}
+            style={{ width:"100%", padding:"10px 12px", border:`1px solid ${D.border}`, borderRadius:10, background:D.surface, color:D.text, fontSize:14, boxSizing:"border-box" }}
+          />
+          <div style={{ fontSize:11, color:D.textSub, marginTop:6 }}>Ej: "Torneo Navidad", "Ronda 16/06"</div>
+        </Card>
+
         <Btn onClick={startGame} disabled={n<2}>Comenzar ronda</Btn>
         <Btn outline onClick={() => setScreen("dir")} style={{ marginTop:8 }}>← Volver</Btn>
       </div>
