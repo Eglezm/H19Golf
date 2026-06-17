@@ -589,7 +589,7 @@ function AdminApp({ onExit }) {
     updateGame({ ...getState(), scores:sc, status:"finalizada" });
     // Guardar en historial
     try {
-      set(ref(db, `historial/${rondaId}`), {
+      const histData = {
         nombre: autoNombre,
         campo, nHoles, fechaTs: Date.now(),
         fecha: fechaStr,
@@ -597,8 +597,11 @@ function AdminApp({ onExit }) {
         ganador: fi.map(i=>players[i].name).join(" · "),
         netGanador: nets[fi[0]],
         rondaId,
-      });
-    } catch(e) {}
+      };
+      set(ref(db, `historial/${rondaId}`), histData)
+        .then(() => console.log("Historial guardado OK", histData))
+        .catch(err => alert("Error guardando historial: " + err.message));
+    } catch(e) { alert("Error en bloque historial: " + e.message); }
     setScreen("res");
   };
 
