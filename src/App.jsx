@@ -209,6 +209,7 @@ function calcOrden(players, scores, pars, currentHole) {
 // ─── SPECTATOR VIEW ───────────────────────────────
 function SpectatorView({ rondaId }) {
   const [ronda, setRonda] = useState(null);
+  const [histData, setHistData] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -216,6 +217,14 @@ function SpectatorView({ rondaId }) {
     const unsub = onValue(r, snap => {
       setRonda(snap.exists() ? snap.val() : null);
       setLoading(false);
+    });
+    return () => unsub();
+  }, [rondaId]);
+
+  useEffect(() => {
+    const h = ref(db, `historial/${rondaId}`);
+    const unsub = onValue(h, snap => {
+      setHistData(snap.exists() ? snap.val() : null);
     });
     return () => unsub();
   }, [rondaId]);
@@ -244,6 +253,95 @@ function SpectatorView({ rondaId }) {
   const nets = players.map((p, i) => (scores[i]||[]).reduce((a,v)=>a+(v||0),0) - p.hc);
   const ranked = players.map((p, i) => ({ ...p, net:nets[i], gross:(scores[i]||[]).reduce((a,v)=>a+(v||0),0) })).sort((a,b)=>a.net-b.net);
   const campoNombre = CAMPOS[campo]?.nombre || campo;
+
+  // ── VISTA COMPLETA DE RESULTADOS FINALES (cuando hay historial guardado) ──
+  if (status === "finalizada" && histData && histData.jugadores) {
+    const jr = histData.jugadores.slice().sort((a,b) => a.neto - b.neto);
+    const winner = jr[0];
+    return (
+      <div style={appStyle}>
+        <div style={{ background:`linear-gradient(135deg,#FDF8EE,#F5EDD0)`, borderBottom:`1px solid ${D.gold}44`, padding:"28px 16px", textAlign:"center", marginBottom:16 }}>
+          <div style={{ fontSize:36, marginBottom:8 }}>🏆</div>
+          <div style={{ fontSize:11, color:D.gold, letterSpacing:2, textTransform:"uppercase", marginBottom:6 }}>{histData.nombre || campoNombre}</div>
+          <div style={{ fontSize:24, fontWeight:900, color:D.text, marginBottom:4 }}>{histData.ganador}</div>
+          <div style={{ fontSize:13, color:D.textSub }}>{histData.netGanador} golpes netos</div>
+        </div>
+        <div style={{ padding:"0 12px 32px" }}>
+          <Card>
+            <SLabel>📊 Clasificación final</SLabel>
+            {jr.map((p, pos) => (
+              <div key={p.name} style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 0", borderBottom:pos<jr.length-1?`1px solid ${D.border}`:"none" }}>
+                <div style={{ width:24, height:24, borderRadius:"50%", background:pos===0?D.goldDim:D.surface, border:`1px solid ${pos===0?D.gold:D.border}`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:12, fontWeight:900, color:pos===0?D.gold:D.textSub }}>{pos+1}</div>
+                <Avatar name={p.name} id={p.name} size={32} />
+                <div style={{ flex:1 }}>
+                  <div style={{ fontSize:14, fontWeight:600 }}>{p.name}</div>
+                  <div style={{ fontSize:11, color:D.textSub }}>HC {p.hc} · {p.bruto} bruto</div>
+                </div>
+                <div style={{ textAlign:"right" }}>
+                  <div style={{ fontSize:18, fontWeight:900, color:pos===0?D.gold:D.text }}>{p.neto}</div>
+                  <div style={{ fontSize:10, color:D.textSub }}>neto</div>
+                </div>
+              </div>
+            ))}
+          </Card>
+
+          <Card>
+            <SLabel>💰 Resumen por jugador</SLabel>
+            {jr.map((p, pos) => (
+              <div key={p.name} style={{ padding:"10px 0", borderBottom:pos<jr.length-1?`1px solid ${D.border}`:"none" }}>
+                <div style={{ display:"flex", justifyContent:"space-between", marginBottom:4 }}>
+                  <div style={{ fontSize:13, fontWeight:700 }}>{p.name}</div>
+                  <div style={{ fontSize:14, fontWeight:900, color:p.total>=0?D.success:D.danger }}>{p.total>=0?`+$${p.total}`:`-$${Math.abs(p.total)}`}</div>
+                </div>
+                <div style={{ fontSize:11, color:D.textSub }}>Score ${p.scoreMoney} · Marcas ${p.marcasMoney} ({p.marcasPts}pts) · Tarjetas ${p.tarjetasMoney} ({p.tarjetasCount})</div>
+              </div>
+            ))}
+          </Card>
+
+          {tarjetas && (
+            <Card>
+              <SLabel>🃏 Resumen de tarjetas</SLabel>
+              {TARJETAS.map((tj, idx) => {
+                const owner = tarjetas[tj.key];
+                return (
+                  <div key={tj.key} style={{ display:"flex", alignItems:"center", gap:8, padding:"6px 0", borderBottom:idx<TARJETAS.length-1?`1px solid ${D.border}`:"none" }}>
+                    <div style={{ flex:1, fontSize:12 }}>{tj.label}</div>
+                    {owner !== null && owner !== undefined
+                      ? <div style={{ fontSize:12, fontWeight:700, color:D.danger }}>{players[owner]?.name||"—"}</div>
+                      : <div style={{ fontSize:11, color:D.textDim }}>Sin dueño</div>
+                    }
+                  </div>
+                );
+              })}
+            </Card>
+          )}
+
+          {histData.hcUpdates && histData.hcUpdates.length > 0 && (
+            <Card>
+              <SLabel>📈 Ajuste de handicaps</SLabel>
+              {histData.hcUpdates.map((u, i) => {
+                const up=u.delta>0, dn=u.delta<0;
+                return (
+                  <div key={u.name} style={{ display:"flex", alignItems:"center", gap:8, padding:"9px 0", borderBottom:i<histData.hcUpdates.length-1?`1px solid ${D.border}`:"none" }}>
+                    <Avatar name={u.name} id={u.name} size={30} />
+                    <div style={{ flex:1 }}>
+                      <div style={{ fontSize:13, fontWeight:600 }}>{u.name}</div>
+                      <div style={{ fontSize:11, color:D.textSub }}>HC {u.before}</div>
+                    </div>
+                    <div style={{ fontSize:12, padding:"3px 10px", borderRadius:10, fontWeight:700, background:up?D.redBg:dn?D.greenBg:D.surface, color:up?D.danger:dn?D.success:D.textSub, border:`1px solid ${up?D.danger+"44":dn?D.success+"44":D.border}` }}>
+                      {up?`+${u.delta} → HC ${u.after}`:dn?`${u.delta} → HC ${u.after}`:"Sin cambio"}
+                    </div>
+                  </div>
+                );
+              })}
+            </Card>
+          )}
+
+          <div style={{ textAlign:"center", fontSize:11, color:D.textDim, marginTop:8 }}>Resultados finales · Vista de solo lectura</div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={appStyle}>
@@ -611,6 +709,7 @@ function AdminApp({ onExit }) {
         rondaId,
         apuesta, marcaVal, tarjetaVal,
         jugadores: jugadoresDetalle,
+        hcUpdates: hc.map(u => ({ name:u.name, before:u.before, delta:u.delta, after:u.after })),
       };
       set(ref(db, `historial/${rondaId}`), histData)
         .catch(err => alert("Error guardando historial: " + err.message));
