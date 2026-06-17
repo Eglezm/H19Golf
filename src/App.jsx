@@ -309,7 +309,6 @@ function SpectatorView({ rondaId }) {
         <div style={{ textAlign:"center", fontSize:11, color:D.textDim, marginTop:8 }}>Vista de solo lectura · Actualización automática</div>
       </div>
     </div>
-  </div>
   );
 }
 
@@ -1098,8 +1097,6 @@ function AdminApp({ onExit }) {
         {hole===nHoles-1 && <Btn onClick={finish}>Ver resultados finales 🏆</Btn>}
       </div>
     </div>
-  </div>
-  </div>
   );
 
   // ── RESULTADOS ──
