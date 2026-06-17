@@ -594,8 +594,8 @@ function AdminApp({ onExit }) {
         campo, nHoles, fechaTs: Date.now(),
         fecha: fechaStr,
         players: players.map(p=>({name:p.name, hc:p.hc})),
-        ganador: fi.map(i=>players[i].name).join(" · "),
-        netGanador: nets[fi[0]],
+        ganador: r.fi.map(i=>players[i].name).join(" · "),
+        netGanador: r.nets[r.fi[0]],
         rondaId,
       };
       set(ref(db, `historial/${rondaId}`), histData)
