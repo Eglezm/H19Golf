@@ -412,6 +412,7 @@ function AdminApp({ onExit }) {
   const [savedRonda, setSavedRonda] = useState(null);
   const [nombreRonda, setNombreRonda] = useState("");
   const [historial, setHistorial] = useState([]);
+  const [expandedHist, setExpandedHist] = useState(null);
 
   // Load historial from Firebase
   useEffect(() => {
@@ -589,17 +590,29 @@ function AdminApp({ onExit }) {
     updateGame({ ...getState(), scores:sc, status:"finalizada" });
     // Guardar en historial
     try {
+      const jugadoresDetalle = players.map((p, i) => ({
+        name: p.name,
+        hc: p.hc,
+        bruto: fullScores[i].reduce((a,b)=>a+b,0),
+        neto: r.nets[i],
+        scoreMoney: r.money[i],
+        marcasMoney: marcasMoney[i],
+        marcasPts: marcasPts[i],
+        tarjetasMoney: tarjetasMoney[i],
+        tarjetasCount: tarjetasCount[i],
+        total: r.money[i] + marcasMoney[i] + tarjetasMoney[i],
+      }));
       const histData = {
         nombre: autoNombre,
         campo, nHoles, fechaTs: Date.now(),
         fecha: fechaStr,
-        players: players.map(p=>({name:p.name, hc:p.hc})),
         ganador: r.fi.map(i=>players[i].name).join(" · "),
         netGanador: r.nets[r.fi[0]],
         rondaId,
+        apuesta, marcaVal, tarjetaVal,
+        jugadores: jugadoresDetalle,
       };
       set(ref(db, `historial/${rondaId}`), histData)
-        .then(() => console.log("Historial guardado OK", histData))
         .catch(err => alert("Error guardando historial: " + err.message));
     } catch(e) { alert("Error en bloque historial: " + e.message); }
     setScreen("res");
@@ -722,22 +735,49 @@ function AdminApp({ onExit }) {
           {historial.length === 0 && (
             <div style={{ textAlign:"center", color:D.textSub, padding:24, fontSize:13 }}>No hay rondas guardadas aún</div>
           )}
-          {historial.map((r, idx) => (
+          {historial.map((r, idx) => {
+            const isOpen = expandedHist === r.id;
+            return (
             <div key={r.id} style={{ padding:"12px 0", borderBottom:idx<historial.length-1?`1px solid ${D.border}`:"none" }}>
-              <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:4 }}>
-                <div style={{ fontSize:14, fontWeight:700 }}>{r.nombre}</div>
-                <div style={{ fontSize:11, color:D.textSub }}>{r.fecha}</div>
-              </div>
-              <div style={{ fontSize:12, color:D.textSub, marginBottom:6 }}>
-                {CAMPOS[r.campo]?.nombre || r.campo} · {r.nHoles} hoyos · {r.players?.length || 0} jugadores
-              </div>
-              <div style={{ display:"flex", alignItems:"center", gap:6 }}>
-                <div style={{ fontSize:12, background:D.goldDim, color:D.gold, padding:"2px 10px", borderRadius:10, fontWeight:700 }}>
-                  🏆 {r.ganador} ({r.netGanador} neto)
+              <div onClick={() => setExpandedHist(isOpen ? null : r.id)} style={{ cursor:"pointer" }}>
+                <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:4 }}>
+                  <div style={{ fontSize:14, fontWeight:700 }}>{r.nombre}</div>
+                  <div style={{ fontSize:11, color:D.textSub }}>{r.fecha}</div>
+                </div>
+                <div style={{ fontSize:12, color:D.textSub, marginBottom:6 }}>
+                  {CAMPOS[r.campo]?.nombre || r.campo} · {r.nHoles} hoyos · {r.jugadores?.length || 0} jugadores
+                </div>
+                <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+                  <div style={{ fontSize:12, background:D.goldDim, color:D.gold, padding:"2px 10px", borderRadius:10, fontWeight:700 }}>
+                    🏆 {r.ganador} ({r.netGanador} neto)
+                  </div>
+                  <div style={{ fontSize:11, color:D.textSub }}>{isOpen ? "▲ Ocultar" : "▼ Ver desglose"}</div>
                 </div>
               </div>
+              {isOpen && r.jugadores && (
+                <div style={{ marginTop:10, background:D.bg, borderRadius:10, padding:10 }}>
+                  {r.jugadores.slice().sort((a,b)=>a.neto-b.neto).map((j, pos) => (
+                    <div key={j.name} style={{ display:"flex", alignItems:"center", gap:8, padding:"8px 0", borderBottom:pos<r.jugadores.length-1?`1px solid ${D.border}`:"none" }}>
+                      <div style={{ width:20, fontSize:12, fontWeight:900, color:pos===0?D.gold:D.textSub }}>{pos+1}</div>
+                      <div style={{ flex:1 }}>
+                        <div style={{ fontSize:13, fontWeight:600 }}>{j.name}</div>
+                        <div style={{ fontSize:10, color:D.textSub }}>HC {j.hc} · {j.bruto} bruto · {j.neto} neto</div>
+                      </div>
+                      <div style={{ textAlign:"right" }}>
+                        <div style={{ fontSize:13, fontWeight:900, color:j.total>=0?D.success:D.danger }}>
+                          {j.total>=0?`+$${j.total}`:`-$${Math.abs(j.total)}`}
+                        </div>
+                        <div style={{ fontSize:9, color:D.textDim }}>
+                          Score ${j.scoreMoney} · Marcas ${j.marcasMoney} ({j.marcasPts}pts) · Tarj ${j.tarjetasMoney} ({j.tarjetasCount})
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
-          ))}
+            );
+          })}
         </Card>
       </div>
     </div>
@@ -1331,17 +1371,21 @@ function AdminApp({ onExit }) {
                 const winner = fi.map(i => players[i].name).join(" y ");
                 const lines = [
                   `⛳ *H19 Golf — Resultados finales*`,
+                  nombreRonda.trim() ? `📋 ${nombreRonda.trim()}` : null,
                   `🏆 *Ganador: ${winner}* (${nets[fi[0]]} neto)`,
                   ``,
-                  `*Clasificación:*`,
+                  `*Clasificación y desglose:*`,
                   ...ranked.map((p,pos) => {
                     const total = p.scoreMoney + p.marcasMoney + p.tarjetasMoney;
                     const signo = total >= 0 ? `+$${total}` : `-$${Math.abs(total)}`;
-                    return `${pos+1}. ${p.name} — ${p.net} neto — ${signo}`;
+                    return [
+                      `${pos+1}. *${p.name}* — ${p.bruto} bruto / ${p.net} neto — ${signo}`,
+                      `   Score: $${p.scoreMoney} · Marcas: $${p.marcasMoney} (${p.pts}pts) · Tarjetas: $${p.tarjetasMoney} (${p.cards})`
+                    ].join("\n");
                   }),
                   ``,
                   `Ver detalles: ${window.location.origin}?ronda=${rondaId}`
-                ].join("\n");
+                ].filter(Boolean).join("\n");
                 const url = `https://wa.me/?text=${encodeURIComponent(lines)}`;
                 window.open(url, "_blank");
               }} style={{ flex:1, padding:"12px", border:"none", borderRadius:12, background:"#25D366", color:"#fff", fontSize:13, fontWeight:700, cursor:"pointer" }}>
