@@ -1460,7 +1460,7 @@ function AdminApp({ onExit }) {
             <SLabel>📤 Compartir resultados</SLabel>
             <div style={{ display:"flex", gap:8, marginBottom:8 }}>
               <button onClick={() => {
-                const url = `${window.location.origin}?ronda=${rondaId}`;
+                const url = `${window.location.origin}${window.location.pathname}?ronda=${rondaId}`;
                 if (navigator.clipboard) { navigator.clipboard.writeText(url); }
                 alert("¡Link copiado! Compártelo para ver los resultados finales.");
               }} style={{ flex:1, padding:"12px", border:`1px solid ${D.gold}`, borderRadius:12, background:D.goldDim, color:D.gold, fontSize:13, fontWeight:700, cursor:"pointer" }}>
@@ -1483,7 +1483,7 @@ function AdminApp({ onExit }) {
                     ].join("\n");
                   }),
                   ``,
-                  `Ver detalles: ${window.location.origin}?ronda=${rondaId}`
+                  `Ver detalles: ${window.location.origin}${window.location.pathname}?ronda=${rondaId}`
                 ].filter(Boolean).join("\n");
                 const url = `https://wa.me/?text=${encodeURIComponent(lines)}`;
                 window.open(url, "_blank");
