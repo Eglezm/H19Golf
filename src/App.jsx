@@ -60,7 +60,10 @@ const COLORS = [
   {bg:"#D4D8F7",fg:"#1A1A8A"},{bg:"#F7D8D4",fg:"#8A1A14"},
 ];
 
-const col = (id) => COLORS[(id - 1) % COLORS.length];
+const col = (id) => {
+  let n = typeof id === "number" ? id : String(id).split("").reduce((a,c) => a + c.charCodeAt(0), 0);
+  return COLORS[Math.abs(n) % COLORS.length];
+};
 const fmt = (n) => n >= 0 ? `+$${n}` : `−$${Math.abs(n)}`;
 const fmtC = (n) => n >= 0 ? D.success : D.danger;
 
