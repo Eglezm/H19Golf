@@ -144,6 +144,21 @@ function calcMarcasPts(players, marcas) {
   });
 }
 
+function calcMarcasResumen(players, marcas) {
+  // Devuelve lista de eventos: { hole, label, playerName }
+  const eventos = [];
+  marcas.forEach((h, hi) => {
+    MARCAS_MULTI.forEach(m => {
+      players.forEach((p, pi) => {
+        if (h.multi[pi]?.[m.key]) eventos.push({ hole:hi+1, label:m.label, playerName:p.name });
+      });
+    });
+    if (h.oyes !== null && h.oyes !== undefined) eventos.push({ hole:hi+1, label:"⛳ O'Yes", playerName:players[h.oyes]?.name||"—" });
+    if (h.regulation !== null && h.regulation !== undefined) eventos.push({ hole:hi+1, label:"✅ Regulation", playerName:players[h.regulation]?.name||"—" });
+  });
+  return eventos.sort((a,b) => a.hole - b.hole);
+}
+
 function calcMarcasMoney(players, marcas, marcaVal) {
   const pts = calcMarcasPts(players, marcas);
   return players.map((_, i) => {
@@ -320,6 +335,22 @@ function SpectatorView({ rondaId }) {
             ))}
           </Card>
 
+          {histData.marcas && histData.playerNames && (() => {
+            const eventos = calcMarcasResumen(histData.playerNames.map(n=>({name:n})), histData.marcas);
+            return eventos.length > 0 ? (
+              <Card>
+                <SLabel>⭐ Resumen de marcas</SLabel>
+                {eventos.map((ev, i) => (
+                  <div key={i} style={{ display:"flex", alignItems:"center", gap:8, padding:"6px 0", borderBottom:i<eventos.length-1?`1px solid ${D.border}`:"none" }}>
+                    <div style={{ fontSize:11, color:D.textDim, width:42 }}>Hoyo {ev.hole}</div>
+                    <div style={{ flex:1, fontSize:12 }}>{ev.label}</div>
+                    <div style={{ fontSize:12, fontWeight:700, color:D.gold }}>{ev.playerName}</div>
+                  </div>
+                ))}
+              </Card>
+            ) : null;
+          })()}
+
           {histData.scoresPorHoyo && histData.pars && (
             <Card>
               <SLabel>🏌️ Tarjeta hoyo por hoyo</SLabel>
@@ -471,6 +502,22 @@ function SpectatorView({ rondaId }) {
             <div style={{ fontSize:10, color:D.textDim, textAlign:"center", marginTop:6 }}>Los hoyos sin jugar se calculan como par</div>
           </Card>
         )}
+
+        {marcas && (() => {
+          const eventos = calcMarcasResumen(players, marcas);
+          return eventos.length > 0 ? (
+            <Card>
+              <SLabel>⭐ Resumen de marcas</SLabel>
+              {eventos.map((ev, i) => (
+                <div key={i} style={{ display:"flex", alignItems:"center", gap:8, padding:"6px 0", borderBottom:i<eventos.length-1?`1px solid ${D.border}`:"none" }}>
+                  <div style={{ fontSize:11, color:D.textDim, width:42 }}>Hoyo {ev.hole}</div>
+                  <div style={{ flex:1, fontSize:12 }}>{ev.label}</div>
+                  <div style={{ fontSize:12, fontWeight:700, color:D.gold }}>{ev.playerName}</div>
+                </div>
+              ))}
+            </Card>
+          ) : null;
+        })()}
 
         {pars && pars.length > 0 && (
           <Card>
@@ -1010,6 +1057,22 @@ function AdminApp({ onExit }) {
                       </div>
                     </div>
                   ))}
+
+                  {r.marcas && r.playerNames && (() => {
+                    const eventos = calcMarcasResumen(r.playerNames.map(n=>({name:n})), r.marcas);
+                    return eventos.length > 0 ? (
+                      <div style={{ marginTop:12 }}>
+                        <div style={{ fontSize:11, fontWeight:700, color:D.textSub, marginBottom:6, textTransform:"uppercase", letterSpacing:1 }}>⭐ Resumen de marcas</div>
+                        {eventos.map((ev, i) => (
+                          <div key={i} style={{ display:"flex", alignItems:"center", gap:8, padding:"4px 0" }}>
+                            <div style={{ fontSize:11, color:D.textDim, width:42 }}>Hoyo {ev.hole}</div>
+                            <div style={{ flex:1, fontSize:12 }}>{ev.label}</div>
+                            <div style={{ fontSize:12, fontWeight:700, color:D.gold }}>{ev.playerName}</div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : null;
+                  })()}
 
                   {r.scoresPorHoyo && r.pars && (
                     <div style={{ marginTop:12, overflowX:"auto" }}>
@@ -1666,6 +1729,7 @@ function AdminApp({ onExit }) {
               </button>
               <button onClick={() => {
                 const winner = fi.map(i => players[i].name).join(" y ");
+                const eventos = calcMarcasResumen(players, marcas);
                 const lines = [
                   `⛳ *H19 Golf — Resultados finales*`,
                   nombreRonda.trim() ? `📋 ${nombreRonda.trim()}` : null,
@@ -1680,6 +1744,9 @@ function AdminApp({ onExit }) {
                       `   Score: $${p.scoreMoney} · Marcas: $${p.marcasMoney} (${p.pts}pts) · Tarjetas: $${p.tarjetasMoney} (${p.cards})`
                     ].join("\n");
                   }),
+                  eventos.length > 0 ? `` : null,
+                  eventos.length > 0 ? `*⭐ Resumen de marcas:*` : null,
+                  ...eventos.map(ev => `Hoyo ${ev.hole} — ${ev.label}: *${ev.playerName}*`),
                   ``,
                   `Ver detalles: ${window.location.origin}${window.location.pathname}?ronda=${rondaId}`
                 ].filter(Boolean).join("\n");
