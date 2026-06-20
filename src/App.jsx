@@ -301,6 +301,52 @@ function SpectatorView({ rondaId }) {
             ))}
           </Card>
 
+          {histData.scoresPorHoyo && histData.pars && (
+            <Card>
+              <SLabel>🏌️ Tarjeta hoyo por hoyo</SLabel>
+              <div style={{ overflowX:"auto" }}>
+                <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11, minWidth:histData.pars.length*32+90 }}>
+                  <thead>
+                    <tr>
+                      <th style={{ textAlign:"left", padding:"4px 6px", color:D.textSub, position:"sticky", left:0, background:D.surface }}>Hoyo</th>
+                      {histData.pars.map((par, h) => (
+                        <th key={h} style={{ padding:"4px 4px", color:D.textDim, fontWeight:600, minWidth:28 }}>{h+1}</th>
+                      ))}
+                      <th style={{ padding:"4px 6px", color:D.gold, fontWeight:700 }}>Tot</th>
+                    </tr>
+                    <tr>
+                      <td style={{ padding:"2px 6px", color:D.textDim, fontSize:10, position:"sticky", left:0, background:D.surface }}>Par</td>
+                      {histData.pars.map((par, h) => (
+                        <td key={h} style={{ textAlign:"center", padding:"2px 4px", color:D.textDim, fontSize:10 }}>{par}</td>
+                      ))}
+                      <td style={{ textAlign:"center", padding:"2px 6px", color:D.textDim, fontSize:10, fontWeight:700 }}>{histData.pars.reduce((a,b)=>a+b,0)}</td>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(histData.playerNames||[]).map((name, pi) => {
+                      const row = histData.scoresPorHoyo[pi] || [];
+                      const tot = row.reduce((a,b)=>a+(b||0),0);
+                      return (
+                        <tr key={name} style={{ borderTop:`1px solid ${D.border}` }}>
+                          <td style={{ padding:"5px 6px", fontWeight:600, position:"sticky", left:0, background:D.surface, whiteSpace:"nowrap" }}>{name}</td>
+                          {row.map((s, h) => {
+                            const b = s && histData.pars[h] ? getBadge(s, histData.pars[h]) : null;
+                            return (
+                              <td key={h} style={{ textAlign:"center", padding:"5px 2px" }}>
+                                <span style={{ display:"inline-block", minWidth:18, padding:"1px 3px", borderRadius:5, fontWeight:700, background:b?b.bg:"transparent", color:b?b.fg:D.text }}>{s ?? "—"}</span>
+                              </td>
+                            );
+                          })}
+                          <td style={{ textAlign:"center", padding:"5px 6px", fontWeight:900, color:D.gold }}>{tot}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </Card>
+          )}
+
           {tarjetas && (
             <Card>
               <SLabel>🃏 Resumen de tarjetas</SLabel>
