@@ -713,6 +713,12 @@ function AdminApp({ onExit }) {
         apuesta, marcaVal, tarjetaVal,
         jugadores: jugadoresDetalle,
         hcUpdates: hc.map(u => ({ name:u.name, before:u.before, delta:u.delta, after:u.after })),
+        // Tarjeta completa hoyo por hoyo
+        pars,
+        playerNames: players.map(p=>p.name),
+        scoresPorHoyo: fullScores,
+        marcas,
+        tarjetas,
       };
       set(ref(db, `historial/${rondaId}`), histData)
         .catch(err => alert("Error guardando historial: " + err.message));
@@ -875,6 +881,66 @@ function AdminApp({ onExit }) {
                       </div>
                     </div>
                   ))}
+
+                  {r.scoresPorHoyo && r.pars && (
+                    <div style={{ marginTop:12, overflowX:"auto" }}>
+                      <div style={{ fontSize:11, fontWeight:700, color:D.textSub, marginBottom:6, textTransform:"uppercase", letterSpacing:1 }}>🏌️ Tarjeta hoyo por hoyo</div>
+                      <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11, minWidth:r.pars.length*32+90 }}>
+                        <thead>
+                          <tr>
+                            <th style={{ textAlign:"left", padding:"4px 6px", color:D.textSub, position:"sticky", left:0, background:D.bg }}>Hoyo</th>
+                            {r.pars.map((par, h) => (
+                              <th key={h} style={{ padding:"4px 4px", color:D.textDim, fontWeight:600, minWidth:28 }}>{h+1}</th>
+                            ))}
+                            <th style={{ padding:"4px 6px", color:D.gold, fontWeight:700 }}>Tot</th>
+                          </tr>
+                          <tr>
+                            <td style={{ padding:"2px 6px", color:D.textDim, fontSize:10, position:"sticky", left:0, background:D.bg }}>Par</td>
+                            {r.pars.map((par, h) => (
+                              <td key={h} style={{ textAlign:"center", padding:"2px 4px", color:D.textDim, fontSize:10 }}>{par}</td>
+                            ))}
+                            <td style={{ textAlign:"center", padding:"2px 6px", color:D.textDim, fontSize:10, fontWeight:700 }}>{r.pars.reduce((a,b)=>a+b,0)}</td>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(r.playerNames||[]).map((name, pi) => {
+                            const row = r.scoresPorHoyo[pi] || [];
+                            const tot = row.reduce((a,b)=>a+(b||0),0);
+                            return (
+                              <tr key={name} style={{ borderTop:`1px solid ${D.border}` }}>
+                                <td style={{ padding:"5px 6px", fontWeight:600, position:"sticky", left:0, background:D.bg, whiteSpace:"nowrap" }}>{name}</td>
+                                {row.map((s, h) => {
+                                  const b = s && r.pars[h] ? getBadge(s, r.pars[h]) : null;
+                                  return (
+                                    <td key={h} style={{ textAlign:"center", padding:"5px 2px" }}>
+                                      <span style={{ display:"inline-block", minWidth:18, padding:"1px 3px", borderRadius:5, fontWeight:700, background:b?b.bg:"transparent", color:b?b.fg:D.text }}>{s ?? "—"}</span>
+                                    </td>
+                                  );
+                                })}
+                                <td style={{ textAlign:"center", padding:"5px 6px", fontWeight:900, color:D.gold }}>{tot}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+
+                  {r.tarjetas && (
+                    <div style={{ marginTop:12 }}>
+                      <div style={{ fontSize:11, fontWeight:700, color:D.textSub, marginBottom:6, textTransform:"uppercase", letterSpacing:1 }}>🃏 Tarjetas ganadas</div>
+                      {TARJETAS.map((tj, idx) => {
+                        const owner = r.tarjetas[tj.key];
+                        if (owner === null || owner === undefined) return null;
+                        return (
+                          <div key={tj.key} style={{ display:"flex", justifyContent:"space-between", fontSize:12, padding:"4px 0" }}>
+                            <span style={{ color:D.textSub }}>{tj.label}</span>
+                            <span style={{ fontWeight:700, color:D.danger }}>{r.playerNames?.[owner] || "—"}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
