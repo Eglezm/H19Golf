@@ -252,10 +252,29 @@ function SpectatorView({ rondaId }) {
     );
   }
 
-  const { players, scores, pars, hole, campo, tarjetas, status } = ronda;
+  const { players, scores, pars, hole, campo, tarjetas, marcas, status, apuesta, marcaVal, tarjetaVal } = ronda;
   const nets = players.map((p, i) => (scores[i]||[]).reduce((a,v)=>a+(v||0),0) - p.hc);
   const ranked = players.map((p, i) => ({ ...p, net:nets[i], gross:(scores[i]||[]).reduce((a,v)=>a+(v||0),0) })).sort((a,b)=>a.net-b.net);
   const campoNombre = CAMPOS[campo]?.nombre || campo;
+
+  // ── DINERO EN VIVO (estimado con hoyos no jugados = par) ──
+  const liveMoney = (() => {
+    if (!pars || !apuesta) return null;
+    const fullSc = players.map((_, i) => pars.map((par, h) => {
+      const v = (scores[i]||[])[h];
+      return v===null||v===undefined ? par : v;
+    }));
+    const r = calcMoney(players, fullSc, apuesta);
+    const mMoney = marcas ? calcMarcasMoney(players, marcas, marcaVal||0) : players.map(()=>0);
+    const mPts = marcas ? calcMarcasPts(players, marcas) : players.map(()=>0);
+    const tMoney = tarjetas ? calcTarjetasMoney(players, tarjetas, tarjetaVal||0) : players.map(()=>0);
+    const tCount = tarjetas ? players.map((_,i) => TARJETAS.filter(t=>tarjetas[t.key]===i).length) : players.map(()=>0);
+    return players.map((p,i) => ({
+      name:p.name, scoreMoney:r.money[i], marcasMoney:mMoney[i], marcasPts:mPts[i],
+      tarjetasMoney:tMoney[i], tarjetasCount:tCount[i],
+      total:r.money[i]+mMoney[i]+tMoney[i],
+    })).sort((a,b)=>b.total-a.total);
+  })();
 
   // ── VISTA COMPLETA DE RESULTADOS FINALES (cuando hay historial guardado) ──
   if (status === "finalizada" && histData && histData.jugadores) {
@@ -436,6 +455,22 @@ function SpectatorView({ rondaId }) {
             );
           })}
         </Card>
+
+        {liveMoney && (
+          <Card>
+            <SLabel>💰 ¿Cómo va el dinero? <span style={{ fontSize:10, color:D.textDim, fontWeight:400 }}>(estimado)</span></SLabel>
+            {liveMoney.map((p, pos) => (
+              <div key={p.name} style={{ padding:"9px 0", borderBottom:pos<liveMoney.length-1?`1px solid ${D.border}`:"none" }}>
+                <div style={{ display:"flex", justifyContent:"space-between", marginBottom:3 }}>
+                  <div style={{ fontSize:13, fontWeight:700 }}>{p.name}</div>
+                  <div style={{ fontSize:14, fontWeight:900, color:p.total>=0?D.success:D.danger }}>{p.total>=0?`+$${p.total}`:`-$${Math.abs(p.total)}`}</div>
+                </div>
+                <div style={{ fontSize:10, color:D.textSub }}>Score ${p.scoreMoney} · Marcas ${p.marcasMoney} ({p.marcasPts}pts) · Tarj ${p.tarjetasMoney} ({p.tarjetasCount})</div>
+              </div>
+            ))}
+            <div style={{ fontSize:10, color:D.textDim, textAlign:"center", marginTop:6 }}>Los hoyos sin jugar se calculan como par</div>
+          </Card>
+        )}
 
         {pars && pars.length > 0 && (
           <Card>
@@ -667,7 +702,7 @@ function AdminApp({ onExit }) {
   };
 
   const updateGame = (state) => { saveToLocal(state); syncFirebase(state); };
-  const getState = () => ({ players, pars, scores, marcas, tarjetas, hole, campo, status:"en_juego", rondaId });
+  const getState = () => ({ players, pars, scores, marcas, tarjetas, hole, campo, status:"en_juego", rondaId, apuesta, marcaVal, tarjetaVal });
 
   const resumeRonda = () => {
     if (!savedRonda) return;
