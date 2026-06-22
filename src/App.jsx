@@ -462,6 +462,19 @@ function SpectatorView({ rondaId }) {
             <div style={{ fontSize:13, color:D.gold, fontWeight:700 }}>PAR {(pars||[])[hole||0]||"—"}</div>
           </Card>
         )}
+        {status !== "finalizada" && pars && (
+          <Card style={{ marginBottom:12 }}>
+            <SLabel>🚩 Orden de salida</SLabel>
+            <div style={{ display:"flex", flexWrap:"wrap", gap:8 }}>
+              {calcOrden(players, scores, pars, hole||0).map((pi, pos) => (
+                <div key={players[pi].id} style={{ display:"flex", alignItems:"center", gap:6, padding:"5px 10px 5px 6px", background:D.goldDim, borderRadius:20, border:`1px solid ${D.gold}33` }}>
+                  <div style={{ width:18, height:18, borderRadius:"50%", background:D.gold, color:"#fff", fontSize:10, fontWeight:900, display:"flex", alignItems:"center", justifyContent:"center" }}>{pos+1}</div>
+                  <span style={{ fontSize:12, fontWeight:600 }}>{players[pi].name}</span>
+                </div>
+              ))}
+            </div>
+          </Card>
+        )}
         <Card>
           <SLabel>🏆 Marcador</SLabel>
           {ranked.map((p, pos) => {
@@ -956,9 +969,15 @@ function AdminApp({ onExit }) {
         <Card>
           <SLabel>Miembros del grupo</SLabel>
           {dir.length===0 && <div style={{ textAlign:"center", color:D.textSub, padding:24, fontSize:13 }}>No hay jugadores aún</div>}
-          {dir.map((p, idx) => (
+          {dir.map((p, idx) => {
+            const ultimosNombres = new Set((historial[0]?.jugadores||[]).map(j=>j.name));
+            const jugoUltima = ultimosNombres.has(p.name);
+            return (
             <div key={p.id} style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 0", borderBottom:idx<dir.length-1?`1px solid ${D.border}`:"none" }}>
-              <Avatar name={p.name} id={p.id} size={36} />
+              <div style={{ position:"relative" }}>
+                <Avatar name={p.name} id={p.id} size={36} />
+                {jugoUltima && <div title="Jugó la última ronda" style={{ position:"absolute", bottom:-2, right:-2, width:12, height:12, borderRadius:"50%", background:D.success, border:`2px solid ${D.surface}` }} />}
+              </div>
               <div style={{ flex:1 }}>
                 <div style={{ fontSize:14, fontWeight:600 }}>{p.name}</div>
                 {editingHC===p.id ? (
@@ -988,7 +1007,8 @@ function AdminApp({ onExit }) {
                 <button onClick={() => setConfirmDelete(p.id)} style={{ padding:"5px 8px", border:`1px solid ${D.danger}44`, borderRadius:8, background:"transparent", color:D.danger, fontSize:11, cursor:"pointer" }}>✕</button>
               )}
             </div>
-          ))}
+            );
+          })}
         </Card>
         <Card>
           <SLabel>Agregar jugador</SLabel>
@@ -998,6 +1018,21 @@ function AdminApp({ onExit }) {
             <button onClick={addPlayer} style={{ padding:"10px 14px", border:`1px solid ${D.gold}`, borderRadius:10, background:D.goldDim, color:D.gold, fontSize:13, fontWeight:700, cursor:"pointer" }}>+ Agregar</button>
           </div>
         </Card>
+        <button onClick={() => {
+          const ultimosNombres = new Set((historial[0]?.jugadores||[]).map(j=>j.name));
+          const lines = [
+            `📋 *H19 Golf — Reporte de Handicaps*`,
+            `_Actualizado al ${new Date().toLocaleDateString('es-MX')}_`,
+            ``,
+            ...dir.slice().sort((a,b)=>a.hc-b.hc).map(p => `${ultimosNombres.has(p.name)?"🟢":"⚪"} ${p.name} — HC ${p.hc}`),
+            ``,
+            `🟢 = Jugó la última ronda${historial[0]?.nombre ? ` (${historial[0].nombre})` : ""}`,
+          ].join("\n");
+          const url = `https://wa.me/?text=${encodeURIComponent(lines)}`;
+          window.open(url, "_blank");
+        }} style={{ width:"100%", padding:"12px", border:"none", borderRadius:12, background:"#25D366", color:"#fff", fontSize:13, fontWeight:700, cursor:"pointer", marginBottom:10 }}>
+          💬 Compartir reporte de handicaps
+        </button>
         <Btn onClick={() => setScreen("sel")}>⛳ Iniciar ronda</Btn>
       </div>
     </div>
