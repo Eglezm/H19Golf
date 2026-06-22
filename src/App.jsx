@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { initializeApp } from "firebase/app";
-import { getDatabase, ref, set, onValue } from "firebase/database";
+import { getDatabase, ref, set, onValue, remove } from "firebase/database";
 
 const firebaseConfig = {
   apiKey: "AIzaSyAsWuJRelERz7W2QG3-DPaOprKKT0TJBA4",
@@ -703,6 +703,7 @@ function AdminApp({ onExit }) {
   const [nombreRonda, setNombreRonda] = useState("");
   const [historial, setHistorial] = useState([]);
   const [expandedHist, setExpandedHist] = useState(null);
+  const [confirmDeleteHist, setConfirmDeleteHist] = useState(null);
 
   // Load historial from Firebase
   useEffect(() => {
@@ -1168,6 +1169,17 @@ function AdminApp({ onExit }) {
                       })}
                     </div>
                   )}
+                  <div style={{ marginTop:14, paddingTop:10, borderTop:`1px solid ${D.border}` }}>
+                    {confirmDeleteHist === r.id ? (
+                      <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                        <span style={{ fontSize:12, color:D.danger, flex:1 }}>¿Eliminar esta ronda del historial?</span>
+                        <button onClick={() => { remove(ref(db, `historial/${r.id}`)); setConfirmDeleteHist(null); setExpandedHist(null); }} style={{ padding:"6px 12px", border:`1px solid ${D.danger}`, borderRadius:8, background:D.redBg, color:D.danger, fontSize:11, fontWeight:700, cursor:"pointer" }}>Sí, eliminar</button>
+                        <button onClick={() => setConfirmDeleteHist(null)} style={{ padding:"6px 12px", border:`1px solid ${D.border}`, borderRadius:8, background:"transparent", color:D.textSub, fontSize:11, cursor:"pointer" }}>Cancelar</button>
+                      </div>
+                    ) : (
+                      <button onClick={() => setConfirmDeleteHist(r.id)} style={{ width:"100%", padding:"8px", border:`1px solid ${D.danger}44`, borderRadius:8, background:"transparent", color:D.danger, fontSize:12, cursor:"pointer" }}>🗑️ Eliminar ronda</button>
+                    )}
+                  </div>
                 </div>
               )}
             </div>
