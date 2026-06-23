@@ -288,6 +288,8 @@ function SpectatorView({ rondaId }) {
     return () => unsub();
   }, [rondaId]);
 
+  useEffect(() => { setDistGreen(null); setDistWaypoint(null); setGpsError(""); }, [ronda?.hole]);
+
   const appStyle = { fontSize:14, fontFamily:"-apple-system,sans-serif", color:D.text, background:D.bg, minHeight:"100vh", maxWidth:420, margin:"0 auto" };
 
   if (loading) {
@@ -336,8 +338,6 @@ function SpectatorView({ rondaId }) {
       { enableHighAccuracy:true, timeout:10000, maximumAge:5000 }
     );
   };
-
-  useEffect(() => { setDistGreen(null); setDistWaypoint(null); setGpsError(""); }, [hole]);
 
 
   // ── DINERO EN VIVO (estimado con hoyos no jugados = par) ──
