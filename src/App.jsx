@@ -25,7 +25,11 @@ const CAMPOS = {
       {lat:19.0601039, lng:-98.3301499}, {lat:19.0598427, lng:-98.3300061}, {lat:19.058892, lng:-98.3300967},
       {lat:19.058652, lng:-98.3307404}, {lat:19.0596076, lng:-98.3300105}, {lat:19.0585069, lng:-98.3313680},
       {lat:19.059541, lng:-98.3316322}, {lat:19.0597324, lng:-98.3309748}, {lat:19.0588899, lng:-98.3317317},
-    ] },
+    ],
+    // Puntos intermedios obligatorios (doglegs) por hoyo, antes de llegar al green
+    waypoints: {
+      5: { label:"La Vista", lat:19.0583248, lng:-98.33006978 }, // hoyo 6 (índice 5)
+    } },
   lavista:   { nombre: "La Vista Country Club",    pares: [4,3,4,5,4,4,3,4,5,5,4,3,4,4,5,4,3,4] },
   campestre: { nombre: "Club Campestre de Puebla", pares: [4,3,5,4,4,4,4,3,5,4,4,5,3,4,5,4,3,4] },
   otro:      { nombre: "Otro campo",               pares: null },
@@ -41,6 +45,14 @@ function distanciaYardas(lat1, lng1, lat2, lng2) {
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
   const metros = R * c;
   return Math.round(metros * 1.09361); // metros a yardas
+}
+
+// Obtiene el waypoint (punto intermedio/dogleg) para un hoyo dado, si existe
+function getWaypoint(campo, holeIndex) {
+  const c = CAMPOS[campo];
+  if (!c || !c.waypoints) return null;
+  const idx = holeIndex % 9;
+  return c.waypoints[idx] || null;
 }
 
 // Obtiene la coordenada del green para un hoyo dado, considerando que en 18 hoyos se repite el recorrido de 9
@@ -254,6 +266,10 @@ function SpectatorView({ rondaId }) {
   const [ronda, setRonda] = useState(null);
   const [histData, setHistData] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [distGreen, setDistGreen] = useState(null);
+  const [distWaypoint, setDistWaypoint] = useState(null);
+  const [gpsError, setGpsError] = useState("");
+  const [gpsLoading, setGpsLoading] = useState(false);
 
   useEffect(() => {
     const r = ref(db, `rondas/${rondaId}`);
@@ -296,6 +312,33 @@ function SpectatorView({ rondaId }) {
   const nets = players.map((p, i) => (scores[i]||[]).reduce((a,v)=>a+(v||0),0) - p.hc);
   const ranked = players.map((p, i) => ({ ...p, net:nets[i], gross:(scores[i]||[]).reduce((a,v)=>a+(v||0),0) })).sort((a,b)=>a.net-b.net);
   const campoNombre = CAMPOS[campo]?.nombre || campo;
+
+  const medirDistancia = () => {
+    const green = getGreenCoord(campo, hole||0);
+    if (!green) { setGpsError("Este campo no tiene GPS configurado para este hoyo"); return; }
+    if (!navigator.geolocation) { setGpsError("Tu navegador no soporta GPS"); return; }
+    setGpsLoading(true); setGpsError(""); setDistGreen(null); setDistWaypoint(null);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const yd = distanciaYardas(pos.coords.latitude, pos.coords.longitude, green.lat, green.lng);
+        setDistGreen(yd);
+        const wp = getWaypoint(campo, hole||0);
+        if (wp) {
+          const ydw = distanciaYardas(pos.coords.latitude, pos.coords.longitude, wp.lat, wp.lng);
+          setDistWaypoint({ label:wp.label, yards:ydw });
+        }
+        setGpsLoading(false);
+      },
+      (err) => {
+        setGpsError(err.code === 1 ? "Activa el permiso de ubicación para usar el GPS" : "No se pudo obtener tu ubicación");
+        setGpsLoading(false);
+      },
+      { enableHighAccuracy:true, timeout:10000, maximumAge:5000 }
+    );
+  };
+
+  useEffect(() => { setDistGreen(null); setDistWaypoint(null); setGpsError(""); }, [hole]);
+
 
   // ── DINERO EN VIVO (estimado con hoyos no jugados = par) ──
   const liveMoney = (() => {
@@ -485,6 +528,28 @@ function SpectatorView({ rondaId }) {
             <div style={{ fontSize:11, color:D.textSub, letterSpacing:2, textTransform:"uppercase", marginBottom:4 }}>Hoyo actual</div>
             <div style={{ fontSize:36, fontWeight:900 }}>{(hole||0)+1}</div>
             <div style={{ fontSize:13, color:D.gold, fontWeight:700 }}>PAR {(pars||[])[hole||0]||"—"}</div>
+          </Card>
+        )}
+        {status !== "finalizada" && getGreenCoord(campo, hole||0) && (
+          <Card style={{ marginBottom:12, textAlign:"center" }}>
+            {distGreen !== null ? (
+              <div onClick={medirDistancia} style={{ cursor:"pointer" }}>
+                {distWaypoint && (
+                  <div style={{ marginBottom:10, paddingBottom:10, borderBottom:`1px solid ${D.border}` }}>
+                    <div style={{ fontSize:10, fontWeight:700, color:D.textSub, textTransform:"uppercase", letterSpacing:2, marginBottom:2 }}>📍 A {distWaypoint.label}</div>
+                    <div style={{ fontSize:22, fontWeight:900, color:D.text }}>{distWaypoint.yards} <span style={{ fontSize:12, color:D.textSub, fontWeight:600 }}>yds</span></div>
+                  </div>
+                )}
+                <div style={{ fontSize:10, fontWeight:700, color:D.gold, textTransform:"uppercase", letterSpacing:2, marginBottom:4 }}>📍 Distancia al green</div>
+                <div style={{ fontSize:32, fontWeight:900, color:D.text }}>{distGreen} <span style={{ fontSize:14, color:D.textSub, fontWeight:600 }}>yds</span></div>
+                <div style={{ fontSize:10, color:D.textDim, marginTop:2 }}>Toca para actualizar</div>
+              </div>
+            ) : (
+              <button onClick={medirDistancia} disabled={gpsLoading} style={{ width:"100%", padding:"10px", border:`1px solid ${D.gold}`, borderRadius:10, background:D.goldDim, color:D.gold, fontSize:13, fontWeight:700, cursor:"pointer" }}>
+                {gpsLoading ? "📍 Midiendo..." : "📍 Medir distancia al green"}
+              </button>
+            )}
+            {gpsError && <div style={{ fontSize:11, color:D.danger, marginTop:8 }}>{gpsError}</div>}
           </Card>
         )}
         {status !== "finalizada" && pars && (
@@ -890,15 +955,22 @@ function AdminApp({ onExit }) {
 
   const prevHole = () => { if (hole>0) { setHole(hole-1); setTab("score"); } };
 
+  const [distWaypoint, setDistWaypoint] = useState(null);
+
   const medirDistancia = () => {
     const green = getGreenCoord(campo, hole);
     if (!green) { setGpsError("Este campo no tiene GPS configurado para este hoyo"); return; }
     if (!navigator.geolocation) { setGpsError("Tu navegador no soporta GPS"); return; }
-    setGpsLoading(true); setGpsError(""); setDistGreen(null);
+    setGpsLoading(true); setGpsError(""); setDistGreen(null); setDistWaypoint(null);
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         const yd = distanciaYardas(pos.coords.latitude, pos.coords.longitude, green.lat, green.lng);
         setDistGreen(yd);
+        const wp = getWaypoint(campo, hole);
+        if (wp) {
+          const ydw = distanciaYardas(pos.coords.latitude, pos.coords.longitude, wp.lat, wp.lng);
+          setDistWaypoint({ label:wp.label, yards:ydw });
+        }
         setGpsLoading(false);
       },
       (err) => {
@@ -910,7 +982,7 @@ function AdminApp({ onExit }) {
   };
 
   // Reinicia la distancia al cambiar de hoyo
-  useEffect(() => { setDistGreen(null); setGpsError(""); }, [hole]);
+  useEffect(() => { setDistGreen(null); setDistWaypoint(null); setGpsError(""); }, [hole]);
 
 
   const finish = () => {
@@ -1380,6 +1452,12 @@ function AdminApp({ onExit }) {
           <div style={{ background:D.surface, border:`1px solid ${D.border}`, borderRadius:12, padding:"12px 14px", marginBottom:12, textAlign:"center" }}>
             {distGreen !== null ? (
               <div onClick={medirDistancia} style={{ cursor:"pointer" }}>
+                {distWaypoint && (
+                  <div style={{ marginBottom:10, paddingBottom:10, borderBottom:`1px solid ${D.border}` }}>
+                    <div style={{ fontSize:10, fontWeight:700, color:D.textSub, textTransform:"uppercase", letterSpacing:2, marginBottom:2 }}>📍 A {distWaypoint.label}</div>
+                    <div style={{ fontSize:22, fontWeight:900, color:D.text }}>{distWaypoint.yards} <span style={{ fontSize:12, color:D.textSub, fontWeight:600 }}>yds</span></div>
+                  </div>
+                )}
                 <div style={{ fontSize:10, fontWeight:700, color:D.gold, textTransform:"uppercase", letterSpacing:2, marginBottom:4 }}>📍 Distancia al green</div>
                 <div style={{ fontSize:32, fontWeight:900, color:D.text }}>{distGreen} <span style={{ fontSize:14, color:D.textSub, fontWeight:600 }}>yds</span></div>
                 <div style={{ fontSize:10, color:D.textDim, marginTop:2 }}>Toca para actualizar</div>
