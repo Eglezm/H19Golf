@@ -20,11 +20,36 @@ const DEFAULT_TARJETA_VAL = 10;
 const ADMIN_PIN = "1919";
 
 const CAMPOS = {
-  huerta:    { nombre: "Club de Golf La Huerta",   pares: [4,3,3,3,3,4,3,3,3,4,3,3,3,3,4,3,3,3] },
+  huerta:    { nombre: "Club de Golf La Huerta",   pares: [4,3,3,3,3,4,3,3,3,4,3,3,3,3,4,3,3,3],
+    greens: [
+      {lat:19.0601039, lng:-98.3301499}, {lat:19.0598427, lng:-98.3300061}, {lat:19.058892, lng:-98.3300967},
+      {lat:19.058652, lng:-98.3307404}, {lat:19.0596076, lng:-98.3300105}, {lat:19.0585069, lng:-98.3313680},
+      {lat:19.059541, lng:-98.3316322}, {lat:19.0597324, lng:-98.3309748}, {lat:19.0588899, lng:-98.3317317},
+    ] },
   lavista:   { nombre: "La Vista Country Club",    pares: [4,3,4,5,4,4,3,4,5,5,4,3,4,4,5,4,3,4] },
   campestre: { nombre: "Club Campestre de Puebla", pares: [4,3,5,4,4,4,4,3,5,4,4,5,3,4,5,4,3,4] },
   otro:      { nombre: "Otro campo",               pares: null },
 };
+
+// Distancia en yardas entre 2 coordenadas GPS (fórmula de Haversine)
+function distanciaYardas(lat1, lng1, lat2, lng2) {
+  const R = 6371000; // radio de la Tierra en metros
+  const toRad = (d) => d * Math.PI / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a = Math.sin(dLat/2)**2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng/2)**2;
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  const metros = R * c;
+  return Math.round(metros * 1.09361); // metros a yardas
+}
+
+// Obtiene la coordenada del green para un hoyo dado, considerando que en 18 hoyos se repite el recorrido de 9
+function getGreenCoord(campo, holeIndex) {
+  const c = CAMPOS[campo];
+  if (!c || !c.greens) return null;
+  const idx = holeIndex % c.greens.length;
+  return c.greens[idx] || null;
+}
 
 const MARCAS_MULTI = [
   { key: "holeinone", label: "🎯 Hole in One", pts: 10 },
@@ -699,6 +724,9 @@ function AdminApp({ onExit }) {
   const [showTabla, setShowTabla] = useState(false);
   const [rondaId, setRondaId] = useState(null);
   const [shareMsg, setShareMsg] = useState("");
+  const [distGreen, setDistGreen] = useState(null);
+  const [gpsError, setGpsError] = useState("");
+  const [gpsLoading, setGpsLoading] = useState(false);
   const [savedRonda, setSavedRonda] = useState(null);
   const [nombreRonda, setNombreRonda] = useState("");
   const [historial, setHistorial] = useState([]);
@@ -861,6 +889,29 @@ function AdminApp({ onExit }) {
   };
 
   const prevHole = () => { if (hole>0) { setHole(hole-1); setTab("score"); } };
+
+  const medirDistancia = () => {
+    const green = getGreenCoord(campo, hole);
+    if (!green) { setGpsError("Este campo no tiene GPS configurado para este hoyo"); return; }
+    if (!navigator.geolocation) { setGpsError("Tu navegador no soporta GPS"); return; }
+    setGpsLoading(true); setGpsError(""); setDistGreen(null);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const yd = distanciaYardas(pos.coords.latitude, pos.coords.longitude, green.lat, green.lng);
+        setDistGreen(yd);
+        setGpsLoading(false);
+      },
+      (err) => {
+        setGpsError(err.code === 1 ? "Activa el permiso de ubicación para usar el GPS" : "No se pudo obtener tu ubicación");
+        setGpsLoading(false);
+      },
+      { enableHighAccuracy:true, timeout:10000, maximumAge:5000 }
+    );
+  };
+
+  // Reinicia la distancia al cambiar de hoyo
+  useEffect(() => { setDistGreen(null); setGpsError(""); }, [hole]);
+
 
   const finish = () => {
     try { localStorage.removeItem("h19-ronda-activa"); } catch(e) {}
@@ -1325,6 +1376,22 @@ function AdminApp({ onExit }) {
       </div>
       {shareMsg && <div style={{ margin:"0 12px 10px", padding:"8px 12px", background:D.greenBg, border:`1px solid ${D.success}`, borderRadius:10, color:D.success, fontSize:12, textAlign:"center", fontWeight:600 }}>{shareMsg}</div>}
       <div style={{ padding:"0 12px" }}>
+        {getGreenCoord(campo, hole) && (
+          <div style={{ background:D.surface, border:`1px solid ${D.border}`, borderRadius:12, padding:"12px 14px", marginBottom:12, textAlign:"center" }}>
+            {distGreen !== null ? (
+              <div onClick={medirDistancia} style={{ cursor:"pointer" }}>
+                <div style={{ fontSize:10, fontWeight:700, color:D.gold, textTransform:"uppercase", letterSpacing:2, marginBottom:4 }}>📍 Distancia al green</div>
+                <div style={{ fontSize:32, fontWeight:900, color:D.text }}>{distGreen} <span style={{ fontSize:14, color:D.textSub, fontWeight:600 }}>yds</span></div>
+                <div style={{ fontSize:10, color:D.textDim, marginTop:2 }}>Toca para actualizar</div>
+              </div>
+            ) : (
+              <button onClick={medirDistancia} disabled={gpsLoading} style={{ width:"100%", padding:"10px", border:`1px solid ${D.gold}`, borderRadius:10, background:D.goldDim, color:D.gold, fontSize:13, fontWeight:700, cursor:"pointer" }}>
+                {gpsLoading ? "📍 Midiendo..." : "📍 Medir distancia al green"}
+              </button>
+            )}
+            {gpsError && <div style={{ fontSize:11, color:D.danger, marginTop:8 }}>{gpsError}</div>}
+          </div>
+        )}
         {hole > 0 && (
           <div style={{ background:D.surface, border:`1px solid ${D.border}`, borderRadius:12, padding:"10px 14px", marginBottom:12 }}>
             <div style={{ fontSize:10, fontWeight:700, color:D.gold, textTransform:"uppercase", letterSpacing:2, marginBottom:8 }}>🏌️ Orden de salida</div>
