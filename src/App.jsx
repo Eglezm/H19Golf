@@ -182,50 +182,67 @@ function calcMarcasPts(players, marcas) {
 }
 
 function calcMarcasResumen(players, marcas) {
-  // Devuelve lista de eventos: { hole, label, playerName }
+  // Devuelve lista de eventos: { hole, label, playerName }, excluyendo jugadores que no participan en Marcas
+  const playsMarcas = (p) => p ? (p.opts ? p.opts.marcas !== false : true) : false;
   const eventos = [];
   marcas.forEach((h, hi) => {
     MARCAS_MULTI.forEach(m => {
       players.forEach((p, pi) => {
-        if (h.multi[pi]?.[m.key]) eventos.push({ hole:hi+1, label:m.label, playerName:p.name });
+        if (h.multi[pi]?.[m.key] && playsMarcas(p)) eventos.push({ hole:hi+1, label:m.label, playerName:p.name });
       });
     });
-    if (h.oyes !== null && h.oyes !== undefined) eventos.push({ hole:hi+1, label:"⛳ O'Yes", playerName:players[h.oyes]?.name||"—" });
-    if (h.regulation !== null && h.regulation !== undefined) eventos.push({ hole:hi+1, label:"✅ Regulation", playerName:players[h.regulation]?.name||"—" });
+    if (h.oyes !== null && h.oyes !== undefined && playsMarcas(players[h.oyes])) eventos.push({ hole:hi+1, label:"⛳ O'Yes", playerName:players[h.oyes]?.name||"—" });
+    if (h.regulation !== null && h.regulation !== undefined && playsMarcas(players[h.regulation])) eventos.push({ hole:hi+1, label:"✅ Regulation", playerName:players[h.regulation]?.name||"—" });
   });
   return eventos.sort((a,b) => a.hole - b.hole);
 }
 
 function calcMarcasMoney(players, marcas, marcaVal) {
   const pts = calcMarcasPts(players, marcas);
+  const playsMarcas = players.map(p => p.opts ? p.opts.marcas !== false : true);
   return players.map((_, i) => {
+    if (!playsMarcas[i]) return 0;
     let b = 0;
-    players.forEach((_, j) => { if (i !== j) { b += pts[i]*marcaVal; b -= pts[j]*marcaVal; } });
+    players.forEach((_, j) => {
+      if (i !== j && playsMarcas[j]) { b += pts[i]*marcaVal; b -= pts[j]*marcaVal; }
+    });
     return b;
   });
 }
 
 function calcTarjetasMoney(players, tarjetas, tarjetaVal) {
   const count = players.map((_, i) => TARJETAS.filter(t => tarjetas[t.key] === i).length);
+  const playsTarjetas = players.map(p => p.opts ? p.opts.tarjetas !== false : true);
   return players.map((_, i) => {
+    if (!playsTarjetas[i]) return 0;
     let b = 0;
-    players.forEach((_, j) => { if (i !== j) { b -= count[i]*tarjetaVal; b += count[j]*tarjetaVal; } });
+    players.forEach((_, j) => {
+      if (i !== j && playsTarjetas[j]) { b -= count[i]*tarjetaVal; b += count[j]*tarjetaVal; }
+    });
     return b;
   });
 }
 
 function calcMoney(players, scores, apuesta) {
-  const n = players.length;
+  const playsScore = players.map(p => p.opts ? p.opts.score !== false : true);
+  const idxIn = players.map((_, i) => i).filter(i => playsScore[i]);
+  const n = idxIn.length;
   const nets = players.map((p, i) => scores[i].reduce((a, b) => a+b, 0) - p.hc);
+  if (n < 2) {
+    // No hay suficientes jugadores en la apuesta de score
+    return { nets, fi:[], si:[], pot:0, money: players.map(() => 0) };
+  }
   const pot = apuesta * n;
-  const uniq = [...new Set(nets)].sort((a, b) => a-b);
+  const netsIn = idxIn.map(i => nets[i]);
+  const uniq = [...new Set(netsIn)].sort((a, b) => a-b);
   const f = uniq[0], s = uniq[1];
-  const fi = nets.reduce((a, v, i) => v===f ? [...a,i] : a, []);
-  const si = s !== undefined ? nets.reduce((a, v, i) => v===s ? [...a,i] : a, []) : [];
-  const loserIdxs = nets.reduce((a, v, i) => v!==f ? [...a,i] : a, []);
+  const fi = idxIn.filter(i => nets[i] === f);
+  const si = s !== undefined ? idxIn.filter(i => nets[i] === s) : [];
+  const loserIdxs = idxIn.filter(i => nets[i] !== f);
   const totalFromLosers = apuesta * loserIdxs.length;
   const totalNonFirst = apuesta * (n - fi.length);
   return { nets, fi, si, pot, money: players.map((_, i) => {
+    if (!playsScore[i]) return 0;
     if (n <= 9) return fi.includes(i) ? Math.round(totalFromLosers/fi.length) : -apuesta;
     if (fi.length > 1) return fi.includes(i) ? Math.round(totalFromLosers/fi.length) : -apuesta;
     if (fi.includes(i)) return Math.round(totalNonFirst*0.6);
@@ -234,30 +251,41 @@ function calcMoney(players, scores, apuesta) {
   })};
 }
 
-function calcHC(players, scores) {
+function calcHC(players, scores, si = []) {
   const nets = players.map((p, i) => scores[i].reduce((a, b) => a+b, 0) - p.hc);
   const fnet = Math.min(...nets);
   const fi = nets.reduce((a, v, i) => v===fnet ? [...a,i] : a, []);
+  const ganadores = [...new Set([...fi, ...si])]; // 1er y 2do lugar (si aplica), sin duplicados
   const deltas = {};
   players.forEach(p => { deltas[p.id] = 0; });
-  fi.forEach(wi => {
+  let subeATodos = false; // el +1 a los demás se aplica una sola vez aunque haya varios ganadores con HC=0
+  ganadores.forEach(wi => {
     const w = players[wi];
-    if (w.hc === 0) players.forEach((p, i) => { if (i !== wi) deltas[p.id] += 1; });
+    if (w.hc === 0) subeATodos = true;
     else deltas[w.id] -= 1;
   });
-  return players.map(p => ({ ...p, before:p.hc, delta:deltas[p.id], after:Math.max(0, p.hc+deltas[p.id]) }));
+  if (subeATodos) {
+    players.forEach((p, i) => { if (!ganadores.includes(i)) deltas[p.id] += 1; });
+  }
+  return players.map(p => ({
+    ...p,
+    before: p.hc,
+    delta: deltas[p.id],
+    after: Math.min(8, Math.max(0, p.hc + deltas[p.id])),
+  }));
 }
 
 function calcOrden(players, scores, pars, currentHole) {
   if (currentHole === 0) return players.map((_, i) => i);
   return players.map((_, i) => i).sort((a, b) => {
-    const h = currentHole - 1;
-    const sa = scores[a][h] ?? pars[h];
-    const sb = scores[b][h] ?? pars[h];
-    if (sa !== sb) return sa - sb;
-    const na = scores[a].slice(0,currentHole).reduce((s,v,j)=>s+(v??pars[j]),0) - players[a].hc;
-    const nb = scores[b].slice(0,currentHole).reduce((s,v,j)=>s+(v??pars[j]),0) - players[b].hc;
-    return na - nb;
+    // Compara el resultado del hoyo anterior; si hay empate, retrocede hoyo por hoyo
+    // hasta encontrar diferencia (desempate por hoyos previos, no por acumulado total)
+    for (let h = currentHole - 1; h >= 0; h--) {
+      const sa = scores[a][h] ?? pars[h];
+      const sb = scores[b][h] ?? pars[h];
+      if (sa !== sb) return sa - sb;
+    }
+    return 0; // empate total en todos los hoyos jugados
   });
 }
 
@@ -349,9 +377,10 @@ function SpectatorView({ rondaId }) {
     }));
     const r = calcMoney(players, fullSc, apuesta);
     const mMoney = marcas ? calcMarcasMoney(players, marcas, marcaVal||0) : players.map(()=>0);
-    const mPts = marcas ? calcMarcasPts(players, marcas) : players.map(()=>0);
+    const mPtsRaw = marcas ? calcMarcasPts(players, marcas) : players.map(()=>0);
+    const mPts = players.map((p,i) => (p.opts?.marcas === false) ? 0 : mPtsRaw[i]);
     const tMoney = tarjetas ? calcTarjetasMoney(players, tarjetas, tarjetaVal||0) : players.map(()=>0);
-    const tCount = tarjetas ? players.map((_,i) => TARJETAS.filter(t=>tarjetas[t.key]===i).length) : players.map(()=>0);
+    const tCount = players.map((p,i) => (p.opts?.tarjetas === false) ? 0 : (tarjetas ? TARJETAS.filter(t=>tarjetas[t.key]===i).length : 0));
     return players.map((p,i) => ({
       name:p.name, scoreMoney:r.money[i], marcasMoney:mMoney[i], marcasPts:mPts[i],
       tarjetasMoney:tMoney[i], tarjetasCount:tCount[i],
@@ -404,7 +433,7 @@ function SpectatorView({ rondaId }) {
           </Card>
 
           {histData.marcas && histData.playerNames && (() => {
-            const eventos = calcMarcasResumen(histData.playerNames.map(n=>({name:n})), histData.marcas);
+            const eventos = calcMarcasResumen(histData.playerNames.map((n,i)=>({name:n, opts:histData.playerOptsArr?.[i]})), histData.marcas);
             return eventos.length > 0 ? (
               <Card>
                 <SLabel>⭐ Resumen de marcas</SLabel>
@@ -880,7 +909,10 @@ function AdminApp({ onExit }) {
 
   const startGame = () => {
     if (sel.size < 2) return;
-    const ps = dir.filter(p => sel.has(p.id));
+    const ps = dir.filter(p => sel.has(p.id)).map(p => ({
+      ...p,
+      opts: playerOpts[p.id] || {score:true, marcas:true, tarjetas:true},
+    }));
     const basePares = CAMPOS[campo].pares || Array(18).fill(4);
     const p = basePares.slice(0, nHoles);
     const initScores = ps.map(() => Array(nHoles).fill(null));
@@ -994,11 +1026,14 @@ function AdminApp({ onExit }) {
     const sc = commitHole(scores, hole); setScores(sc);
     const fullScores = sc.map(row => row.map((v,j) => v===null?pars[j]:v));
     const r = calcMoney(players, fullScores, apuesta);
-    const hc = calcHC(players, fullScores);
+    const playsScoreCount = players.filter(p => p.opts ? p.opts.score !== false : true).length;
+    const siParaHC = (playsScoreCount >= 10 && r.fi.length === 1) ? r.si : [];
+    const hc = calcHC(players, fullScores, siParaHC);
     const marcasMoney = calcMarcasMoney(players, marcas, marcaVal);
-    const marcasPts = calcMarcasPts(players, marcas);
+    const marcasPtsRaw = calcMarcasPts(players, marcas);
+    const marcasPts = players.map((p,i) => (p.opts?.marcas === false) ? 0 : marcasPtsRaw[i]);
     const tarjetasMoney = calcTarjetasMoney(players, tarjetas, tarjetaVal);
-    const tarjetasCount = players.map((_,i) => TARJETAS.filter(t=>tarjetas[t.key]===i).length);
+    const tarjetasCount = players.map((p,i) => (p.opts?.tarjetas === false) ? 0 : TARJETAS.filter(t=>tarjetas[t.key]===i).length);
     const resultData = { ...r, hcUpdates:hc, marcasMoney, marcasPts, tarjetasMoney, tarjetasCount, fullScores };
     setResults(resultData);
     updateGame({ ...getState(), scores:sc, status:"finalizada" });
@@ -1029,6 +1064,7 @@ function AdminApp({ onExit }) {
         // Tarjeta completa hoyo por hoyo
         pars,
         playerNames: players.map(p=>p.name),
+        playerOptsArr: players.map(p=>p.opts || {score:true,marcas:true,tarjetas:true}),
         scoresPorHoyo: fullScores,
         marcas,
         tarjetas,
@@ -1218,7 +1254,7 @@ function AdminApp({ onExit }) {
                   ))}
 
                   {r.marcas && r.playerNames && (() => {
-                    const eventos = calcMarcasResumen(r.playerNames.map(n=>({name:n})), r.marcas);
+                    const eventos = calcMarcasResumen(r.playerNames.map((n,i)=>({name:n, opts:r.playerOptsArr?.[i]})), r.marcas);
                     return eventos.length > 0 ? (
                       <div style={{ marginTop:12 }}>
                         <div style={{ fontSize:11, fontWeight:700, color:D.textSub, marginBottom:6, textTransform:"uppercase", letterSpacing:1 }}>⭐ Resumen de marcas</div>
@@ -1515,7 +1551,9 @@ function AdminApp({ onExit }) {
           <div>
             <Card>
               <SLabel>Marcas por jugador</SLabel>
-              {players.map((pl, pi) => (
+              {players.map((pl, pi) => {
+                if (pl.opts?.marcas === false) return null;
+                return (
                 <div key={pl.id} style={{ marginBottom:12, paddingBottom:12, borderBottom:pi<players.length-1?`1px solid ${D.border}`:"none" }}>
                   <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:10 }}>
                     <Avatar name={pl.name} id={pl.id} size={26} />
@@ -1546,7 +1584,8 @@ function AdminApp({ onExit }) {
                     })}
                   </div>
                 </div>
-              ))}
+                );
+              })}
             </Card>
             <Card>
               <SLabel>Marcas exclusivas</SLabel>
@@ -1554,7 +1593,7 @@ function AdminApp({ onExit }) {
                 <div style={{ marginBottom:16 }}>
                   <div style={{ fontSize:13, fontWeight:700, marginBottom:8 }}>📍 O'Yes <span style={{ fontSize:11, color:D.textSub, fontWeight:400 }}>— más cerca 1er tiro · 1pt</span></div>
                   <div style={{ display:"flex", flexWrap:"wrap", gap:8 }}>
-                    {players.map((pl,pi) => <Pill key={pl.id} active={marcas[hole].oyes===pi} onClick={() => setExclusive("oyes",pi)}>{pl.name}</Pill>)}
+                    {players.filter(pl=>pl.opts?.marcas!==false).map((pl) => { const pi=players.indexOf(pl); return <Pill key={pl.id} active={marcas[hole].oyes===pi} onClick={() => setExclusive("oyes",pi)}>{pl.name}</Pill>; })}
                     <Pill active={marcas[hole].oyes===null} onClick={() => setExclusive("oyes",null)}>Ninguno</Pill>
                   </div>
                 </div>
@@ -1563,7 +1602,7 @@ function AdminApp({ onExit }) {
                 <div>
                   <div style={{ fontSize:13, fontWeight:700, marginBottom:8 }}>🎯 Regulation <span style={{ fontSize:11, color:D.textSub, fontWeight:400 }}>— más cerca {pars[hole]===4?"2do":"3er"} tiro · 1pt</span></div>
                   <div style={{ display:"flex", flexWrap:"wrap", gap:8 }}>
-                    {players.map((pl,pi) => <Pill key={pl.id} active={marcas[hole].regulation===pi} onClick={() => setExclusive("regulation",pi)}>{pl.name}</Pill>)}
+                    {players.filter(pl=>pl.opts?.marcas!==false).map((pl) => { const pi=players.indexOf(pl); return <Pill key={pl.id} active={marcas[hole].regulation===pi} onClick={() => setExclusive("regulation",pi)}>{pl.name}</Pill>; })}
                     <Pill active={marcas[hole].regulation===null} onClick={() => setExclusive("regulation",null)}>Ninguno</Pill>
                   </div>
                 </div>
@@ -1589,11 +1628,11 @@ function AdminApp({ onExit }) {
                     <div style={{ fontSize:11, color:D.textSub, fontStyle:"italic" }}>Se asigna automáticamente · Par3≥6, Par4≥8, Par5≥10</div>
                   ) : (
                     <div style={{ display:"flex", flexWrap:"wrap", gap:8 }}>
-                      {players.map((pl,pi) => (
+                      {players.filter(pl=>pl.opts?.tarjetas!==false).map((pl) => { const pi = players.indexOf(pl); return (
                         <div key={pl.id} onClick={() => assignTarjeta(tj.key,pi)} style={{ display:"flex", alignItems:"center", gap:6, padding:"6px 12px", border:`1px solid ${owner===pi?D.danger:D.border}`, borderRadius:20, background:owner===pi?D.redBg:"transparent", color:owner===pi?D.danger:D.textSub, fontSize:12, fontWeight:600, cursor:"pointer", userSelect:"none" }}>
                           <Avatar name={pl.name} id={pl.id} size={18} />{pl.name}
                         </div>
-                      ))}
+                      ); })}
                       {owner!==null && <Pill danger onClick={() => assignTarjeta(tj.key,null)}>✕ Quitar</Pill>}
                     </div>
                   )}
@@ -1602,7 +1641,8 @@ function AdminApp({ onExit }) {
             })}
             <div style={{ marginTop:8, padding:"10px 12px", background:D.surface, borderRadius:10 }}>
               <div style={{ fontSize:10, color:D.gold, fontWeight:700, marginBottom:8, textTransform:"uppercase", letterSpacing:1 }}>Poseedores</div>
-              {players.map((pl,pi) => {
+              {players.filter(pl=>pl.opts?.tarjetas!==false).map((pl) => {
+                const pi = players.indexOf(pl);
                 const mc = TARJETAS.filter(t => tarjetas[t.key]===pi);
                 return (
                   <div key={pl.id} style={{ display:"flex", alignItems:"center", gap:8, padding:"5px 0", borderBottom:`1px solid ${D.border}` }}>
