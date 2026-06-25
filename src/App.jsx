@@ -951,7 +951,8 @@ function AdminApp({ onExit }) {
     });
     const newTarjetas = {...tarjetas};
     const limit = p===3?6:p===4?8:p===5?10:999;
-    if (s >= limit) newTarjetas["doblepar"] = pi;
+    const jugadorParticipaTarjetas = players[pi]?.opts ? players[pi].opts.tarjetas !== false : true;
+    if (s >= limit && jugadorParticipaTarjetas) newTarjetas["doblepar"] = pi;
     setScores(newScores); setMarcas(newMarcas); setTarjetas(newTarjetas);
     updateGame({ ...getState(), scores:newScores, marcas:newMarcas, tarjetas:newTarjetas });
   };
