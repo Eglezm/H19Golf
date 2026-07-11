@@ -32,7 +32,7 @@ const CAMPOS = {
     } },
   lavista:   { nombre: "La Vista Country Club",    pares: [4,3,4,5,4,4,3,4,5,5,4,3,4,4,5,4,3,4] },
   campestre: { nombre: "Club Campestre de Puebla", pares: [4,3,5,4,4,4,4,3,5,4,4,5,3,4,5,4,3,4] },
-  soltepec:  { nombre: "Club de Golf Hacienda Soltepe", pares: [4,4,5,3,5,3,4,4,3,4,4,5,3,5,3,4,4,3] },
+  soltepec:  { nombre: "Club de Golf Hacienda Soltepec", pares: [4,4,5,3,5,3,4,4,3,4,4,5,3,5,3,4,4,3] },
   otro:      { nombre: "Otro campo",               pares: null },
 };
 
