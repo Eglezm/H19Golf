@@ -32,7 +32,7 @@ const CAMPOS = {
     } },
   lavista:   { nombre: "La Vista Country Club",    pares: [4,3,4,5,4,4,3,4,5,5,4,3,4,4,5,4,3,4] },
   campestre: { nombre: "Club Campestre de Puebla", pares: [4,3,5,4,4,4,4,3,5,4,4,5,3,4,5,4,3,4] },
-  soltepec:  { nombre: "Club de Golf Hacienda Soltepec", pares: [4,4,5,3,5,3,4,4,3,4,4,5,3,5,3,4,4,3] },
+  soltepec: { nombre: "Club de Golf Hacienda Soltepec", pares: [4,4,5,3,5,3,4,4,3,4,4,5,3,5,3,4,4,3] },
   otro:      { nombre: "Otro campo",               pares: null },
 };
 
@@ -109,7 +109,7 @@ const emptyMarca = (n) => ({
   multi: Array(n).fill(null).map(() => ({ holeinone:false, eagle:false, birdie:false, holeout:false, sandy:false })),
   oyes: null, regulation: null,
 });
-const emptyTarjetas = () => { const t = {}; TARJETAS.forEach(tj => { t[tj.key] = null; }); return t; };
+const emptyTarjetas = () => { const t = {}; TARJETAS.forEach(tj => { t[tj.key] = null; }); t["threeput_hole"] = null; return t; };
 
 function Avatar({ name, id, size = 32 }) {
   const c = col(id);
@@ -973,6 +973,10 @@ function AdminApp({ onExit }) {
 
   const assignTarjeta = (tkey, pi) => {
     const newTarjetas = { ...tarjetas, [tkey]:tarjetas[tkey]===pi?null:pi };
+    // Guardar en qué hoyo se asignó el threeput para bloquear Sandy solo en ese hoyo
+    if (tkey==="threeput") {
+      newTarjetas["threeput_hole"] = tarjetas["threeput"]===pi ? null : hole;
+    }
     let newMarcas = marcas;
     if (tkey==="threeput" && tarjetas["threeput"]!==pi) {
       newMarcas = marcas.map((m,h) => { if (h!==hole) return m; return { ...m, multi:m.multi.map((row,i)=>i===pi?{...row,sandy:false}:row) }; });
@@ -1566,7 +1570,7 @@ function AdminApp({ onExit }) {
                     {MARCAS_MULTI.map(m => {
                       const cs = scores[pi][hole]===null?pars[hole]:scores[pi][hole];
                       const cp = pars[hole], diff=cs-cp, bogey=diff>=1;
-                      const hasTP = tarjetas["threeput"]===pi;
+                      const hasTP = tarjetas["threeput"]===pi && tarjetas["threeput_hole"]===hole;
                       const p3 = cp===3 && (m.key==="holeinone"||m.key==="birdie"||m.key==="eagle");
                       const p4 = cp===4 && (m.key==="eagle"||m.key==="birdie");
                       const p5 = cp===5 && (m.key==="eagle"||m.key==="birdie");
