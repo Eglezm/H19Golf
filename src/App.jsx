@@ -1808,17 +1808,23 @@ function AdminApp({ onExit }) {
             <div style={{ width:40, textAlign:"center", fontSize:10, fontWeight:700, color:D.gold }}>NETO</div>
           </div>
           {players.map((p,i) => {
-            const bruto = (scores[i]||[]).reduce((a,v,j)=>a+(v===null?pars[j]:v),0);
-            const neto = bruto - p.hc;
+            const jugados = (scores[i]||[]).filter(v => v !== null && v !== undefined);
+            const bruto = jugados.length > 0 ? jugados.reduce((a,b)=>a+b,0) : null;
+            const neto = bruto !== null ? bruto - p.hc : null;
             return { name:p.name, id:p.id, bruto, hc:p.hc, neto };
-          }).sort((a,b)=>a.neto-b.neto).map((p,pos) => (
+          }).sort((a,b) => {
+            if (a.neto === null && b.neto === null) return 0;
+            if (a.neto === null) return 1;
+            if (b.neto === null) return -1;
+            return a.neto - b.neto;
+          }).map((p,pos) => (
             <div key={p.id} style={{ display:"flex", alignItems:"center", gap:8, padding:"8px 0", borderBottom:pos<players.length-1?`1px solid ${D.border}`:"none" }}>
-              <div style={{ width:20, fontSize:12, color:pos===0?D.gold:D.textSub, fontWeight:700 }}>{pos+1}</div>
-              <Avatar name={p.name} id={p.id} size={26} />
+              <div style={{ width:20, fontSize:12, color:pos===0&&p.neto!==null?D.gold:D.textSub, fontWeight:700 }}>{pos+1}</div>
+              <Avatar name={p.id} id={p.id} size={26} />
               <div style={{ flex:1, fontSize:13, fontWeight:600 }}>{p.name}</div>
-              <div style={{ width:36, textAlign:"center", fontSize:13, fontWeight:700, color:D.text }}>{p.bruto}</div>
+              <div style={{ width:36, textAlign:"center", fontSize:13, fontWeight:700, color:D.text }}>{p.bruto??'—'}</div>
               <div style={{ width:28, textAlign:"center", fontSize:12, color:D.textSub }}>{p.hc}</div>
-              <div style={{ width:40, textAlign:"center", fontSize:14, fontWeight:900, color:pos===0?D.gold:D.text }}>{p.neto}</div>
+              <div style={{ width:40, textAlign:"center", fontSize:14, fontWeight:900, color:pos===0&&p.neto!==null?D.gold:D.text }}>{p.neto??'—'}</div>
             </div>
           ))}
         </Card>
