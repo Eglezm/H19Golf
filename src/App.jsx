@@ -1820,7 +1820,7 @@ function AdminApp({ onExit }) {
           }).map((p,pos) => (
             <div key={p.id} style={{ display:"flex", alignItems:"center", gap:8, padding:"8px 0", borderBottom:pos<players.length-1?`1px solid ${D.border}`:"none" }}>
               <div style={{ width:20, fontSize:12, color:pos===0&&p.neto!==null?D.gold:D.textSub, fontWeight:700 }}>{pos+1}</div>
-              <Avatar name={p.id} id={p.id} size={26} />
+              <Avatar name={p.name} id={p.id} size={26} />
               <div style={{ flex:1, fontSize:13, fontWeight:600 }}>{p.name}</div>
               <div style={{ width:36, textAlign:"center", fontSize:13, fontWeight:700, color:D.text }}>{p.bruto??'—'}</div>
               <div style={{ width:28, textAlign:"center", fontSize:12, color:D.textSub }}>{p.hc}</div>
