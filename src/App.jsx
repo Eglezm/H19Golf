@@ -1878,10 +1878,19 @@ function AdminApp({ onExit }) {
             const vsColor = (v) => v < 0 ? D.success : v > 0 ? D.danger : D.text;
             const resTabla = ranked.map(p => {
               const pi = players.findIndex(pl=>pl.id===p.id);
-              const vsPar = p.bruto - parTotal;
-              const vsParHC = vsPar - p.hc;
-              return { ...p, pi, vsPar, vsParHC };
-            }).sort((a,b) => a.vsParHC - b.vsParHC);
+              const raw = (rawScores||fullScores)[pi];
+              const jugados = raw.filter(s => s !== null && s !== undefined);
+              const brutoReal = jugados.length > 0 ? jugados.reduce((a,b)=>a+b,0) : null;
+              const parJugados = pars.slice(0, raw.reduce((last,s,i)=>s!==null&&s!==undefined?i+1:last, 0)).reduce((a,b)=>a+b,0);
+              const vsPar = brutoReal !== null ? brutoReal - parJugados : null;
+              const vsParHC = vsPar !== null ? vsPar - p.hc : null;
+              return { ...p, pi, raw, brutoReal, vsPar, vsParHC };
+            }).sort((a,b) => {
+              if (a.vsParHC === null && b.vsParHC === null) return 0;
+              if (a.vsParHC === null) return 1;
+              if (b.vsParHC === null) return -1;
+              return a.vsParHC - b.vsParHC;
+            });
             return (
             <div style={{ overflowX:"auto", marginBottom:12 }}>
               <table style={{ borderCollapse:"collapse", width:"100%", fontSize:11, color:D.text }}>
@@ -1921,13 +1930,13 @@ function AdminApp({ onExit }) {
                           <span style={{ fontSize:10, fontWeight:600, whiteSpace:"nowrap" }}>{p.name}</span>
                         </div>
                       </td>
-                      {(rawScores||fullScores)[p.pi].map((s,hi) => (
+                      {p.raw.map((s,hi) => (
                         <td key={hi} style={{ textAlign:"center", padding:"3px 1px" }}><ScoreCell s={s??null} par={pars[hi]} size={20} /></td>
                       ))}
-                      <td style={{ textAlign:"center", padding:"5px 4px", fontWeight:700, fontSize:11, borderLeft:`1px solid ${D.border}` }}>{p.bruto}</td>
+                      <td style={{ textAlign:"center", padding:"5px 4px", fontWeight:700, fontSize:11, borderLeft:`1px solid ${D.border}` }}>{p.brutoReal??'—'}</td>
                       <td style={{ textAlign:"center", padding:"5px 3px", fontSize:11, color:D.textSub }}>{p.hc}</td>
-                      <td style={{ textAlign:"center", padding:"5px 4px", fontWeight:700, fontSize:11, color:vsColor(p.vsPar), borderLeft:`1px solid ${D.border}` }}>{fmtVs(p.vsPar)}</td>
-                      <td style={{ textAlign:"center", padding:"5px 4px", fontWeight:900, fontSize:12, color:vsColor(p.vsParHC), borderLeft:`1px solid ${D.border}` }}>{fmtVs(p.vsParHC)}</td>
+                      <td style={{ textAlign:"center", padding:"5px 4px", fontWeight:700, fontSize:11, color:p.vsPar!==null?vsColor(p.vsPar):D.textDim, borderLeft:`1px solid ${D.border}` }}>{p.vsPar!==null?fmtVs(p.vsPar):'—'}</td>
+                      <td style={{ textAlign:"center", padding:"5px 4px", fontWeight:900, fontSize:12, color:p.vsParHC!==null?vsColor(p.vsParHC):D.textDim, borderLeft:`1px solid ${D.border}` }}>{p.vsParHC!==null?fmtVs(p.vsParHC):'—'}</td>
                       <td style={{ textAlign:"center", padding:"5px 3px", fontWeight:700, fontSize:11, color:"#1A5C24", borderLeft:`1px solid ${D.border}` }}>{p.pts}</td>
                       <td style={{ textAlign:"center", padding:"5px 3px", fontWeight:700, fontSize:11, color:fmtC(p.marcasMoney) }}>{fmt(p.marcasMoney)}</td>
                       <td style={{ textAlign:"center", padding:"5px 3px", fontWeight:700, fontSize:11, color:fmtC(p.tarjetasMoney), borderLeft:`1px solid ${D.border}` }}>{fmt(p.tarjetasMoney)}</td>
