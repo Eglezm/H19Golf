@@ -112,9 +112,10 @@ const emptyTarjetas = () => { const t = {}; TARJETAS.forEach(tj => { t[tj.key] =
 
 function Avatar({ name, id, size = 32 }) {
   const c = col(id);
+  const nameStr = String(name || '?');
   return (
     <div style={{ width:size, height:size, borderRadius:"50%", background:c.bg, color:c.fg, display:"flex", alignItems:"center", justifyContent:"center", fontSize:size*0.34, fontWeight:700, flexShrink:0, border:`1px solid ${c.fg}33` }}>
-      {name.substring(0,2).toUpperCase()}
+      {nameStr.substring(0,2).toUpperCase()}
     </div>
   );
 }
@@ -405,7 +406,9 @@ function SpectatorView({ rondaId }) {
     );
   }
 
-  const { players, scores, pars, hole, campo, tarjetas, marcas, status, apuesta, marcaVal, tarjetaVal } = ronda;
+  const { players: _players, scores: _scores, pars, hole, campo, tarjetas, marcas, status, apuesta, marcaVal, tarjetaVal } = ronda;
+  const players = Array.isArray(_players) ? _players : Object.values(_players||{});
+  const scores = Array.isArray(_scores) ? _scores : Object.values(_scores||{});
   const nets = players.map((p, i) => (scores[i]||[]).reduce((a,v)=>a+(v||0),0) - p.hc);
   const ranked = players.map((p, i) => ({ ...p, net:nets[i], gross:(scores[i]||[]).reduce((a,v)=>a+(v||0),0) })).sort((a,b)=>a.net-b.net);
   const campoNombre = CAMPOS[campo]?.nombre || campo;
@@ -707,7 +710,7 @@ function SpectatorView({ rondaId }) {
                         <td style={{ padding:"6px 6px", position:"sticky", left:0, background:pos===0&&vsParHC!==null?D.goldDim+"55":D.card, zIndex:1 }}>
                           <div style={{ display:"flex", alignItems:"center", gap:5 }}>
                             <span style={{ fontSize:10, fontWeight:700, color:pos===0?D.gold:D.textSub, minWidth:12 }}>{pos+1}</span>
-                            <Avatar name={pl.name} id={pl.id} size={20} />
+                            <Avatar name={String(pl.name||'')} id={pl.id} size={20} />
                             <span style={{ fontSize:11, fontWeight:600, whiteSpace:"nowrap" }}>{pl.name}</span>
                           </div>
                         </td>
