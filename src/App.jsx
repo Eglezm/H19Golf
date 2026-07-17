@@ -769,52 +769,6 @@ function SpectatorView({ rondaId }) {
           ) : null;
         })()}
 
-        {pars && pars.length > 0 && (
-          <Card>
-            <SLabel>🏌️ Tarjeta hoyo por hoyo</SLabel>
-            <div style={{ overflowX:"auto" }}>
-              <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11, minWidth:pars.length*32+90 }}>
-                <thead>
-                  <tr>
-                    <th style={{ textAlign:"left", padding:"4px 6px", color:D.textSub, position:"sticky", left:0, background:D.surface }}>Hoyo</th>
-                    {pars.map((par, h) => (
-                      <th key={h} style={{ padding:"4px 4px", color:h===(hole||0)?D.gold:D.textDim, fontWeight:h===(hole||0)?900:600, minWidth:28 }}>{h+1}</th>
-                    ))}
-                    <th style={{ padding:"4px 6px", color:D.gold, fontWeight:700 }}>Tot</th>
-                  </tr>
-                  <tr>
-                    <td style={{ padding:"2px 6px", color:D.textDim, fontSize:10, position:"sticky", left:0, background:D.surface }}>Par</td>
-                    {pars.map((par, h) => (
-                      <td key={h} style={{ textAlign:"center", padding:"2px 4px", color:D.textDim, fontSize:10 }}>{par}</td>
-                    ))}
-                    <td style={{ textAlign:"center", padding:"2px 6px", color:D.textDim, fontSize:10, fontWeight:700 }}>{pars.reduce((a,b)=>a+b,0)}</td>
-                  </tr>
-                </thead>
-                <tbody>
-                  {players.map((p, pi) => {
-                    const row = scores[pi] || [];
-                    const tot = row.reduce((a,b)=>a+(b||0),0);
-                    return (
-                      <tr key={p.id} style={{ borderTop:`1px solid ${D.border}` }}>
-                        <td style={{ padding:"5px 6px", fontWeight:600, position:"sticky", left:0, background:D.surface, whiteSpace:"nowrap" }}>{p.name}</td>
-                        {pars.map((par, h) => {
-                          const s = row[h];
-                          return (
-                            <td key={h} style={{ textAlign:"center", padding:"3px 1px", background:h===(hole||0)?D.goldDim+"55":"transparent" }}>
-                              <ScoreCell s={s??null} par={par} size={22} />
-                            </td>
-                          );
-                        })}
-                        <td style={{ textAlign:"center", padding:"5px 6px", fontWeight:900, color:D.gold }}>{tot}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-              <ScoreLegend />
-            </div>
-          </Card>
-        )}
 
         {tarjetas && (
           <Card>
