@@ -660,28 +660,78 @@ function SpectatorView({ rondaId }) {
           </Card>
         )}
         <Card>
-          <SLabel>🏆 Marcador</SLabel>
-          {ranked.map((p, pos) => {
-            const pi = players.findIndex(pl => pl.id===p.id);
-            const cs = (scores[pi]||[])[hole||0];
-            const par = (pars||[])[hole||0];
-            const b = cs && par ? getBadge(cs, par) : null;
+          <SLabel>📋 Marcador en vivo</SLabel>
+          {(() => {
+            const parTotal = (pars||[]).reduce((a,b)=>a+b,0);
+            const fmtVs = (v) => v === null ? "—" : v === 0 ? "E" : v > 0 ? `+${v}` : `${v}`;
+            const vsColor = (v) => v === null ? D.textDim : v < 0 ? D.success : v > 0 ? D.danger : D.text;
+            const tablaData = players.map((pl, pi) => {
+              const rowScores = scores[pi] || [];
+              const jugados = rowScores.filter(s => s !== null && s !== undefined);
+              const total = jugados.length > 0 ? jugados.reduce((a,b)=>a+b,0) : null;
+              const lastIdx = rowScores.reduce((last,s,i) => s!==null&&s!==undefined ? i+1 : last, 0);
+              const parJugados = (pars||[]).slice(0, lastIdx).reduce((a,b)=>a+b,0);
+              const vsPar = total !== null ? total - parJugados : null;
+              const vsParHC = vsPar !== null ? vsPar - pl.hc : null;
+              return { pl, pi, rowScores, total, vsPar, vsParHC };
+            }).sort((a,b) => {
+              if (a.vsParHC === null && b.vsParHC === null) return 0;
+              if (a.vsParHC === null) return 1;
+              if (b.vsParHC === null) return -1;
+              return a.vsParHC - b.vsParHC;
+            });
             return (
-              <div key={p.id} style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 0", borderBottom:pos<ranked.length-1?`1px solid ${D.border}`:"none" }}>
-                <div style={{ width:24, height:24, borderRadius:"50%", background:pos===0?D.goldDim:D.surface, border:`1px solid ${pos===0?D.gold:D.border}`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:12, fontWeight:900, color:pos===0?D.gold:D.textSub }}>{pos+1}</div>
-                <Avatar name={p.name} id={p.id} size={32} />
-                <div style={{ flex:1 }}>
-                  <div style={{ fontSize:14, fontWeight:600 }}>{p.name}</div>
-                  <div style={{ fontSize:11, color:D.textSub }}>HC {p.hc} · {p.gross} bruto</div>
-                </div>
-                <div style={{ textAlign:"right" }}>
-                  <div style={{ fontSize:18, fontWeight:900, color:pos===0?D.gold:D.text }}>{p.net}</div>
-                  <div style={{ fontSize:10, color:D.textSub }}>neto</div>
-                </div>
-                {b && <span style={{ fontSize:10, padding:"2px 6px", borderRadius:8, fontWeight:700, background:b.bg, color:b.fg }}>{b.label}</span>}
+              <div style={{ overflowX:"auto" }}>
+                <table style={{ borderCollapse:"collapse", width:"100%", fontSize:11, color:D.text }}>
+                  <thead>
+                    <tr style={{ background:D.surface }}>
+                      <td style={{ padding:"6px 6px", fontWeight:700, color:D.gold, fontSize:10, textTransform:"uppercase", letterSpacing:1, position:"sticky", left:0, background:D.surface, borderBottom:`1px solid ${D.border}`, minWidth:70 }}>Jugador</td>
+                      {(pars||[]).map((_,i) => <td key={i} style={{ padding:"5px 2px", textAlign:"center", fontWeight:700, color:D.textSub, borderBottom:`1px solid ${D.border}`, minWidth:24, fontSize:10 }}>{i+1}</td>)}
+                      <td style={{ padding:"5px 4px", textAlign:"center", fontWeight:700, color:D.gold, borderBottom:`1px solid ${D.border}`, minWidth:28, borderLeft:`1px solid ${D.border}` }}>TOT</td>
+                      <td style={{ padding:"5px 3px", textAlign:"center", fontWeight:700, color:D.textSub, borderBottom:`1px solid ${D.border}`, minWidth:24 }}>HC</td>
+                      <td style={{ padding:"5px 4px", textAlign:"center", fontWeight:700, color:"#1A5C24", borderBottom:`1px solid ${D.border}`, minWidth:32, borderLeft:`1px solid ${D.border}` }}>VS Par</td>
+                      <td style={{ padding:"5px 4px", textAlign:"center", fontWeight:700, color:D.gold, borderBottom:`1px solid ${D.border}`, minWidth:40, borderLeft:`1px solid ${D.border}` }}>VS Par-HC</td>
+                    </tr>
+                    <tr>
+                      <td style={{ padding:"3px 6px", fontSize:10, color:D.textDim, position:"sticky", left:0, background:D.card, borderBottom:`1px solid ${D.border}` }}>PAR</td>
+                      {(pars||[]).map((p,i) => <td key={i} style={{ padding:"3px 2px", textAlign:"center", fontSize:10, color:D.textSub, borderBottom:`1px solid ${D.border}` }}>{p}</td>)}
+                      <td style={{ padding:"3px 4px", textAlign:"center", fontSize:10, color:D.textSub, borderBottom:`1px solid ${D.border}`, borderLeft:`1px solid ${D.border}` }}>{parTotal}</td>
+                      <td style={{ borderBottom:`1px solid ${D.border}` }}></td>
+                      <td style={{ borderBottom:`1px solid ${D.border}`, borderLeft:`1px solid ${D.border}` }}></td>
+                      <td style={{ borderBottom:`1px solid ${D.border}`, borderLeft:`1px solid ${D.border}` }}></td>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {tablaData.map(({ pl, pi, rowScores, total, vsPar, vsParHC }, pos) => (
+                      <tr key={pl.id} style={{ borderBottom:`1px solid ${D.border}`, background:pos===0&&vsParHC!==null?D.goldDim+"55":"transparent" }}>
+                        <td style={{ padding:"6px 6px", position:"sticky", left:0, background:pos===0&&vsParHC!==null?D.goldDim+"55":D.card, zIndex:1 }}>
+                          <div style={{ display:"flex", alignItems:"center", gap:5 }}>
+                            <span style={{ fontSize:10, fontWeight:700, color:pos===0?D.gold:D.textSub, minWidth:12 }}>{pos+1}</span>
+                            <Avatar name={pl.name} id={pl.id} size={20} />
+                            <span style={{ fontSize:11, fontWeight:600, whiteSpace:"nowrap" }}>{pl.name}</span>
+                          </div>
+                        </td>
+                        {(pars||[]).map((par, hi) => {
+                          const s = rowScores[hi];
+                          const isCurrent = hi === (hole||0);
+                          return (
+                            <td key={hi} style={{ textAlign:"center", padding:"3px 1px", background:isCurrent?D.goldDim+"55":"transparent" }}>
+                              <ScoreCell s={s??null} par={par} size={22} />
+                            </td>
+                          );
+                        })}
+                        <td style={{ textAlign:"center", padding:"5px 4px", fontWeight:700, fontSize:12, borderLeft:`1px solid ${D.border}` }}>{total??'—'}</td>
+                        <td style={{ textAlign:"center", padding:"5px 3px", fontSize:11, color:D.textSub }}>{pl.hc}</td>
+                        <td style={{ textAlign:"center", padding:"5px 4px", fontWeight:700, fontSize:12, color:vsColor(vsPar), borderLeft:`1px solid ${D.border}` }}>{fmtVs(vsPar)}</td>
+                        <td style={{ textAlign:"center", padding:"5px 4px", fontWeight:900, fontSize:12, color:vsColor(vsParHC), borderLeft:`1px solid ${D.border}` }}>{fmtVs(vsParHC)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <ScoreLegend />
               </div>
             );
-          })}
+          })()}
         </Card>
 
         {liveMoney && (
@@ -1820,7 +1870,7 @@ function AdminApp({ onExit }) {
           }).map((p,pos) => (
             <div key={p.id} style={{ display:"flex", alignItems:"center", gap:8, padding:"8px 0", borderBottom:pos<players.length-1?`1px solid ${D.border}`:"none" }}>
               <div style={{ width:20, fontSize:12, color:pos===0&&p.neto!==null?D.gold:D.textSub, fontWeight:700 }}>{pos+1}</div>
-              <Avatar name={p.name} id={p.id} size={26} />
+              <Avatar name={p.id} id={p.id} size={26} />
               <div style={{ flex:1, fontSize:13, fontWeight:600 }}>{p.name}</div>
               <div style={{ width:36, textAlign:"center", fontSize:13, fontWeight:700, color:D.text }}>{p.bruto??'—'}</div>
               <div style={{ width:28, textAlign:"center", fontSize:12, color:D.textSub }}>{p.hc}</div>
