@@ -661,7 +661,7 @@ function SpectatorView({ rondaId }) {
         )}
         <Card>
           <SLabel>📋 Marcador en vivo</SLabel>
-          {(() => {
+          {pars && pars.length > 0 && players && players.length > 0 && (() => {
             const parTotal = (pars||[]).reduce((a,b)=>a+b,0);
             const fmtVs = (v) => v === null ? "—" : v === 0 ? "E" : v > 0 ? `+${v}` : `${v}`;
             const vsColor = (v) => v === null ? D.textDim : v < 0 ? D.success : v > 0 ? D.danger : D.text;
@@ -1649,7 +1649,7 @@ function AdminApp({ onExit }) {
               const hasScore = rawScore !== null && rawScore !== undefined;
               const disp = hasScore ? rawScore : null;
               const dispShow = hasScore ? rawScore : pars[hole];
-              const b = getBadge(dispShow, par);
+              const b = dispShow && par ? getBadge(dispShow, par) : null;
               return (
                 <div key={pl.id} style={{ display:"flex", alignItems:"center", gap:10, padding:"11px 0", borderBottom:pos<players.length-1?`1px solid ${D.border}`:"none" }}>
                   <Avatar name={pl.name} id={pl.id} size={30} />
@@ -1657,7 +1657,7 @@ function AdminApp({ onExit }) {
                     <div style={{ fontSize:13, fontWeight:600 }}>{pl.name}</div>
                     <div style={{ fontSize:11, color:D.textSub }}>HC {pl.hc}</div>
                   </div>
-                  {hasScore && <span style={{ fontSize:10, padding:"3px 8px", borderRadius:8, fontWeight:700, background:b.bg, color:b.fg, marginRight:4 }}>{b.label}</span>}
+                  {hasScore && b && <span style={{ fontSize:10, padding:"3px 8px", borderRadius:8, fontWeight:700, background:b.bg, color:b.fg, marginRight:4 }}>{b.label}</span>}
                   <div style={{ display:"flex", alignItems:"center", gap:10 }}>
                     <button onClick={() => changeScore(i,-1)} style={{ width:36,height:36,borderRadius:"50%",border:`1px solid ${D.border}`,background:D.surface,color:D.text,cursor:"pointer",fontSize:22,display:"flex",alignItems:"center",justifyContent:"center" }}>−</button>
                     <div style={{ width:34, textAlign:"center", fontSize:20, fontWeight:900, color:hasScore?D.text:D.textDim }}>
@@ -1780,7 +1780,7 @@ function AdminApp({ onExit }) {
           </Card>
         )}
 
-        {tab==="tabla" && (() => {
+        {tab==="tabla" && pars.length > 0 && players.length > 0 && (() => {
           const parTotal = pars.reduce((a,b)=>a+b,0);
           const tablaData = players.map((pl, pi) => {
             const rowScores = scores[pi];
