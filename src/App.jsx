@@ -72,13 +72,14 @@ const MARCAS_MULTI = [
 ];
 
 const TARJETAS = [
-  { key: "ob",       label: "🚫 Out of Bound", auto: false },
-  { key: "water",    label: "💧 Water",         auto: false },
-  { key: "sand",     label: "⛱️ Sand",          auto: false },
-  { key: "sapo",     label: "🐸 Sapo",          auto: false },
-  { key: "arbol",    label: "🌳 Árbol",         auto: false },
-  { key: "threeput", label: "🔄 Three putt",    auto: false },
-  { key: "doblepar", label: "💀 Doble Par",     auto: true  },
+  { key: "ob",        label: "🚫 Out of Bound", auto: false },
+  { key: "water",     label: "💧 Water",         auto: false },
+  { key: "sand",      label: "⛱️ Sand",          auto: false },
+  { key: "sapo",      label: "🐸 Sapo",          auto: false },
+  { key: "arbol",     label: "🌳 Árbol",         auto: false },
+  { key: "threeput",  label: "🔄 Three putt",    auto: false },
+  { key: "doblepar",  label: "💀 Doble Par",     auto: true  },
+  { key: "peorscore", label: "🪣 Peor Score",    auto: true  },
 ];
 
 const D = {
@@ -279,7 +280,18 @@ function calcMarcasMoney(players, marcas, marcaVal) {
 }
 
 function calcTarjetasMoney(players, tarjetas, tarjetaVal) {
-  const count = players.map((_, i) => TARJETAS.filter(t => tarjetas[t.key] === i).length);
+  // count: cuántas tarjetas tiene cada jugador (incluyendo peorscore que puede ser array)
+  const count = players.map((_, i) => {
+    let c = 0;
+    TARJETAS.forEach(t => {
+      const owner = tarjetas[t.key];
+      if (Array.isArray(owner)) {
+        // Si hay empate (peorscore), se divide la tarjeta entre los empatados
+        if (owner.includes(i)) c += 1 / owner.length;
+      } else if (owner === i) c += 1;
+    });
+    return c;
+  });
   const playsTarjetas = players.map(p => p.opts ? p.opts.tarjetas !== false : true);
   return players.map((_, i) => {
     if (!playsTarjetas[i]) return 0;
@@ -287,7 +299,7 @@ function calcTarjetasMoney(players, tarjetas, tarjetaVal) {
     players.forEach((_, j) => {
       if (i !== j && playsTarjetas[j]) { b -= count[i]*tarjetaVal; b += count[j]*tarjetaVal; }
     });
-    return b;
+    return Math.round(b);
   });
 }
 
@@ -1025,6 +1037,20 @@ function AdminApp({ onExit }) {
     const limit = p===3?6:p===4?8:p===5?10:999;
     const jugadorParticipaTarjetas = players[pi]?.opts ? players[pi].opts.tarjetas !== false : true;
     if (s >= limit && jugadorParticipaTarjetas) newTarjetas["doblepar"] = pi;
+
+    // Peor Score: asignar al jugador con peor neto acumulado hasta ahora
+    const netosActuales = players.map((p, i) => {
+      if (p.opts?.tarjetas === false) return null;
+      const jugados = newScores[i].filter(v => v !== null && v !== undefined);
+      if (jugados.length === 0) return null;
+      return jugados.reduce((a,b)=>a+b,0) - p.hc;
+    });
+    const validNetos = netosActuales.filter(n => n !== null);
+    if (validNetos.length > 0) {
+      const peorNeto = Math.max(...validNetos);
+      const peores = netosActuales.map((n,i) => n === peorNeto ? i : -1).filter(i => i >= 0);
+      newTarjetas["peorscore"] = peores.length === 1 ? peores[0] : peores;
+    }
     setScores(newScores); setMarcas(newMarcas); setTarjetas(newTarjetas);
     updateGame({ ...getState(), scores:newScores, marcas:newMarcas, tarjetas:newTarjetas });
   };
@@ -1111,7 +1137,16 @@ function AdminApp({ onExit }) {
     const marcasPtsRaw = calcMarcasPts(players, marcas);
     const marcasPts = players.map((p,i) => (p.opts?.marcas === false) ? 0 : marcasPtsRaw[i]);
     const tarjetasMoney = calcTarjetasMoney(players, tarjetas, tarjetaVal);
-    const tarjetasCount = players.map((p,i) => (p.opts?.tarjetas === false) ? 0 : TARJETAS.filter(t=>tarjetas[t.key]===i).length);
+    const tarjetasCount = players.map((p,i) => {
+      if (p.opts?.tarjetas === false) return 0;
+      let c = 0;
+      TARJETAS.forEach(t => {
+        const owner = tarjetas[t.key];
+        if (Array.isArray(owner)) { if (owner.includes(i)) c += 1/owner.length; }
+        else if (owner === i) c += 1;
+      });
+      return Math.round(c * 10) / 10;
+    });
     const resultData = { ...r, hcUpdates:hc, marcasMoney, marcasPts, tarjetasMoney, tarjetasCount, fullScores, rawScores };
     setResults(resultData);
     updateGame({ ...getState(), scores:sc, status:"finalizada" });
@@ -1698,15 +1733,20 @@ function AdminApp({ onExit }) {
             <div style={{ fontSize:12, color:D.textSub, marginBottom:14 }}>Toca el nombre del jugador que cometió la falla.</div>
             {TARJETAS.map((tj, idx) => {
               const owner = tarjetas[tj.key];
+              const ownerNames = Array.isArray(owner)
+                ? owner.map(i => players[i]?.name).filter(Boolean).join(" · ")
+                : (owner !== null && owner !== undefined ? players[owner]?.name : null);
               return (
                 <div key={tj.key} style={{ marginBottom:14, paddingBottom:14, borderBottom:idx<TARJETAS.length-1?`1px solid ${D.border}`:"none" }}>
                   <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:8 }}>
                     <div style={{ fontSize:13, fontWeight:700, flex:1 }}>{tj.label}</div>
                     {tj.auto && <div style={{ fontSize:10, padding:"2px 8px", borderRadius:10, background:D.goldDim, color:D.gold, fontWeight:700 }}>AUTO</div>}
-                    {owner!==null ? <div style={{ fontSize:11, padding:"3px 10px", borderRadius:10, background:D.redBg, color:D.danger, fontWeight:700 }}>🃏 {players[owner]?.name}</div> : <div style={{ fontSize:11, padding:"3px 10px", borderRadius:10, background:D.surface, color:D.textDim }}>Sin dueño</div>}
+                    {ownerNames ? <div style={{ fontSize:11, padding:"3px 10px", borderRadius:10, background:D.redBg, color:D.danger, fontWeight:700 }}>🃏 {ownerNames}</div> : <div style={{ fontSize:11, padding:"3px 10px", borderRadius:10, background:D.surface, color:D.textDim }}>Sin dueño</div>}
                   </div>
                   {tj.auto ? (
-                    <div style={{ fontSize:11, color:D.textSub, fontStyle:"italic" }}>Se asigna automáticamente · Par3≥6, Par4≥8, Par5≥10</div>
+                    <div style={{ fontSize:11, color:D.textSub, fontStyle:"italic" }}>
+                      {tj.key === "peorscore" ? "Se asigna automáticamente · Peor score neto (bruto − HC) acumulado" : "Se asigna automáticamente · Par3≥6, Par4≥8, Par5≥10"}
+                    </div>
                   ) : (
                     <div style={{ display:"flex", flexWrap:"wrap", gap:8 }}>
                       {players.filter(pl=>pl.opts?.tarjetas!==false).map((pl) => { const pi = players.indexOf(pl); return (
@@ -1724,7 +1764,10 @@ function AdminApp({ onExit }) {
               <div style={{ fontSize:10, color:D.gold, fontWeight:700, marginBottom:8, textTransform:"uppercase", letterSpacing:1 }}>Poseedores</div>
               {players.filter(pl=>pl.opts?.tarjetas!==false).map((pl) => {
                 const pi = players.indexOf(pl);
-                const mc = TARJETAS.filter(t => tarjetas[t.key]===pi);
+                const mc = TARJETAS.filter(t => {
+                  const o = tarjetas[t.key];
+                  return Array.isArray(o) ? o.includes(pi) : o === pi;
+                });
                 return (
                   <div key={pl.id} style={{ display:"flex", alignItems:"center", gap:8, padding:"5px 0", borderBottom:`1px solid ${D.border}` }}>
                     <Avatar name={pl.name} id={pl.id} size={22} />
@@ -2030,11 +2073,19 @@ function AdminApp({ onExit }) {
             <SLabel>Resumen de tarjetas</SLabel>
             {TARJETAS.map((tj, idx) => {
               const owner = tarjetas[tj.key];
+              const ownerArr = Array.isArray(owner) ? owner : (owner !== null && owner !== undefined ? [owner] : []);
               return (
                 <div key={tj.key} style={{ display:"flex", alignItems:"center", gap:8, padding:"7px 0", borderBottom:idx<TARJETAS.length-1?`1px solid ${D.border}`:"none" }}>
                   <div style={{ flex:1, fontSize:13 }}>{tj.label}</div>
-                  {owner!==null ? (
-                    <><Avatar name={players[owner].name} id={players[owner].id} size={22} /><div style={{ fontSize:13, fontWeight:700, color:D.danger, marginLeft:4 }}>{players[owner].name}</div></>
+                  {ownerArr.length > 0 ? (
+                    <div style={{ display:"flex", alignItems:"center", gap:4 }}>
+                      {ownerArr.map(oi => players[oi] ? (
+                        <div key={oi} style={{ display:"flex", alignItems:"center", gap:4 }}>
+                          <Avatar name={players[oi].name} id={players[oi].id} size={22} />
+                          <div style={{ fontSize:13, fontWeight:700, color:D.danger }}>{players[oi].name}</div>
+                        </div>
+                      ) : null)}
+                    </div>
                   ) : (
                     <div style={{ fontSize:12, color:D.textDim }}>Sin dueño</div>
                   )}
