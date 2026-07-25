@@ -398,7 +398,7 @@ function SplashScreen({ phase, appStyle }) {
           textShadow:"0 2px 8px rgba(0,0,0,0.8)" }}>
           Welcome to H19 Golf
         </div>
-        <div style={{ fontSize:12, color:"#FFD97D", letterSpacing:2, marginTop:8,
+        <div style={{ fontSize:18, color:"#FFD97D", letterSpacing:2, marginTop:8,
           opacity: phase >= 1 ? 1 : 0, transition:"opacity 0.5s ease 0.3s",
           textShadow:"0 1px 4px rgba(0,0,0,0.8)" }}>
           ⛳ Chacales Team ⛳
@@ -899,7 +899,7 @@ export default function H19() {
     return (
       <div style={{ ...appStyle, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:24, gap:16 }}>
         <div style={{ fontSize:64, fontWeight:900, letterSpacing:-3, color:D.gold }}>H19</div>
-        <div style={{ fontSize:12, color:D.textSub, letterSpacing:3, textTransform:"uppercase", marginBottom:16 }}>Chacales Team</div>
+        <div style={{ fontSize:18, color:D.textSub, letterSpacing:3, textTransform:"uppercase", marginBottom:16 }}>Chacales Team</div>
         <Btn onClick={() => setMode("pin")}>🏌️ Entrar como Admin</Btn>
         <Btn outline onClick={() => setMode("spectator-input")}>👀 Ver ronda en vivo</Btn>
       </div>
