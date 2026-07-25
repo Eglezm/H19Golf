@@ -369,6 +369,53 @@ function calcOrden(players, scores, pars, currentHole) {
   });
 }
 
+// ─── SPLASH SCREEN ────────────────────────────────
+function SplashScreen({ phase, appStyle }) {
+  const IMG = "https://images.unsplash.com/photo-1587174486073-ae5e5cff23aa?w=800&q=80";
+  return (
+    <div style={{ ...appStyle, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center",
+      background:"#0A1A0A", position:"relative", overflow:"hidden",
+      opacity: phase === 2 ? 0 : 1, transition: phase === 2 ? "opacity 0.7s ease" : "none" }}>
+      {/* Imagen real de campo de golf */}
+      <div style={{ position:"absolute", inset:0 }}>
+        <img src={IMG} alt="" style={{ width:"100%", height:"100%", objectFit:"cover", objectPosition:"center" }}
+          onError={e => { e.target.style.display="none"; }} />
+        {/* Overlay oscuro para legibilidad */}
+        <div style={{ position:"absolute", inset:0, background:"linear-gradient(180deg, rgba(0,0,0,0.35) 0%, rgba(0,0,0,0.55) 50%, rgba(0,0,0,0.7) 100%)" }} />
+      </div>
+      {/* Contenido central */}
+      <div style={{ position:"relative", zIndex:1, textAlign:"center" }}>
+        <div style={{ fontSize:88, fontWeight:900, letterSpacing:-4, color:D.gold,
+          textShadow:"0 4px 24px rgba(0,0,0,0.8), 0 0 40px #9A6F0066" }}>
+          H19
+        </div>
+        <div style={{ width: phase >= 1 ? 160 : 0, height:2,
+          background:`linear-gradient(90deg, transparent, ${D.gold}, transparent)`,
+          margin:"8px auto 16px", transition:"width 0.6s ease" }} />
+        <div style={{ fontSize:16, fontWeight:600, color:"#FFFFFF", letterSpacing:3, textTransform:"uppercase",
+          opacity: phase >= 1 ? 1 : 0, transform: phase >= 1 ? "translateY(0)" : "translateY(12px)",
+          transition:"opacity 0.5s ease 0.1s, transform 0.5s ease 0.1s",
+          textShadow:"0 2px 8px rgba(0,0,0,0.8)" }}>
+          Welcome to H19 Golf
+        </div>
+        <div style={{ fontSize:12, color:"#FFD97D", letterSpacing:2, marginTop:8,
+          opacity: phase >= 1 ? 1 : 0, transition:"opacity 0.5s ease 0.3s",
+          textShadow:"0 1px 4px rgba(0,0,0,0.8)" }}>
+          ⛳ Club de Golf · Puebla
+        </div>
+      </div>
+      {/* Dots decorativos */}
+      <div style={{ position:"absolute", bottom:40, left:"50%", transform:"translateX(-50%)",
+        display:"flex", gap:6, opacity: phase >= 1 ? 0.8 : 0, transition:"opacity 0.5s ease 0.4s" }}>
+        {[0,1,2].map(i => (
+          <div key={i} style={{ width: i===1 ? 20 : 6, height:4, borderRadius:2,
+            background:D.gold, opacity: i===1 ? 1 : 0.5 }} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ─── SPECTATOR VIEW ───────────────────────────────
 function SpectatorView({ rondaId }) {
   const [ronda, setRonda] = useState(null);
@@ -410,54 +457,7 @@ function SpectatorView({ rondaId }) {
   const appStyle = { fontSize:14, fontFamily:"-apple-system,sans-serif", color:D.text, background:D.bg, minHeight:"100vh", maxWidth:420, margin:"0 auto" };
 
   if (showSplash) {
-    return (
-      <div style={{ ...appStyle, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", background:"#0A0A0A", position:"relative", overflow:"hidden",
-        opacity: splashPhase === 2 ? 0 : 1, transition: splashPhase === 2 ? "opacity 0.6s ease" : "none" }}>
-        <div style={{ position:"absolute", inset:0, overflow:"hidden" }}>
-          <div style={{ position:"absolute", top:0, left:0, right:0, height:"50%", background:"linear-gradient(180deg,#0D1B2A 0%,#1A3A5C 100%)" }} />
-          <div style={{ position:"absolute", bottom:0, left:0, right:0, height:"55%", background:"linear-gradient(180deg,#0F3D1A 0%,#0A2A12 100%)" }} />
-          <div style={{ position:"absolute", bottom:"30%", left:"-10%", right:"-10%", height:"30%", background:"#1A5C2A", borderRadius:"50% 50% 0 0 / 30% 30% 0 0", transform:"scaleX(1.2)" }} />
-          <div style={{ position:"absolute", top:"12%", right:"20%", width:40, height:40, borderRadius:"50%", background:"#FFD97D", boxShadow:"0 0 30px #FFD97D66" }} />
-          <div style={{ position:"absolute", bottom:"38%", left:"50%", transform:"translateX(-50%)" }}>
-            <div style={{ width:3, height:80, background:"#C0C0C0", margin:"0 auto" }} />
-            <div style={{ width:0, height:0, borderTop:"12px solid transparent", borderBottom:"12px solid transparent", borderLeft:"22px solid #D4AF37", marginTop:-80, marginLeft:3 }} />
-          </div>
-          <div style={{ position:"absolute", bottom:"35%", left:"30%", opacity:0.6 }}>
-            <svg width="40" height="70" viewBox="0 0 40 70">
-              <circle cx="20" cy="8" r="6" fill="#C0C0C0" />
-              <line x1="20" y1="14" x2="20" y2="42" stroke="#C0C0C0" strokeWidth="3" strokeLinecap="round"/>
-              <line x1="20" y1="22" x2="8" y2="35" stroke="#C0C0C0" strokeWidth="2.5" strokeLinecap="round"/>
-              <line x1="20" y1="22" x2="38" y2="28" stroke="#C0C0C0" strokeWidth="2.5" strokeLinecap="round"/>
-              <line x1="20" y1="42" x2="12" y2="65" stroke="#C0C0C0" strokeWidth="2.5" strokeLinecap="round"/>
-              <line x1="20" y1="42" x2="28" y2="65" stroke="#C0C0C0" strokeWidth="2.5" strokeLinecap="round"/>
-            </svg>
-          </div>
-          {[{x:"15%",y:"8%",s:3},{x:"25%",y:"15%",s:2},{x:"70%",y:"10%",s:2.5},{x:"85%",y:"20%",s:2},{x:"10%",y:"25%",s:2},{x:"80%",y:"8%",s:3},{x:"55%",y:"18%",s:2}].map((st,i) => (
-            <div key={i} style={{ position:"absolute", left:st.x, top:st.y, width:st.s, height:st.s, borderRadius:"50%", background:"white", opacity:0.8 }} />
-          ))}
-        </div>
-        <div style={{ position:"relative", zIndex:1, textAlign:"center" }}>
-          <div style={{ fontSize:88, fontWeight:900, letterSpacing:-4, color:D.gold, textShadow:"0 0 40px #9A6F0088" }}>H19</div>
-          <div style={{ width: splashPhase >= 1 ? 160 : 0, height:2, background:`linear-gradient(90deg, transparent, ${D.gold}, transparent)`,
-            margin:"8px auto 16px", transition:"width 0.5s ease" }} />
-          <div style={{ fontSize:16, fontWeight:600, color:"#FFFFFF", letterSpacing:3, textTransform:"uppercase",
-            opacity: splashPhase >= 1 ? 1 : 0, transform: splashPhase >= 1 ? "translateY(0)" : "translateY(12px)",
-            transition:"opacity 0.4s ease 0.1s, transform 0.4s ease 0.1s" }}>
-            Welcome to H19 Golf
-          </div>
-          <div style={{ fontSize:12, color:"#9A6F00", letterSpacing:2, marginTop:8,
-            opacity: splashPhase >= 1 ? 1 : 0, transition:"opacity 0.4s ease 0.2s" }}>
-            ⛳ Club de Golf · Puebla
-          </div>
-        </div>
-        <div style={{ position:"absolute", bottom:40, left:"50%", transform:"translateX(-50%)",
-          display:"flex", gap:6, opacity: splashPhase >= 1 ? 0.6 : 0, transition:"opacity 0.4s ease 0.3s" }}>
-          {[0,1,2].map(i => (
-            <div key={i} style={{ width: i===1 ? 20 : 6, height:4, borderRadius:2, background:D.gold, opacity: i===1 ? 1 : 0.4 }} />
-          ))}
-        </div>
-      </div>
-    );
+    return <SplashScreen phase={splashPhase} appStyle={{ fontSize:14, fontFamily:"-apple-system,sans-serif", color:D.text, background:D.bg, minHeight:"100vh", maxWidth:420, margin:"0 auto" }} />;
   }
 
   if (loading) {
@@ -890,79 +890,7 @@ export default function H19() {
 
   // ── SPLASH SCREEN ──
   if (showSplash) {
-    return (
-      <div style={{ ...appStyle, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", background:"#0A0A0A", position:"relative", overflow:"hidden",
-        opacity: splashPhase === 2 ? 0 : 1, transition: splashPhase === 2 ? "opacity 0.8s ease" : "none" }}>
-        {/* Fondo: campo de golf con formas geométricas */}
-        <div style={{ position:"absolute", inset:0, overflow:"hidden" }}>
-          {/* Cielo */}
-          <div style={{ position:"absolute", top:0, left:0, right:0, height:"50%", background:"linear-gradient(180deg,#0D1B2A 0%,#1A3A5C 100%)" }} />
-          {/* Green del campo */}
-          <div style={{ position:"absolute", bottom:0, left:0, right:0, height:"55%", background:"linear-gradient(180deg,#0F3D1A 0%,#0A2A12 100%)" }} />
-          {/* Fairway */}
-          <div style={{ position:"absolute", bottom:"30%", left:"-10%", right:"-10%", height:"30%", background:"#1A5C2A", borderRadius:"50% 50% 0 0 / 30% 30% 0 0", transform:"scaleX(1.2)" }} />
-          {/* Luna / Estrella decorativa */}
-          <div style={{ position:"absolute", top:"12%", right:"20%", width:40, height:40, borderRadius:"50%", background:"#FFD97D", boxShadow:"0 0 30px #FFD97D66" }} />
-          {/* Bandera */}
-          <div style={{ position:"absolute", bottom:"38%", left:"50%", transform:"translateX(-50%)" }}>
-            <div style={{ width:3, height:80, background:"#C0C0C0", margin:"0 auto" }} />
-            <div style={{ width:0, height:0, borderTop:"12px solid transparent", borderBottom:"12px solid transparent", borderLeft:"22px solid #D4AF37", marginTop:-80, marginLeft:3 }} />
-          </div>
-          {/* Silueta de golfista */}
-          <div style={{ position:"absolute", bottom:"35%", left:"30%", opacity:0.6 }}>
-            <svg width="40" height="70" viewBox="0 0 40 70">
-              <circle cx="20" cy="8" r="6" fill="#C0C0C0" />
-              <line x1="20" y1="14" x2="20" y2="42" stroke="#C0C0C0" strokeWidth="3" strokeLinecap="round"/>
-              <line x1="20" y1="22" x2="8" y2="35" stroke="#C0C0C0" strokeWidth="2.5" strokeLinecap="round"/>
-              <line x1="20" y1="22" x2="38" y2="28" stroke="#C0C0C0" strokeWidth="2.5" strokeLinecap="round"/>
-              <line x1="20" y1="42" x2="12" y2="65" stroke="#C0C0C0" strokeWidth="2.5" strokeLinecap="round"/>
-              <line x1="20" y1="42" x2="28" y2="65" stroke="#C0C0C0" strokeWidth="2.5" strokeLinecap="round"/>
-            </svg>
-          </div>
-          {/* Estrellas */}
-          {[{x:"15%",y:"8%",s:3},{x:"25%",y:"15%",s:2},{x:"70%",y:"10%",s:2.5},{x:"85%",y:"20%",s:2},{x:"10%",y:"25%",s:2},{x:"80%",y:"8%",s:3},{x:"55%",y:"18%",s:2}].map((st,i) => (
-            <div key={i} style={{ position:"absolute", left:st.x, top:st.y, width:st.s, height:st.s, borderRadius:"50%", background:"white", opacity:0.8 }} />
-          ))}
-        </div>
-
-        {/* Contenido central */}
-        <div style={{ position:"relative", zIndex:1, textAlign:"center" }}>
-          {/* Logo H19 */}
-          <div style={{ fontSize:88, fontWeight:900, letterSpacing:-4, color:D.gold,
-            opacity: splashPhase >= 0 ? 1 : 0,
-            transform: splashPhase >= 0 ? "scale(1)" : "scale(0.5)",
-            transition:"opacity 0.6s ease, transform 0.6s ease",
-            textShadow:"0 0 40px #9A6F0088" }}>
-            H19
-          </div>
-          {/* Línea dorada */}
-          <div style={{ width: splashPhase >= 1 ? 160 : 0, height:2, background:`linear-gradient(90deg, transparent, ${D.gold}, transparent)`,
-            margin:"8px auto 16px", transition:"width 0.6s ease" }} />
-          {/* Welcome text */}
-          <div style={{ fontSize:16, fontWeight:600, color:"#FFFFFF",
-            letterSpacing:3, textTransform:"uppercase",
-            opacity: splashPhase >= 1 ? 1 : 0,
-            transform: splashPhase >= 1 ? "translateY(0)" : "translateY(12px)",
-            transition:"opacity 0.5s ease 0.1s, transform 0.5s ease 0.1s" }}>
-            Welcome to H19 Golf
-          </div>
-          <div style={{ fontSize:12, color:"#9A6F00", letterSpacing:2, marginTop:8,
-            opacity: splashPhase >= 1 ? 1 : 0,
-            transition:"opacity 0.5s ease 0.3s" }}>
-            ⛳ Club de Golf · Puebla
-          </div>
-        </div>
-
-        {/* Línea inferior decorativa */}
-        <div style={{ position:"absolute", bottom:40, left:"50%", transform:"translateX(-50%)",
-          display:"flex", gap:6, opacity: splashPhase >= 1 ? 0.6 : 0, transition:"opacity 0.5s ease 0.4s" }}>
-          {[0,1,2].map(i => (
-            <div key={i} style={{ width: i===1 ? 20 : 6, height:4, borderRadius:2,
-              background:D.gold, opacity: i===1 ? 1 : 0.4 }} />
-          ))}
-        </div>
-      </div>
-    );
+    return <SplashScreen phase={splashPhase} appStyle={appStyle} />;
   }
 
   if (mode === "spectator" && rondaId) return <SpectatorView rondaId={rondaId} />;
