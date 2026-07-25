@@ -401,7 +401,7 @@ function SplashScreen({ phase, appStyle }) {
         <div style={{ fontSize:12, color:"#FFD97D", letterSpacing:2, marginTop:8,
           opacity: phase >= 1 ? 1 : 0, transition:"opacity 0.5s ease 0.3s",
           textShadow:"0 1px 4px rgba(0,0,0,0.8)" }}>
-          ⛳ Chacales Team
+          ⛳ Chacales Team ⛳
         </div>
       </div>
       {/* Dots decorativos */}
