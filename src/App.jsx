@@ -78,7 +78,7 @@ const TARJETAS = [
   { key: "sapo",      label: "🐸 Sapo",          auto: false },
   { key: "arbol",     label: "🌳 Árbol",         auto: false },
   { key: "threeput",  label: "🔄 Three putt",    auto: false },
-  { key: "doblepar",  label: "💀 Doble Par",     auto: true  },
+  { key: "doblepar",  label: "🔻 Peor score en el hoyo", auto: true  },
   { key: "peorscore", label: "🪣 Peor Score",    auto: true  },
 ];
 
@@ -109,7 +109,7 @@ const emptyMarca = (n) => ({
   multi: Array(n).fill(null).map(() => ({ holeinone:false, eagle:false, birdie:false, holeout:false, sandy:false })),
   oyes: null, regulation: null,
 });
-const emptyTarjetas = () => { const t = {}; TARJETAS.forEach(tj => { t[tj.key] = null; }); t["threeput_hole"] = null; return t; };
+const emptyTarjetas = () => { const t = {}; TARJETAS.forEach(tj => { t[tj.key] = null; }); t["threeput_hole"] = null; t["doblepar_hole"] = null; return t; };
 
 function Avatar({ name, id, size = 32 }) {
   const c = col(id);
@@ -401,7 +401,7 @@ function SplashScreen({ phase, appStyle }) {
         <div style={{ fontSize:18, color:"#FFD97D", letterSpacing:2, marginTop:8,
           opacity: phase >= 1 ? 1 : 0, transition:"opacity 0.5s ease 0.3s",
           textShadow:"0 1px 4px rgba(0,0,0,0.8)" }}>
-          ⛳ Chacales Team ⛳
+          ⛳ Chacales Team
         </div>
       </div>
       {/* Dots decorativos */}
@@ -958,6 +958,7 @@ function AdminApp({ onExit }) {
   const [scores, setScores] = useState([]);
   const [marcas, setMarcas] = useState([]);
   const [tarjetas, setTarjetas] = useState(emptyTarjetas());
+  const [dobleparEmpate, setDobleparEmpate] = useState(null); // array de índices empatados
   const [hole, setHole] = useState(0);
   const [pars, setPars] = useState([]);
   const [results, setResults] = useState(null);
@@ -1098,8 +1099,35 @@ function AdminApp({ onExit }) {
     });
     const newTarjetas = {...tarjetas};
     const limit = p===3?6:p===4?8:p===5?10:999;
-    const jugadorParticipaTarjetas = players[pi]?.opts ? players[pi].opts.tarjetas !== false : true;
-    if (s >= limit && jugadorParticipaTarjetas) newTarjetas["doblepar"] = pi;
+
+    // Peor score en el hoyo: buscar todos los jugadores que hicieron doble par o peor en el hoyo actual
+    const peoresEnHoyo = newScores.map((row, i) => {
+      if (players[i]?.opts?.tarjetas === false) return null;
+      const sc = row[hole];
+      if (sc === null || sc === undefined) return null;
+      return sc >= limit ? sc : null;
+    });
+    const candidatos = peoresEnHoyo.map((sc, i) => sc !== null ? i : -1).filter(i => i >= 0);
+
+    if (candidatos.length === 0) {
+      // Nadie hizo doble par en este hoyo — limpiar si el actual era de este hoyo
+      // Solo limpiar si el dueño actual era candidato en este hoyo
+      if (newTarjetas["doblepar_hole"] === hole) {
+        newTarjetas["doblepar"] = null;
+        newTarjetas["doblepar_hole"] = null;
+      }
+      setDobleparEmpate(null);
+    } else if (candidatos.length === 1) {
+      // Un solo candidato — asignar automáticamente
+      newTarjetas["doblepar"] = candidatos[0];
+      newTarjetas["doblepar_hole"] = hole;
+      setDobleparEmpate(null);
+    } else {
+      // Empate — mostrar selector para que admin elija quién tiró al último
+      setDobleparEmpate({ hoyo: hole, candidatos });
+      newTarjetas["doblepar_hole"] = hole;
+      // No asignamos aún hasta que el admin elija
+    }
 
     // Peor Score: asignar al jugador con peor neto acumulado hasta ahora
     const netosActuales = players.map((p, i) => {
@@ -1180,7 +1208,7 @@ function AdminApp({ onExit }) {
   };
 
   // Reinicia la distancia al cambiar de hoyo
-  useEffect(() => { setDistGreen(null); setDistWaypoint(null); setGpsError(""); }, [hole]);
+  useEffect(() => { setDistGreen(null); setDistWaypoint(null); setGpsError(""); setDobleparEmpate(null); }, [hole]);
 
 
   const finish = () => {
@@ -1657,6 +1685,30 @@ function AdminApp({ onExit }) {
         </div>
       </div>
       {shareMsg && <div style={{ margin:"0 12px 10px", padding:"8px 12px", background:D.greenBg, border:`1px solid ${D.success}`, borderRadius:10, color:D.success, fontSize:12, textAlign:"center", fontWeight:600 }}>{shareMsg}</div>}
+
+      {dobleparEmpate && (
+        <div style={{ margin:"0 12px 10px", padding:"14px", background:"#FFF3CD", border:`2px solid #C87A30`, borderRadius:12 }}>
+          <div style={{ fontSize:13, fontWeight:700, color:"#8A4A00", marginBottom:8 }}>
+            🔻 Empate en Peor score en el hoyo {dobleparEmpate.hoyo + 1}
+          </div>
+          <div style={{ fontSize:12, color:"#8A4A00", marginBottom:10 }}>
+            ¿Quién tiró al último?
+          </div>
+          <div style={{ display:"flex", flexWrap:"wrap", gap:8 }}>
+            {dobleparEmpate.candidatos.map(pi => (
+              <button key={pi} onClick={() => {
+                const newTarjetas = { ...tarjetas, doblepar: pi, doblepar_hole: dobleparEmpate.hoyo };
+                setTarjetas(newTarjetas);
+                updateGame({ ...getState(), tarjetas: newTarjetas });
+                setDobleparEmpate(null);
+              }} style={{ display:"flex", alignItems:"center", gap:6, padding:"8px 14px", border:`1px solid #C87A30`, borderRadius:20, background:"#FFF", color:"#8A4A00", fontSize:13, fontWeight:700, cursor:"pointer" }}>
+                <Avatar name={players[pi].name} id={players[pi].id} size={22} />
+                {players[pi].name}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
       <div style={{ padding:"0 12px" }}>
         {getGreenCoord(campo, hole) && (
           <div style={{ background:D.surface, border:`1px solid ${D.border}`, borderRadius:12, padding:"12px 14px", marginBottom:12, textAlign:"center" }}>
@@ -1808,7 +1860,7 @@ function AdminApp({ onExit }) {
                   </div>
                   {tj.auto ? (
                     <div style={{ fontSize:11, color:D.textSub, fontStyle:"italic" }}>
-                      {tj.key === "peorscore" ? "Se asigna automáticamente · Peor score neto (bruto − HC) acumulado" : "Se asigna automáticamente · Par3≥6, Par4≥8, Par5≥10"}
+                      {tj.key === "peorscore" ? "Se asigna automáticamente · Peor score neto (bruto − HC) acumulado" : "Se asigna automáticamente · Doble par o peor en el hoyo. En empate el admin elige quién tiró al último."}
                     </div>
                   ) : (
                     <div style={{ display:"flex", flexWrap:"wrap", gap:8 }}>
