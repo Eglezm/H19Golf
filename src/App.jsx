@@ -335,23 +335,31 @@ function calcHC(players, scores, si = []) {
   const nets = players.map((p, i) => scores[i].reduce((a, b) => a+b, 0) - p.hc);
   const fnet = Math.min(...nets);
   const fi = nets.reduce((a, v, i) => v===fnet ? [...a,i] : a, []);
-  const ganadores = [...new Set([...fi, ...si])]; // 1er y 2do lugar (si aplica), sin duplicados
+  const ganadores = [...new Set([...fi, ...si])];
   const deltas = {};
   players.forEach(p => { deltas[p.id] = 0; });
-  let subeATodos = false; // el +1 a los demás se aplica una sola vez aunque haya varios ganadores con HC=0
+
+  let subeATodos = false;
   ganadores.forEach(wi => {
     const w = players[wi];
-    if (w.hc === 0) subeATodos = true;
-    else deltas[w.id] -= 1;
+    if (w.hc === 0) subeATodos = true; // ganador con HC=0 → todos los elegibles suben
+    else deltas[w.id] -= 1; // ganador con HC>0 → baja -1
   });
+
   if (subeATodos) {
-    players.forEach((p, i) => { if (!ganadores.includes(i)) deltas[p.id] += 1; });
+    // Suben los que tienen HC entre 0 y 4 (no los ganadores, no los que tienen HC 5+)
+    players.forEach((p, i) => {
+      if (!ganadores.includes(i) && p.hc >= 0 && p.hc <= 4) {
+        deltas[p.id] += 1;
+      }
+    });
   }
+
   return players.map(p => ({
     ...p,
     before: p.hc,
     delta: deltas[p.id],
-    after: Math.min(8, Math.max(0, p.hc + deltas[p.id])),
+    after: Math.min(5, Math.max(0, p.hc + deltas[p.id])), // tope máximo HC 5
   }));
 }
 
@@ -1232,6 +1240,8 @@ function TorneoSpectator({ torneoId, appStyle }) {
   // Calcular netos y clasificación global
   const fmtVs = (v) => v === null ? "—" : v === 0 ? "E" : v > 0 ? `+${v}` : `${v}`;
   const vsColor = (v) => v === null ? D.textDim : v < 0 ? D.success : v > 0 ? D.danger : D.text;
+  const fmtMoney = (n) => n >= 0 ? `+$${n}` : `-$${Math.abs(n)}`;
+  const moneyColor = (n) => n > 0 ? D.success : n < 0 ? D.danger : D.textSub;
 
   const ranked = allPlayers.map(p => {
     const jugados = p.scores.filter(s => s !== null && s !== undefined);
@@ -1246,6 +1256,45 @@ function TorneoSpectator({ torneoId, appStyle }) {
     if (a.vsParHC===null) return 1;
     if (b.vsParHC===null) return -1;
     return a.vsParHC - b.vsParHC;
+  });
+
+  // Calcular dinero global (score) + por grupo (marcas+tarjetas)
+  const playersForCalc = allPlayers.map(p => ({ ...p, opts:{score:true,marcas:true,tarjetas:true} }));
+  const fullScoresForCalc = allPlayers.map(p => pars.map((par,h) => {
+    const v = p.scores[h];
+    return (v===null||v===undefined) ? par : v;
+  }));
+  const moneyGlobal = allPlayers.length >= 2
+    ? calcMoney(playersForCalc, fullScoresForCalc, torneo.apuesta || 50).money
+    : allPlayers.map(() => 0);
+
+  // Marcas y tarjetas por grupo
+  const marcasMoneyMap = {}; // key: `${grupoId}-${pi}`
+  const tarjetasMoneyMap = {};
+  grupos.forEach(([gid, g]) => {
+    const gPlayers = (Array.isArray(g.players) ? g.players : Object.values(g.players||{})).map(p=>({...p,opts:{score:true,marcas:true,tarjetas:true}}));
+    const gMarcas = g.marcas ? (Array.isArray(g.marcas) ? g.marcas : Object.values(g.marcas)) : null;
+    const gTarjetas = g.tarjetas || null;
+    if (gMarcas && gPlayers.length > 0) {
+      const mm = calcMarcasMoney(gPlayers, gMarcas, torneo.marcaVal || 10);
+      gPlayers.forEach((p, pi) => { marcasMoneyMap[`${gid}-${pi}`] = mm[pi]; });
+    }
+    if (gTarjetas && gPlayers.length > 0) {
+      const tm = calcTarjetasMoney(gPlayers, gTarjetas, torneo.tarjetaVal || 10);
+      gPlayers.forEach((p, pi) => { tarjetasMoneyMap[`${gid}-${pi}`] = tm[pi]; });
+    }
+  });
+
+  const rankedWithMoney = ranked.map((p, globalIdx) => {
+    const scoreM = moneyGlobal[allPlayers.findIndex(ap => ap.grupoId===p.grupoId && ap.id===p.id)] || 0;
+    // Encontrar el índice dentro del grupo
+    const gPlayers = Array.isArray(torneo.grupos[p.grupoId]?.players)
+      ? torneo.grupos[p.grupoId].players
+      : Object.values(torneo.grupos[p.grupoId]?.players||{});
+    const piInGrupo = gPlayers.findIndex(gp => gp.id === p.id);
+    const marcasM = marcasMoneyMap[`${p.grupoId}-${piInGrupo}`] || 0;
+    const tarjetasM = tarjetasMoneyMap[`${p.grupoId}-${piInGrupo}`] || 0;
+    return { ...p, scoreM, marcasM, tarjetasM, totalM: scoreM + marcasM + tarjetasM };
   });
 
   return (
@@ -1280,7 +1329,7 @@ function TorneoSpectator({ torneoId, appStyle }) {
                 </tr>
               </thead>
               <tbody>
-                {ranked.map(({ name, id, hc, scores: sc, grupoNombre, bruto, vsPar, vsParHC }, pos) => (
+                {rankedWithMoney.map(({ name, id, hc, scores: sc, grupoNombre, bruto, vsPar, vsParHC, scoreM, marcasM, tarjetasM, totalM }, pos) => (
                   <tr key={`${grupoNombre}-${name}`} style={{ borderBottom:`1px solid ${D.border}`, background:pos===0&&vsParHC!==null?D.goldDim+"55":"transparent" }}>
                     <td style={{ padding:"6px 6px", position:"sticky", left:0, background:pos===0&&vsParHC!==null?D.goldDim+"55":D.card, zIndex:1 }}>
                       <div style={{ display:"flex", alignItems:"center", gap:4 }}>
@@ -1311,7 +1360,7 @@ function TorneoSpectator({ torneoId, appStyle }) {
 
         {/* Peor score global */}
         {(() => {
-          const peorGlobal = ranked[ranked.length - 1];
+          const peorGlobal = rankedWithMoney[rankedWithMoney.length - 1];
           return peorGlobal?.vsParHC !== null ? (
             <Card>
               <SLabel>🪣 Peor score global</SLabel>
@@ -1326,6 +1375,29 @@ function TorneoSpectator({ torneoId, appStyle }) {
             </Card>
           ) : null;
         })()}
+
+        {/* Dinero en vivo */}
+        {rankedWithMoney.some(p => p.vsParHC !== null) && (
+          <Card>
+            <SLabel>💰 ¿Cómo va el dinero? <span style={{ fontSize:10, color:D.textDim, fontWeight:400 }}>(estimado)</span></SLabel>
+            {rankedWithMoney.filter(p => p.vsParHC !== null).map((p, pos) => (
+              <div key={`${p.grupoId}-${p.id}`} style={{ padding:"9px 0", borderBottom:pos<rankedWithMoney.filter(x=>x.vsParHC!==null).length-1?`1px solid ${D.border}`:"none" }}>
+                <div style={{ display:"flex", justifyContent:"space-between", marginBottom:3 }}>
+                  <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                    <Avatar name={String(p.name||'?')} id={p.id||0} size={22} />
+                    <div>
+                      <div style={{ fontSize:13, fontWeight:700 }}>{p.name}</div>
+                      <div style={{ fontSize:10, color:D.textDim }}>{p.grupoNombre}</div>
+                    </div>
+                  </div>
+                  <div style={{ fontSize:14, fontWeight:900, color:moneyColor(p.totalM) }}>{fmtMoney(p.totalM)}</div>
+                </div>
+                <div style={{ fontSize:10, color:D.textSub, paddingLeft:28 }}>Score {fmtMoney(p.scoreM)} · Marcas {fmtMoney(p.marcasM)} · Tarjetas {fmtMoney(p.tarjetasM)}</div>
+              </div>
+            ))}
+            <div style={{ fontSize:10, color:D.textDim, textAlign:"center", marginTop:6 }}>Score: global entre todos · Marcas y Tarjetas: dentro de cada grupo</div>
+          </Card>
+        )}
 
         {/* Resultados por grupo */}
         {grupos.map(([gid, g]) => {
@@ -1929,6 +2001,17 @@ function AdminApp({ onExit, torneoConfig = null }) {
       };
       set(ref(db, `historial/${rondaId}`), histData)
         .catch(err => alert("Error guardando historial: " + err.message));
+      // Si estamos en modo torneo, también guardar en historialTorneos
+      if (torneoConfig) {
+        const torneoHistKey = `${torneoConfig.torneoId}_${torneoConfig.grupoId}`;
+        set(ref(db, `historialTorneos/${torneoHistKey}`), {
+          ...histData,
+          torneoId: torneoConfig.torneoId,
+          torneoNombre: torneoConfig.nombre,
+          grupoId: torneoConfig.grupoId,
+          grupoNombre: grupoNombre || torneoConfig.grupoNombre,
+        }).catch(() => {});
+      }
     } catch(e) { alert("Error en bloque historial: " + e.message); }
     setScreen("res");
   };
