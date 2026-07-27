@@ -1,4 +1,3 @@
-
 import { useState, useEffect } from "react";
 import { initializeApp } from "firebase/app";
 import { getDatabase, ref, set, onValue, remove, get } from "firebase/database";
@@ -1329,24 +1328,71 @@ function TorneoSpectator({ torneoId, appStyle }) {
         })()}
 
         {/* Resultados por grupo */}
-        {grupos.map(([gid, g]) => (
-          <Card key={gid}>
-            <SLabel>🏌️ {g.nombre || `Grupo ${gid.slice(-3)}`}</SLabel>
-            {(Array.isArray(g.players) ? g.players : Object.values(g.players||{})).map((p, pi) => {
-              const sc = (Array.isArray(g.scores) ? g.scores[pi] : Object.values(g.scores||{})[pi]) || [];
-              const jugados = sc.filter(s=>s!==null&&s!==undefined);
-              const bruto = jugados.length > 0 ? jugados.reduce((a,b)=>a+b,0) : null;
-              return (
-                <div key={pi} style={{ display:"flex", alignItems:"center", gap:8, padding:"7px 0", borderBottom:pi<(g.players?.length||0)-1?`1px solid ${D.border}`:"none" }}>
-                  <Avatar name={String(p.name||'?')} id={p.id||pi} size={26} />
-                  <div style={{ flex:1, fontSize:13, fontWeight:600 }}>{p.name}</div>
-                  <div style={{ fontSize:11, color:D.textSub }}>HC {p.hc}</div>
-                  <div style={{ fontSize:13, fontWeight:700, color:D.gold }}>{bruto??'—'} golpes</div>
-                </div>
-              );
-            })}
-          </Card>
-        ))}
+        {grupos.map(([gid, g]) => {
+          const gPlayers = Array.isArray(g.players) ? g.players : Object.values(g.players||{});
+          const gScores = Array.isArray(g.scores) ? g.scores : Object.values(g.scores||{});
+          const gMarcas = g.marcas ? (Array.isArray(g.marcas) ? g.marcas : Object.values(g.marcas)) : null;
+          const gTarjetas = g.tarjetas || null;
+          return (
+            <Card key={gid}>
+              <SLabel>🏌️ {g.nombre || `Grupo ${gid.slice(-3)}`} · Hoyo {(g.hole||0)+1}</SLabel>
+              {/* Score por jugador */}
+              {gPlayers.map((p, pi) => {
+                const sc = gScores[pi] || [];
+                const jugados = sc.filter(s=>s!==null&&s!==undefined);
+                const bruto = jugados.length > 0 ? jugados.reduce((a,b)=>a+b,0) : null;
+                return (
+                  <div key={pi} style={{ display:"flex", alignItems:"center", gap:8, padding:"7px 0", borderBottom:pi<gPlayers.length-1?`1px solid ${D.border}`:"none" }}>
+                    <Avatar name={String(p.name||'?')} id={p.id||pi} size={26} />
+                    <div style={{ flex:1, fontSize:13, fontWeight:600 }}>{p.name}</div>
+                    <div style={{ fontSize:11, color:D.textSub }}>HC {p.hc}</div>
+                    <div style={{ fontSize:13, fontWeight:700, color:D.gold }}>{bruto??'—'} golpes</div>
+                  </div>
+                );
+              })}
+              {/* Marcas del grupo */}
+              {gMarcas && (() => {
+                const eventos = calcMarcasResumen(gPlayers, gMarcas);
+                return eventos.length > 0 ? (
+                  <div style={{ marginTop:10, paddingTop:10, borderTop:`1px solid ${D.border}` }}>
+                    <div style={{ fontSize:10, fontWeight:700, color:D.gold, textTransform:"uppercase", letterSpacing:1, marginBottom:6 }}>⭐ Marcas</div>
+                    {eventos.map((ev, i) => (
+                      <div key={i} style={{ display:"flex", alignItems:"center", gap:8, padding:"4px 0" }}>
+                        <div style={{ fontSize:10, color:D.textDim, width:42 }}>Hoyo {ev.hole}</div>
+                        <div style={{ flex:1, fontSize:11 }}>{ev.label}</div>
+                        <div style={{ fontSize:11, fontWeight:700, color:D.gold }}>{ev.playerName}</div>
+                      </div>
+                    ))}
+                  </div>
+                ) : null;
+              })()}
+              {/* Tarjetas del grupo */}
+              {gTarjetas && (() => {
+                const conDueno = TARJETAS.filter(tj => {
+                  const o = gTarjetas[tj.key];
+                  return Array.isArray(o) ? o.length > 0 : (o !== null && o !== undefined);
+                });
+                return conDueno.length > 0 ? (
+                  <div style={{ marginTop:10, paddingTop:10, borderTop:`1px solid ${D.border}` }}>
+                    <div style={{ fontSize:10, fontWeight:700, color:D.danger, textTransform:"uppercase", letterSpacing:1, marginBottom:6 }}>🃏 Tarjetas</div>
+                    {conDueno.map(tj => {
+                      const owner = gTarjetas[tj.key];
+                      const names = Array.isArray(owner)
+                        ? owner.map(i => gPlayers[i]?.name).filter(Boolean).join(" · ")
+                        : gPlayers[owner]?.name || "—";
+                      return (
+                        <div key={tj.key} style={{ display:"flex", justifyContent:"space-between", fontSize:11, padding:"3px 0" }}>
+                          <span style={{ color:D.textSub }}>{tj.label}</span>
+                          <span style={{ fontWeight:700, color:D.danger }}>{names}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : null;
+              })()}
+            </Card>
+          );
+        })}
 
         <div style={{ textAlign:"center", fontSize:11, color:D.textDim, marginTop:8 }}>Vista en vivo · Actualización automática</div>
       </div>
@@ -1404,9 +1450,9 @@ export default function H19() {
           <div style={{ width:"100%", background:"#E8F5E9", border:`1px solid ${D.success}`, borderRadius:12, padding:"12px 14px", marginBottom:4 }}>
             <div style={{ fontSize:12, fontWeight:700, color:D.success, marginBottom:6 }}>🏆 Torneo activo: {savedTorneoAdmin.nombre}</div>
             <div style={{ display:"flex", gap:8 }}>
-              <button onClick={() => { setRondaId(savedTorneoAdmin.torneoId); setMode("torneo-spectator"); }}
+              <button onClick={() => setMode("pin-torneo-ver")}
                 style={{ flex:1, padding:"8px", border:"none", borderRadius:8, background:D.success, color:"#fff", fontSize:12, fontWeight:700, cursor:"pointer" }}>
-                👁️ Ver torneo
+                👁️ Ver torneo (PIN)
               </button>
               <button onClick={() => { localStorage.removeItem("h19-torneo-admin"); setSavedTorneoAdmin(null); }}
                 style={{ padding:"8px 10px", border:`1px solid ${D.border}`, borderRadius:8, background:"transparent", color:D.textSub, fontSize:11, cursor:"pointer" }}>
@@ -1434,6 +1480,21 @@ export default function H19() {
           style={{ width:"100%", padding:14, border:`1px solid ${pinError?D.danger:D.border}`, borderRadius:12, background:D.surface, color:D.text, fontSize:22, textAlign:"center", letterSpacing:8, fontWeight:700 }} />
         {pinError && <div style={{ color:D.danger, fontSize:13 }}>PIN incorrecto</div>}
         <Btn onClick={() => { if (pinInput===ADMIN_PIN) { setMode("torneo-menu"); setPinError(false); } else setPinError(true); }}>Entrar</Btn>
+        <button onClick={() => { setMode("home"); setPinInput(""); setPinError(false); }} style={{ fontSize:13, color:D.textSub, background:"none", border:"none", cursor:"pointer" }}>← Volver</button>
+      </div>
+    );
+  }
+
+  if (mode === "pin-torneo-ver") {
+    return (
+      <div style={{ ...appStyle, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:24, gap:14 }}>
+        <div style={{ fontSize:40, fontWeight:900, color:D.gold }}>H19</div>
+        <div style={{ fontSize:14, color:D.textSub, marginBottom:4 }}>Panel Admin General</div>
+        <div style={{ fontSize:12, color:D.textSub, marginBottom:8 }}>{savedTorneoAdmin?.nombre}</div>
+        <input type="password" value={pinInput} onChange={e => setPinInput(e.target.value)} placeholder="PIN" maxLength={6}
+          style={{ width:"100%", padding:14, border:`1px solid ${pinError?D.danger:D.border}`, borderRadius:12, background:D.surface, color:D.text, fontSize:22, textAlign:"center", letterSpacing:8, fontWeight:700 }} />
+        {pinError && <div style={{ color:D.danger, fontSize:13 }}>PIN incorrecto</div>}
+        <Btn onClick={() => { if (pinInput===ADMIN_PIN) { setRondaId(savedTorneoAdmin.torneoId); setMode("torneo-spectator"); setPinError(false); setPinInput(""); } else setPinError(true); }}>Ver torneo</Btn>
         <button onClick={() => { setMode("home"); setPinInput(""); setPinError(false); }} style={{ fontSize:13, color:D.textSub, background:"none", border:"none", cursor:"pointer" }}>← Volver</button>
       </div>
     );
