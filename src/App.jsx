@@ -1,3 +1,4 @@
+
 import { useState, useEffect } from "react";
 import { initializeApp } from "firebase/app";
 import { getDatabase, ref, set, onValue, remove, get } from "firebase/database";
@@ -878,13 +879,20 @@ function TorneoCrear({ onExit, onIniciarGrupo, appStyle }) {
   const [torneoId, setTorneoId] = useState(null);
   const [creando, setCreando] = useState(false);
   const [dir, setDir] = useState([]);
-  const [grupoActivo, setGrupoActivo] = useState(0); // qué grupo se está editando para asignar jugadores
+  const [grupoActivo, setGrupoActivo] = useState(0);
 
   useEffect(() => {
     onValue(ref(db, "directorio"), snap => {
       if (snap.exists()) setDir(snap.val().players || []);
     }, { onlyOnce: true });
   }, []);
+
+  // Guardar torneoId en localStorage cuando lleguemos al paso 3
+  useEffect(() => {
+    if (paso === 3 && torneoId) {
+      try { localStorage.setItem("h19-torneo-admin", JSON.stringify({ torneoId, nombre: nombre.trim() || "Torneo", campo, nHoles, apuesta, marcaVal, tarjetaVal })); } catch(e) {}
+    }
+  }, [paso, torneoId]);
 
   const addGrupo = () => setGrupos(g => [...g, {nombre:"", id:null, players:[]}]);
   const removeGrupo = (i) => setGrupos(g => g.filter((_,idx)=>idx!==i));
@@ -1045,13 +1053,6 @@ function TorneoCrear({ onExit, onIniciarGrupo, appStyle }) {
   }
 
   // ── PASO 3: Compartir códigos por grupo ──
-  // Guardar torneoId en localStorage para que el admin pueda regresar
-  useEffect(() => {
-    if (paso === 3 && torneoId) {
-      try { localStorage.setItem("h19-torneo-admin", JSON.stringify({ torneoId, nombre: nombre.trim() || "Torneo", campo, nHoles, apuesta, marcaVal, tarjetaVal })); } catch(e) {}
-    }
-  }, [paso, torneoId]);
-
   if (paso === 3) {
     const torneoUrl = `${window.location.origin}${window.location.pathname}?torneo=${torneoId}`;
     return (
