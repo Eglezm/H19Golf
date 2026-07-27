@@ -1149,19 +1149,33 @@ function TorneoUnirse({ onExit, appStyle }) {
       }
       const { torneoId, grupoId, grupoNombre, players } = grupoSnap.val();
       const torneoSnap = await get(ref(db, `torneos/${torneoId}`));
-      setBuscando(false);
-      if (torneoSnap.exists()) {
-        const t = torneoSnap.val();
-        setTorneoConfig({
-          torneoId, grupoId, grupoNombre,
-          campo: t.campo, nHoles: t.nHoles,
-          apuesta: t.apuesta, marcaVal: t.marcaVal, tarjetaVal: t.tarjetaVal,
-          nombre: t.nombre,
-          playersPreasignados: players || [],
-        });
-      } else {
-        setError("Error al cargar el torneo.");
+      if (!torneoSnap.exists()) { setBuscando(false); setError("Error al cargar el torneo."); return; }
+      const t = torneoSnap.val();
+
+      // Verificar si ya existe una ronda activa para este grupo en Firebase
+      const grupoActivoSnap = await get(ref(db, `torneos/${torneoId}/grupos/${grupoId}`));
+      let playersPreasignados = players || [];
+      let rondaActiva = null;
+      if (grupoActivoSnap.exists()) {
+        const gData = grupoActivoSnap.val();
+        if (gData.status === "en_juego" && gData.players && gData.scores) {
+          // Hay una ronda en curso — la retomamos
+          rondaActiva = gData;
+          playersPreasignados = Array.isArray(gData.players)
+            ? gData.players
+            : Object.values(gData.players);
+        }
       }
+
+      setBuscando(false);
+      setTorneoConfig({
+        torneoId, grupoId, grupoNombre,
+        campo: t.campo, nHoles: t.nHoles,
+        apuesta: t.apuesta, marcaVal: t.marcaVal, tarjetaVal: t.tarjetaVal,
+        nombre: t.nombre,
+        playersPreasignados,
+        rondaActiva, // datos de ronda en curso si existe
+      });
     } catch(e) {
       setBuscando(false);
       setError("Error de conexión. Intenta de nuevo.");
@@ -1639,7 +1653,8 @@ export default function H19() {
 function AdminApp({ onExit, torneoConfig = null }) {
   const [screen, setScreen] = useState(() => {
     if (!torneoConfig) return "dir";
-    if (torneoConfig.playersPreasignados?.length >= 2) return "score-torneo-init"; // irá a score directamente
+    if (torneoConfig.rondaActiva) return "torneo-resume"; // ronda en curso, retomar
+    if (torneoConfig.playersPreasignados?.length >= 2) return "score-torneo-init";
     return "grupo-nombre";
   });
   const [grupoNombre, setGrupoNombre] = useState("");
@@ -2047,6 +2062,54 @@ function AdminApp({ onExit, torneoConfig = null }) {
 
   const appSt = { fontSize:14, fontFamily:"-apple-system,sans-serif", color:D.text, background:D.bg, minHeight:"100vh", maxWidth:420, margin:"0 auto", paddingBottom:32 };
   const tog = (a) => ({ flex:1, padding:9, border:`1px solid ${a?D.gold:D.border}`, borderRadius:10, background:a?D.goldDim:"transparent", color:a?D.gold:D.textSub, fontSize:13, fontWeight:700, cursor:"pointer" });
+
+  // ── RETOMAR RONDA EN MODO TORNEO ──
+  if (screen === "torneo-resume" && torneoConfig?.rondaActiva) {
+    const ra = torneoConfig.rondaActiva;
+    const ps = Array.isArray(ra.players) ? ra.players : Object.values(ra.players||{});
+    const sc = Array.isArray(ra.scores) ? ra.scores : Object.values(ra.scores||{}).map(r => Array.isArray(r)?r:Object.values(r||{}));
+    const mc = ra.marcas ? (Array.isArray(ra.marcas) ? ra.marcas : Object.values(ra.marcas)) : [];
+    const tj = ra.tarjetas || emptyTarjetas();
+    const h = ra.hole || 0;
+    const basePares = CAMPOS[campo].pares || Array(18).fill(4);
+    const p = basePares.slice(0, nHoles);
+
+    if (players.length === 0 && ps.length > 0) {
+      // Restaurar estado
+      setPlayers(ps);
+      setScores(sc);
+      setMarcas(mc);
+      setTarjetas(tj);
+      setHole(h);
+      setPars(p);
+      setTab("score");
+      setGrupoNombre(torneoConfig.grupoNombre || "Mi Grupo");
+      // Buscar el rondaId guardado en localStorage
+      try {
+        const saved = localStorage.getItem("h19-ronda-activa");
+        if (saved) {
+          const data = JSON.parse(saved);
+          if (data.rondaId) setRondaId(data.rondaId);
+        }
+      } catch(e) {}
+    }
+
+    return (
+      <div style={appSt}>
+        <div style={{ display:"flex", alignItems:"center", justifyContent:"center", flexDirection:"column", gap:12, padding:32, textAlign:"center" }}>
+          <div style={{ fontSize:40 }}>⛳</div>
+          <div style={{ fontSize:18, fontWeight:700, color:D.gold }}>{torneoConfig.grupoNombre}</div>
+          <div style={{ fontSize:13, color:D.textSub }}>{torneoConfig.nombre}</div>
+          <div style={{ padding:"10px 16px", background:D.greenBg, border:`1px solid ${D.success}`, borderRadius:12, marginTop:8 }}>
+            <div style={{ fontSize:13, fontWeight:700, color:D.success, marginBottom:4 }}>⛳ Ronda en curso encontrada</div>
+            <div style={{ fontSize:12, color:D.textSub }}>Hoyo {h+1} · {ps.length} jugadores</div>
+          </div>
+          <Btn onClick={() => setScreen("score")}>▶ Continuar ronda del grupo</Btn>
+          <Btn outline onClick={() => setScreen("score-torneo-init")} style={{ marginTop:4 }}>Iniciar nueva ronda</Btn>
+        </div>
+      </div>
+    );
+  }
 
   // ── INICIO AUTOMÁTICO EN MODO TORNEO CON JUGADORES PRE-ASIGNADOS ──
   if (screen === "score-torneo-init" && torneoConfig?.playersPreasignados?.length >= 2) {
