@@ -866,7 +866,7 @@ function SpectatorView({ rondaId }) {
 }
 
 // ─── TORNEO: CREAR ────────────────────────────────
-function TorneoCrear({ onExit, appStyle }) {
+function TorneoCrear({ onExit, onIniciarGrupo, appStyle }) {
   const [campo, setCampo] = useState("huerta");
   const [nHoles, setNHoles] = useState(9);
   const [apuesta, setApuesta] = useState(50);
@@ -887,6 +887,7 @@ function TorneoCrear({ onExit, appStyle }) {
   };
 
   if (creado) {
+    const torneoData = { torneoId:creado, nombre: nombre.trim() || `Torneo ${new Date().toLocaleDateString('es-MX')}`, campo, nHoles, apuesta, marcaVal, tarjetaVal };
     return (
       <div style={{ ...appStyle, padding:24 }}>
         <div style={{ textAlign:"center", marginBottom:24 }}>
@@ -900,13 +901,14 @@ function TorneoCrear({ onExit, appStyle }) {
           <button onClick={() => {
             if (navigator.clipboard) navigator.clipboard.writeText(creado);
             const url = `${window.location.origin}${window.location.pathname}?torneo=${creado}`;
-            const msg = `🏆 H19 Golf — Torneo\nCódigo: ${creado}\nVer en vivo: ${url}`;
+            const msg = `🏆 H19 Golf — Torneo: ${torneoData.nombre}\nCódigo: ${creado}\nVer en vivo: ${url}`;
             window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, "_blank");
           }} style={{ width:"100%", padding:"12px", border:"none", borderRadius:12, background:"#25D366", color:"#fff", fontSize:13, fontWeight:700, cursor:"pointer", marginBottom:8 }}>
             💬 Compartir código por WhatsApp
           </button>
         </Card>
-        <Btn onClick={() => onExit()}>← Volver al inicio</Btn>
+        <Btn onClick={() => onIniciarGrupo(torneoData)}>🏌️ Iniciar mi grupo →</Btn>
+        <Btn outline onClick={() => onExit()} style={{ marginTop:8 }}>← Volver al inicio</Btn>
       </div>
     );
   }
@@ -1181,7 +1183,8 @@ export default function H19() {
   const [rondaId, setRondaId] = useState(null);
   const [spectatorInput, setSpectatorInput] = useState("");
   const [showSplash, setShowSplash] = useState(true);
-  const [splashPhase, setSplashPhase] = useState(0); // 0=logo, 1=welcome, 2=fade out
+  const [splashPhase, setSplashPhase] = useState(0);
+  const [activeTorneoConfig, setActiveTorneoConfig] = useState(null);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -1244,8 +1247,9 @@ export default function H19() {
     );
   }
 
-  if (mode === "torneo-crear") return <TorneoCrear onExit={() => setMode("home")} appStyle={appStyle} />;
+  if (mode === "torneo-crear") return <TorneoCrear onExit={() => setMode("home")} onIniciarGrupo={(tc) => { setActiveTorneoConfig(tc); setMode("torneo-admin"); }} appStyle={appStyle} />;
   if (mode === "torneo-unirse") return <TorneoUnirse onExit={() => setMode("home")} appStyle={appStyle} />;
+  if (mode === "torneo-admin") return <AdminApp onExit={() => setMode("home")} torneoConfig={activeTorneoConfig} />;
 
   if (mode === "torneo-spectator-input") {
     return (
