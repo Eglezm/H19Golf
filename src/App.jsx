@@ -867,42 +867,60 @@ function SpectatorView({ rondaId }) {
 
 // ─── TORNEO: CREAR ────────────────────────────────
 function TorneoCrear({ onExit, onIniciarGrupo, appStyle }) {
-  const [paso, setPaso] = useState(1); // 1=config, 2=grupos, 3=compartir
+  const [paso, setPaso] = useState(1); // 1=config, 2=grupos+jugadores, 3=compartir
   const [campo, setCampo] = useState("huerta");
   const [nHoles, setNHoles] = useState(9);
   const [apuesta, setApuesta] = useState(50);
   const [marcaVal, setMarcaVal] = useState(10);
   const [tarjetaVal, setTarjetaVal] = useState(10);
   const [nombre, setNombre] = useState("");
-  const [grupos, setGrupos] = useState([{nombre:"", id:null},{nombre:"", id:null}]);
+  const [grupos, setGrupos] = useState([{nombre:"", id:null, players:[]},{nombre:"", id:null, players:[]}]);
   const [torneoId, setTorneoId] = useState(null);
   const [creando, setCreando] = useState(false);
+  const [dir, setDir] = useState([]);
+  const [grupoActivo, setGrupoActivo] = useState(0); // qué grupo se está editando para asignar jugadores
 
-  const addGrupo = () => setGrupos(g => [...g, {nombre:"", id:null}]);
+  useEffect(() => {
+    onValue(ref(db, "directorio"), snap => {
+      if (snap.exists()) setDir(snap.val().players || []);
+    }, { onlyOnce: true });
+  }, []);
+
+  const addGrupo = () => setGrupos(g => [...g, {nombre:"", id:null, players:[]}]);
   const removeGrupo = (i) => setGrupos(g => g.filter((_,idx)=>idx!==i));
   const setGrupoNombre = (i, val) => setGrupos(g => g.map((g2,idx) => idx===i ? {...g2, nombre:val} : g2));
+  const togglePlayerInGrupo = (grupoIdx, player) => {
+    setGrupos(g => g.map((g2, idx) => {
+      if (idx !== grupoIdx) return g2;
+      const exists = g2.players.find(p => p.id === player.id);
+      return { ...g2, players: exists ? g2.players.filter(p=>p.id!==player.id) : [...g2.players, player] };
+    }));
+  };
+  const playerEnGrupo = (player) => grupos.findIndex(g => g.players.find(p=>p.id===player.id));
 
   const crearTorneo = async () => {
     setCreando(true);
     const tid = "T-" + Math.random().toString(36).substring(2,8).toUpperCase();
-    // Generar código único por grupo
-    const gruposConId = grupos.map(g => ({
+    const gruposConId = grupos.map((g, i) => ({
       ...g,
       id: Math.random().toString(36).substring(2,8).toUpperCase(),
-      nombre: g.nombre.trim() || `Grupo ${grupos.indexOf(g)+1}`,
+      nombre: g.nombre.trim() || `Grupo ${i+1}`,
     }));
     const data = {
       torneoId: tid,
       nombre: nombre.trim() || `Torneo ${new Date().toLocaleDateString('es-MX')}`,
       campo, nHoles, apuesta, marcaVal, tarjetaVal,
       status: "en_juego", createdAt: Date.now(),
-      gruposConfig: gruposConId, // configuración de grupos con sus códigos
+      gruposConfig: gruposConId,
       grupos: {}
     };
     await set(ref(db, `torneos/${tid}`), data);
-    // Registrar cada código de grupo apuntando al torneo
+    // Registrar código de grupo y pre-cargar jugadores asignados
     for (const g of gruposConId) {
-      await set(ref(db, `codigosGrupo/${g.id}`), { torneoId: tid, grupoId: g.id, grupoNombre: g.nombre });
+      await set(ref(db, `codigosGrupo/${g.id}`), {
+        torneoId: tid, grupoId: g.id, grupoNombre: g.nombre,
+        players: g.players.map(p => ({ ...p, opts:{score:true,marcas:true,tarjetas:true} }))
+      });
     }
     setGrupos(gruposConId);
     setTorneoId(tid);
@@ -963,36 +981,63 @@ function TorneoCrear({ onExit, onIniciarGrupo, appStyle }) {
     );
   }
 
-  // ── PASO 2: Definir grupos ──
+  // ── PASO 2: Definir grupos y asignar jugadores ──
   if (paso === 2) {
+    const grupoActualPlayers = grupos[grupoActivo]?.players || [];
     return (
       <div style={appStyle}>
-        <div style={{ background:D.surface, borderBottom:`1px solid ${D.border}`, padding:"16px 16px 12px", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
-          <div style={{ fontSize:20, fontWeight:900, color:D.gold }}>Grupos de salida</div>
+        <div style={{ background:D.surface, borderBottom:`1px solid ${D.border}`, padding:"14px 16px 12px", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+          <div style={{ fontSize:20, fontWeight:900, color:D.gold }}>Grupos y jugadores</div>
           <button onClick={() => setPaso(1)} style={{ fontSize:12, color:D.textSub, background:"none", border:`1px solid ${D.border}`, borderRadius:8, padding:"5px 10px", cursor:"pointer" }}>← Atrás</button>
         </div>
         <div style={{ padding:"12px" }}>
-          <div style={{ fontSize:12, color:D.textSub, marginBottom:12 }}>
-            Cada grupo recibirá un código único. El admin de cada grupo lo usa para ingresar y anotar su grupo.
-          </div>
-          <Card>
-            <SLabel>Grupos</SLabel>
+          {/* Tabs de grupos */}
+          <div style={{ display:"flex", gap:6, marginBottom:12, overflowX:"auto" }}>
             {grupos.map((g, i) => (
-              <div key={i} style={{ display:"flex", alignItems:"center", gap:8, marginBottom:10 }}>
-                <div style={{ width:28, height:28, borderRadius:"50%", background:D.goldDim, color:D.gold, display:"flex", alignItems:"center", justifyContent:"center", fontSize:13, fontWeight:900, flexShrink:0 }}>{i+1}</div>
-                <input value={g.nombre} onChange={e=>setGrupoNombre(i,e.target.value)} placeholder={`Grupo ${i+1} — Ej: Salida 8am`}
-                  style={{ flex:1, padding:"10px 12px", border:`1px solid ${D.border}`, borderRadius:10, background:D.surface, color:D.text, fontSize:14 }} />
-                {grupos.length > 2 && (
-                  <button onClick={() => removeGrupo(i)} style={{ width:28, height:28, borderRadius:"50%", border:`1px solid ${D.danger}44`, background:"transparent", color:D.danger, cursor:"pointer", fontSize:16 }}>✕</button>
-                )}
-              </div>
+              <button key={i} onClick={() => setGrupoActivo(i)} style={{ padding:"8px 12px", border:`1px solid ${grupoActivo===i?D.gold:D.border}`, borderRadius:10, background:grupoActivo===i?D.goldDim:"transparent", color:grupoActivo===i?D.gold:D.textSub, fontSize:12, fontWeight:700, cursor:"pointer", whiteSpace:"nowrap" }}>
+                {g.nombre || `Grupo ${i+1}`} ({g.players.length})
+              </button>
             ))}
-            <button onClick={addGrupo} style={{ width:"100%", padding:"8px", border:`1px dashed ${D.gold}`, borderRadius:10, background:"transparent", color:D.gold, fontSize:13, fontWeight:600, cursor:"pointer", marginTop:4 }}>
-              + Agregar grupo
-            </button>
+            <button onClick={addGrupo} style={{ padding:"8px 10px", border:`1px dashed ${D.gold}`, borderRadius:10, background:"transparent", color:D.gold, fontSize:12, fontWeight:600, cursor:"pointer" }}>+ Grupo</button>
+          </div>
+
+          {/* Nombre del grupo activo */}
+          <Card>
+            <SLabel>Nombre del grupo {grupoActivo+1}</SLabel>
+            <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+              <input value={grupos[grupoActivo]?.nombre||""} onChange={e=>setGrupoNombre(grupoActivo,e.target.value)} placeholder={`Grupo ${grupoActivo+1} — Ej: Salida 8am`}
+                style={{ flex:1, padding:"10px 12px", border:`1px solid ${D.border}`, borderRadius:10, background:D.surface, color:D.text, fontSize:14 }} />
+              {grupos.length > 2 && <button onClick={() => { removeGrupo(grupoActivo); setGrupoActivo(Math.max(0,grupoActivo-1)); }} style={{ padding:"8px 10px", border:`1px solid ${D.danger}44`, borderRadius:8, background:"transparent", color:D.danger, fontSize:12, cursor:"pointer" }}>Eliminar</button>}
+            </div>
           </Card>
-          <Btn onClick={crearTorneo} disabled={creando}>
-            {creando ? "Creando torneo..." : `🏆 Crear torneo con ${grupos.length} grupos`}
+
+          {/* Asignar jugadores */}
+          <Card>
+            <SLabel>Jugadores del grupo {grupoActivo+1} ({grupoActualPlayers.length} seleccionados)</SLabel>
+            {dir.length === 0 && <div style={{ textAlign:"center", color:D.textSub, padding:12, fontSize:13 }}>No hay jugadores en el directorio</div>}
+            {dir.map((p, idx) => {
+              const enEsteGrupo = grupoActualPlayers.find(pl=>pl.id===p.id);
+              const enOtroGrupoIdx = playerEnGrupo(p);
+              const enOtroGrupo = enOtroGrupoIdx !== -1 && enOtroGrupoIdx !== grupoActivo;
+              return (
+                <div key={p.id} onClick={() => !enOtroGrupo && togglePlayerInGrupo(grupoActivo, p)}
+                  style={{ display:"flex", alignItems:"center", gap:10, padding:"9px 0", borderBottom:idx<dir.length-1?`1px solid ${D.border}`:"none", cursor:enOtroGrupo?"default":"pointer", opacity:enOtroGrupo?0.4:1 }}>
+                  <div style={{ width:22, height:22, borderRadius:6, border:`2px solid ${enEsteGrupo?D.gold:D.border}`, background:enEsteGrupo?D.goldDim:"transparent", display:"flex", alignItems:"center", justifyContent:"center", fontSize:13, color:D.gold, flexShrink:0 }}>
+                    {enEsteGrupo?"✓":""}
+                  </div>
+                  <Avatar name={p.name} id={p.id} size={30} />
+                  <div style={{ flex:1 }}>
+                    <div style={{ fontSize:13, fontWeight:600 }}>{p.name}</div>
+                    <div style={{ fontSize:11, color:D.textSub }}>HC {p.hc}</div>
+                  </div>
+                  {enOtroGrupo && <div style={{ fontSize:10, color:D.textDim }}>En {grupos[enOtroGrupoIdx]?.nombre||`Grupo ${enOtroGrupoIdx+1}`}</div>}
+                </div>
+              );
+            })}
+          </Card>
+
+          <Btn onClick={crearTorneo} disabled={creando || grupos.some(g=>g.players.length < 2)}>
+            {creando ? "Creando..." : grupos.some(g=>g.players.length < 2) ? "Cada grupo necesita al menos 2 jugadores" : `🏆 Crear torneo con ${grupos.length} grupos`}
           </Btn>
         </div>
       </div>
@@ -1064,19 +1109,21 @@ function TorneoUnirse({ onExit, appStyle }) {
     if (!codigo.trim()) return;
     setBuscando(true); setError("");
     const gid = codigo.trim().toUpperCase();
-    // Buscar el código de grupo para obtener el torneoId
     onValue(ref(db, `codigosGrupo/${gid}`), snap => {
       if (!snap.exists()) { setBuscando(false); setError("Código no encontrado. Verifica con el organizador."); return; }
-      const { torneoId, grupoNombre } = snap.val();
-      // Cargar la config del torneo
+      const { torneoId, grupoId, grupoNombre, players } = snap.val();
       onValue(ref(db, `torneos/${torneoId}`), tSnap => {
         setBuscando(false);
         if (tSnap.exists()) {
           const t = tSnap.val();
-          setTorneoConfig({ torneoId, grupoId: gid, grupoNombre, campo: t.campo, nHoles: t.nHoles, apuesta: t.apuesta, marcaVal: t.marcaVal, tarjetaVal: t.tarjetaVal, nombre: t.nombre });
-        } else {
-          setError("Error al cargar el torneo. Intenta de nuevo.");
-        }
+          setTorneoConfig({
+            torneoId, grupoId, grupoNombre,
+            campo: t.campo, nHoles: t.nHoles,
+            apuesta: t.apuesta, marcaVal: t.marcaVal, tarjetaVal: t.tarjetaVal,
+            nombre: t.nombre,
+            playersPreasignados: players || [], // jugadores ya asignados por el admin principal
+          });
+        } else { setError("Error al cargar el torneo."); }
       }, { onlyOnce: true });
     }, { onlyOnce: true });
   };
@@ -1088,7 +1135,8 @@ function TorneoUnirse({ onExit, appStyle }) {
   return (
     <div style={{ ...appStyle, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:24, gap:14 }}>
       <div style={{ fontSize:40, fontWeight:900, color:D.gold }}>H19</div>
-      <div style={{ fontSize:14, color:D.textSub, marginBottom:8, textAlign:"center" }}>Ingresa tu código de grupo</div>
+      <div style={{ fontSize:14, color:D.textSub, marginBottom:4, textAlign:"center", fontWeight:700 }}>Admin de Grupo</div>
+      <div style={{ fontSize:12, color:D.textSub, marginBottom:8, textAlign:"center" }}>Ingresa el código que te envió el organizador</div>
       <input value={codigo} onChange={e=>setCodigo(e.target.value.toUpperCase())} placeholder="Código de grupo"
         style={{ width:"100%", padding:14, border:`1px solid ${error?D.danger:D.border}`, borderRadius:12, background:D.surface, color:D.text, fontSize:20, textAlign:"center", letterSpacing:4, fontWeight:700 }} />
       {error && <div style={{ color:D.danger, fontSize:13, textAlign:"center" }}>{error}</div>}
@@ -1308,11 +1356,12 @@ export default function H19() {
 
   if (mode === "home") {
     return (
-      <div style={{ ...appStyle, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:24, gap:16 }}>
+      <div style={{ ...appStyle, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:24, gap:12 }}>
         <div style={{ fontSize:64, fontWeight:900, letterSpacing:-3, color:D.gold }}>H19</div>
         <div style={{ fontSize:18, color:D.textSub, letterSpacing:3, textTransform:"uppercase", marginBottom:8 }}>Chacales Team</div>
         <Btn onClick={() => setMode("pin")}>🏌️ Admin — Única salida</Btn>
         <Btn onClick={() => setMode("pin-torneo")} style={{ background:`linear-gradient(135deg,#1A5C24,#2E7D32)` }}>🏌️🏌️ Admin — Varias salidas</Btn>
+        <div style={{ width:"100%", borderTop:`1px solid ${D.border}`, margin:"4px 0" }} />
         <Btn outline onClick={() => setMode("spectator-input")}>👀 Ver ronda en vivo</Btn>
         <Btn outline onClick={() => setMode("torneo-spectator-input")}>🏆 Ver torneo en vivo</Btn>
       </div>
@@ -1398,7 +1447,11 @@ export default function H19() {
 
 // ─── ADMIN APP ────────────────────────────────────
 function AdminApp({ onExit, torneoConfig = null }) {
-  const [screen, setScreen] = useState(torneoConfig ? "grupo-nombre" : "dir");
+  const [screen, setScreen] = useState(() => {
+    if (!torneoConfig) return "dir";
+    if (torneoConfig.playersPreasignados?.length >= 2) return "score-torneo-init"; // irá a score directamente
+    return "grupo-nombre";
+  });
   const [grupoNombre, setGrupoNombre] = useState("");
   const [dir, setDir] = useState([]);
   const [nid, setNid] = useState(6);
@@ -1794,7 +1847,53 @@ function AdminApp({ onExit, torneoConfig = null }) {
   const appSt = { fontSize:14, fontFamily:"-apple-system,sans-serif", color:D.text, background:D.bg, minHeight:"100vh", maxWidth:420, margin:"0 auto", paddingBottom:32 };
   const tog = (a) => ({ flex:1, padding:9, border:`1px solid ${a?D.gold:D.border}`, borderRadius:10, background:a?D.goldDim:"transparent", color:a?D.gold:D.textSub, fontSize:13, fontWeight:700, cursor:"pointer" });
 
-  // ── NOMBRE DEL GRUPO (solo en modo torneo) ──
+  // ── INICIO AUTOMÁTICO EN MODO TORNEO CON JUGADORES PRE-ASIGNADOS ──
+  if (screen === "score-torneo-init" && torneoConfig?.playersPreasignados?.length >= 2) {
+    // Auto-iniciar la ronda con los jugadores asignados
+    const ps = torneoConfig.playersPreasignados;
+    const basePares = CAMPOS[campo].pares || Array(18).fill(4);
+    const p = basePares.slice(0, nHoles);
+    if (players.length === 0) {
+      // Inicializar solo una vez
+      const initScores = ps.map(() => Array(nHoles).fill(null));
+      const initMarcas = Array(nHoles).fill(null).map(() => emptyMarca(ps.length));
+      const initTarjetas = emptyTarjetas();
+      const rid = Math.random().toString(36).substring(2,8).toUpperCase();
+      setRondaId(rid); setPlayers(ps); setPars(p);
+      setScores(initScores); setMarcas(initMarcas); setTarjetas(initTarjetas);
+      setHole(0); setTab("score"); setResults(null);
+      setGrupoNombre(torneoConfig.grupoNombre || "Mi Grupo");
+      const state = { players:ps, pars:p, scores:initScores, marcas:initMarcas, tarjetas:initTarjetas, hole:0, campo, status:"en_juego", rondaId:rid, grupoNombre:torneoConfig.grupoNombre };
+      saveToLocal(state);
+      try { set(ref(db, `rondas/${rid}`), { ...state, createdAt:Date.now(), updatedAt:Date.now() }); } catch(e) {}
+      try { set(ref(db, `torneos/${torneoConfig.torneoId}/grupos/${torneoConfig.grupoId}`), {
+        nombre: torneoConfig.grupoNombre, players:ps, scores:initScores, marcas:initMarcas, tarjetas:initTarjetas, hole:0, status:"en_juego", updatedAt:Date.now()
+      }); } catch(e) {}
+    }
+    return (
+      <div style={appSt}>
+        <div style={{ display:"flex", alignItems:"center", justifyContent:"center", flexDirection:"column", gap:12, padding:40, textAlign:"center" }}>
+          <div style={{ fontSize:40 }}>⛳</div>
+          <div style={{ fontSize:18, fontWeight:700, color:D.gold }}>{torneoConfig.grupoNombre}</div>
+          <div style={{ fontSize:13, color:D.textSub }}>{torneoConfig.nombre}</div>
+          <div style={{ fontSize:12, color:D.textSub, marginTop:8 }}>
+            {ps.length} jugadores asignados:
+          </div>
+          <div style={{ display:"flex", flexWrap:"wrap", gap:8, justifyContent:"center", marginBottom:16 }}>
+            {ps.map(p => (
+              <div key={p.id} style={{ display:"flex", alignItems:"center", gap:6, padding:"6px 12px", background:D.goldDim, borderRadius:20, border:`1px solid ${D.gold}44` }}>
+                <Avatar name={p.name} id={p.id} size={22} />
+                <span style={{ fontSize:12, fontWeight:600 }}>{p.name} · HC {p.hc}</span>
+              </div>
+            ))}
+          </div>
+          <Btn onClick={() => setScreen("score")}>🏌️ Iniciar ronda del grupo →</Btn>
+        </div>
+      </div>
+    );
+  }
+
+  // ── NOMBRE DEL GRUPO (solo en modo torneo sin jugadores pre-asignados) ──
   if (screen === "grupo-nombre" && torneoConfig) return (
     <div style={appSt}>
       <div style={{ background:D.surface, borderBottom:`1px solid ${D.border}`, padding:"20px 16px 14px", textAlign:"center" }}>
