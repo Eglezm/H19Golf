@@ -865,6 +865,314 @@ function SpectatorView({ rondaId }) {
   );
 }
 
+// ─── TORNEO: CREAR ────────────────────────────────
+function TorneoCrear({ onExit, appStyle }) {
+  const [campo, setCampo] = useState("huerta");
+  const [nHoles, setNHoles] = useState(9);
+  const [apuesta, setApuesta] = useState(50);
+  const [marcaVal, setMarcaVal] = useState(10);
+  const [tarjetaVal, setTarjetaVal] = useState(10);
+  const [nombre, setNombre] = useState("");
+  const [creado, setCreado] = useState(null);
+
+  const crear = () => {
+    const torneoId = "T-" + Math.random().toString(36).substring(2,8).toUpperCase();
+    const data = {
+      torneoId, nombre: nombre.trim() || `Torneo ${new Date().toLocaleDateString('es-MX')}`,
+      campo, nHoles, apuesta, marcaVal, tarjetaVal,
+      status: "en_juego", createdAt: Date.now(),
+      grupos: {}
+    };
+    set(ref(db, `torneos/${torneoId}`), data).then(() => setCreado(torneoId));
+  };
+
+  if (creado) {
+    return (
+      <div style={{ ...appStyle, padding:24 }}>
+        <div style={{ textAlign:"center", marginBottom:24 }}>
+          <div style={{ fontSize:48 }}>🏆</div>
+          <div style={{ fontSize:22, fontWeight:900, color:D.gold, marginTop:8 }}>¡Torneo creado!</div>
+        </div>
+        <Card>
+          <SLabel>Código del torneo</SLabel>
+          <div style={{ fontSize:36, fontWeight:900, letterSpacing:6, color:D.gold, textAlign:"center", padding:"16px 0" }}>{creado}</div>
+          <div style={{ fontSize:12, color:D.textSub, textAlign:"center", marginBottom:12 }}>Comparte este código con los admins de cada grupo</div>
+          <button onClick={() => {
+            if (navigator.clipboard) navigator.clipboard.writeText(creado);
+            const url = `${window.location.origin}${window.location.pathname}?torneo=${creado}`;
+            const msg = `🏆 H19 Golf — Torneo\nCódigo: ${creado}\nVer en vivo: ${url}`;
+            window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, "_blank");
+          }} style={{ width:"100%", padding:"12px", border:"none", borderRadius:12, background:"#25D366", color:"#fff", fontSize:13, fontWeight:700, cursor:"pointer", marginBottom:8 }}>
+            💬 Compartir código por WhatsApp
+          </button>
+        </Card>
+        <Btn onClick={() => onExit()}>← Volver al inicio</Btn>
+      </div>
+    );
+  }
+
+  const parTotal = (CAMPOS[campo].pares||[]).slice(0,nHoles).reduce((a,b)=>a+b,0);
+  return (
+    <div style={appStyle}>
+      <div style={{ background:D.surface, borderBottom:`1px solid ${D.border}`, padding:"20px 16px 14px", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+        <div style={{ fontSize:22, fontWeight:900, color:D.gold }}>H19 — Nuevo Torneo</div>
+        <button onClick={onExit} style={{ fontSize:12, color:D.textSub, background:"none", border:`1px solid ${D.border}`, borderRadius:8, padding:"5px 10px", cursor:"pointer" }}>Salir</button>
+      </div>
+      <div style={{ padding:"12px 12px" }}>
+        <Card>
+          <SLabel>Nombre del torneo</SLabel>
+          <input value={nombre} onChange={e=>setNombre(e.target.value)} placeholder={`Torneo ${new Date().toLocaleDateString('es-MX')}`}
+            style={{ width:"100%", padding:"10px 12px", border:`1px solid ${D.border}`, borderRadius:10, background:D.surface, color:D.text, fontSize:14, boxSizing:"border-box" }} />
+        </Card>
+        <Card>
+          <SLabel>Campo</SLabel>
+          <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+            {Object.entries(CAMPOS).map(([key,c]) => (
+              <button key={key} onClick={() => setCampo(key)} style={{ width:"100%", padding:"10px 14px", border:`1px solid ${campo===key?D.gold:D.border}`, borderRadius:10, background:campo===key?D.goldDim:"transparent", color:campo===key?D.gold:D.textSub, fontSize:13, fontWeight:700, cursor:"pointer", textAlign:"left" }}>
+                {campo===key?"✓ ":""}{c.nombre}
+              </button>
+            ))}
+          </div>
+        </Card>
+        <Card>
+          <SLabel>Hoyos</SLabel>
+          <div style={{ display:"flex", gap:8 }}>
+            {[9,18].map(h => {
+              const pt = (CAMPOS[campo].pares||[]).slice(0,h).reduce((a,b)=>a+b,0);
+              return <button key={h} onClick={() => setNHoles(h)} style={{ flex:1, padding:9, border:`1px solid ${nHoles===h?D.gold:D.border}`, borderRadius:10, background:nHoles===h?D.goldDim:"transparent", color:nHoles===h?D.gold:D.textSub, fontSize:13, fontWeight:700, cursor:"pointer" }}>{h} hoyos · Par {pt}</button>;
+            })}
+          </div>
+        </Card>
+        <Card>
+          <SLabel>💰 Apuestas (iguales para todos los grupos)</SLabel>
+          {[{label:"Score — por jugador",val:apuesta,set:setApuesta},{label:"Marcas — por punto",val:marcaVal,set:setMarcaVal},{label:"Tarjetas — por tarjeta",val:tarjetaVal,set:setTarjetaVal}].map(({label,val,set}) => (
+            <div key={label} style={{ display:"flex", alignItems:"center", gap:10, padding:"8px 0", borderBottom:`1px solid ${D.border}` }}>
+              <div style={{ flex:1, fontSize:13, color:D.textSub }}>{label}</div>
+              <button onClick={() => set(Math.max(0,val-10))} style={{ width:30,height:30,borderRadius:"50%",border:`1px solid ${D.border}`,background:"transparent",color:D.text,cursor:"pointer",fontSize:18 }}>−</button>
+              <div style={{ width:50, textAlign:"center", fontSize:15, fontWeight:700, color:D.gold }}>${val}</div>
+              <button onClick={() => set(val+10)} style={{ width:30,height:30,borderRadius:"50%",border:`1px solid ${D.gold}`,background:D.goldDim,color:D.gold,cursor:"pointer",fontSize:18 }}>+</button>
+            </div>
+          ))}
+        </Card>
+        <Btn onClick={crear}>🏆 Crear torneo</Btn>
+      </div>
+    </div>
+  );
+}
+
+// ─── TORNEO: UNIRSE ────────────────────────────────
+function TorneoUnirse({ onExit, appStyle }) {
+  const [codigo, setCodigo] = useState("");
+  const [torneo, setTorneo] = useState(null);
+  const [error, setError] = useState("");
+  const [buscando, setBuscando] = useState(false);
+
+  const buscar = () => {
+    if (!codigo.trim()) return;
+    setBuscando(true); setError("");
+    const tid = codigo.trim().toUpperCase();
+    onValue(ref(db, `torneos/${tid}`), snap => {
+      setBuscando(false);
+      if (snap.exists()) {
+        setTorneo({ id: tid, ...snap.val() });
+      } else {
+        setError("Torneo no encontrado. Verifica el código.");
+      }
+    }, { onlyOnce: true });
+  };
+
+  if (torneo) {
+    return <AdminApp onExit={onExit} torneoConfig={torneo} />;
+  }
+
+  return (
+    <div style={{ ...appStyle, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:24, gap:14 }}>
+      <div style={{ fontSize:40, fontWeight:900, color:D.gold }}>H19</div>
+      <div style={{ fontSize:14, color:D.textSub, marginBottom:8, textAlign:"center" }}>Ingresa el código del torneo</div>
+      <input value={codigo} onChange={e=>setCodigo(e.target.value.toUpperCase())} placeholder="T-XXXXXX" maxLength={10}
+        style={{ width:"100%", padding:14, border:`1px solid ${error?D.danger:D.border}`, borderRadius:12, background:D.surface, color:D.text, fontSize:20, textAlign:"center", letterSpacing:4, fontWeight:700 }} />
+      {error && <div style={{ color:D.danger, fontSize:13 }}>{error}</div>}
+      <Btn onClick={buscar} disabled={buscando}>{buscando?"Buscando...":"🔗 Unirse al torneo"}</Btn>
+      <button onClick={onExit} style={{ fontSize:13, color:D.textSub, background:"none", border:"none", cursor:"pointer" }}>← Volver</button>
+    </div>
+  );
+}
+
+// ─── TORNEO: SPECTATOR ────────────────────────────────
+function TorneoSpectator({ torneoId, appStyle }) {
+  const [torneo, setTorneo] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [showSplash, setShowSplash] = useState(true);
+  const [splashPhase, setSplashPhase] = useState(0);
+
+  useEffect(() => {
+    const unsub = onValue(ref(db, `torneos/${torneoId}`), snap => {
+      setTorneo(snap.exists() ? snap.val() : null);
+      setLoading(false);
+    });
+    return () => unsub();
+  }, [torneoId]);
+
+  useEffect(() => {
+    setTimeout(() => setSplashPhase(1), 400);
+    setTimeout(() => setSplashPhase(2), 1600);
+    setTimeout(() => setShowSplash(false), 2200);
+  }, []);
+
+  if (showSplash) return <SplashScreen phase={splashPhase} appStyle={appStyle} />;
+
+  if (loading) return (
+    <div style={{ ...appStyle, display:"flex", alignItems:"center", justifyContent:"center", flexDirection:"column", gap:12 }}>
+      <div style={{ fontSize:32 }}>⛳</div>
+      <div style={{ color:D.gold, fontWeight:700 }}>Cargando torneo...</div>
+    </div>
+  );
+
+  if (!torneo) return (
+    <div style={{ ...appStyle, display:"flex", alignItems:"center", justifyContent:"center", flexDirection:"column", gap:12 }}>
+      <div style={{ fontSize:32 }}>🏌️</div>
+      <div style={{ color:D.textSub }}>Torneo no encontrado</div>
+    </div>
+  );
+
+  // Combinar todos los grupos
+  const grupos = Object.entries(torneo.grupos || {});
+  const pars = (CAMPOS[torneo.campo]?.pares || []).slice(0, torneo.nHoles);
+  const parTotal = pars.reduce((a,b)=>a+b,0);
+
+  // Todos los jugadores de todos los grupos con su grupo de origen
+  const allPlayers = grupos.flatMap(([gid, g]) =>
+    (Array.isArray(g.players) ? g.players : Object.values(g.players||{})).map((p, pi) => ({
+      ...p, grupoId:gid, grupoNombre: g.nombre || `Grupo ${gid.slice(-3)}`,
+      scores: Array.isArray(g.scores) ? g.scores[pi]||[] : Object.values(g.scores||{})[pi]||[],
+      marcas: g.marcas, tarjetas: g.tarjetas,
+    }))
+  );
+
+  // Calcular netos y clasificación global
+  const fmtVs = (v) => v === null ? "—" : v === 0 ? "E" : v > 0 ? `+${v}` : `${v}`;
+  const vsColor = (v) => v === null ? D.textDim : v < 0 ? D.success : v > 0 ? D.danger : D.text;
+
+  const ranked = allPlayers.map(p => {
+    const jugados = p.scores.filter(s => s !== null && s !== undefined);
+    const bruto = jugados.length > 0 ? jugados.reduce((a,b)=>a+b,0) : null;
+    const lastIdx = p.scores.reduce((last,s,i) => s!==null&&s!==undefined ? i+1 : last, 0);
+    const parJugados = pars.slice(0, lastIdx).reduce((a,b)=>a+b,0);
+    const vsPar = bruto !== null ? bruto - parJugados : null;
+    const vsParHC = vsPar !== null ? vsPar - p.hc : null;
+    return { ...p, bruto, vsPar, vsParHC };
+  }).sort((a,b) => {
+    if (a.vsParHC===null && b.vsParHC===null) return 0;
+    if (a.vsParHC===null) return 1;
+    if (b.vsParHC===null) return -1;
+    return a.vsParHC - b.vsParHC;
+  });
+
+  return (
+    <div style={appStyle}>
+      <div style={{ background:D.surface, borderBottom:`1px solid ${D.border}`, padding:"16px 16px 12px", textAlign:"center" }}>
+        <div style={{ fontSize:24, fontWeight:900, color:D.gold }}>H19 — Torneo</div>
+        <div style={{ fontSize:13, color:D.textSub, marginTop:2 }}>{torneo.nombre}</div>
+        <div style={{ fontSize:11, color:D.textSub, marginTop:2 }}>{CAMPOS[torneo.campo]?.nombre} · {torneo.nHoles} hoyos · {grupos.length} grupos · {allPlayers.length} jugadores</div>
+      </div>
+      <div style={{ padding:"12px 12px 32px" }}>
+        {/* Marcador global */}
+        <Card>
+          <SLabel>🏆 Clasificación general</SLabel>
+          <div style={{ overflowX:"auto" }}>
+            <table style={{ borderCollapse:"collapse", width:"100%", fontSize:11 }}>
+              <thead>
+                <tr>
+                  <td style={{ padding:"6px 6px", fontWeight:700, color:D.gold, fontSize:10, position:"sticky", left:0, background:D.surface, borderBottom:`1px solid ${D.border}`, minWidth:80 }}>Jugador</td>
+                  {pars.map((_,i) => <td key={i} style={{ padding:"5px 2px", textAlign:"center", fontWeight:700, color:D.textSub, borderBottom:`1px solid ${D.border}`, minWidth:22, fontSize:10 }}>{i+1}</td>)}
+                  <td style={{ padding:"5px 4px", textAlign:"center", fontWeight:700, color:D.gold, borderBottom:`1px solid ${D.border}`, minWidth:28, borderLeft:`1px solid ${D.border}` }}>TOT</td>
+                  <td style={{ padding:"5px 3px", textAlign:"center", fontWeight:700, color:D.textSub, borderBottom:`1px solid ${D.border}`, minWidth:22 }}>HC</td>
+                  <td style={{ padding:"5px 4px", textAlign:"center", fontWeight:700, color:"#1A5C24", borderBottom:`1px solid ${D.border}`, minWidth:32, borderLeft:`1px solid ${D.border}` }}>VS Par</td>
+                  <td style={{ padding:"5px 4px", textAlign:"center", fontWeight:700, color:D.gold, borderBottom:`1px solid ${D.border}`, minWidth:40, borderLeft:`1px solid ${D.border}` }}>VS Par-HC</td>
+                </tr>
+                <tr>
+                  <td style={{ padding:"3px 6px", fontSize:10, color:D.textDim, position:"sticky", left:0, background:D.card, borderBottom:`1px solid ${D.border}` }}>PAR</td>
+                  {pars.map((p,i) => <td key={i} style={{ padding:"3px 2px", textAlign:"center", fontSize:10, color:D.textSub, borderBottom:`1px solid ${D.border}` }}>{p}</td>)}
+                  <td style={{ padding:"3px 4px", textAlign:"center", fontSize:10, color:D.textSub, borderBottom:`1px solid ${D.border}`, borderLeft:`1px solid ${D.border}` }}>{parTotal}</td>
+                  <td style={{ borderBottom:`1px solid ${D.border}` }}></td>
+                  <td style={{ borderBottom:`1px solid ${D.border}`, borderLeft:`1px solid ${D.border}` }}></td>
+                  <td style={{ borderBottom:`1px solid ${D.border}`, borderLeft:`1px solid ${D.border}` }}></td>
+                </tr>
+              </thead>
+              <tbody>
+                {ranked.map(({ name, id, hc, scores: sc, grupoNombre, bruto, vsPar, vsParHC }, pos) => (
+                  <tr key={`${grupoNombre}-${name}`} style={{ borderBottom:`1px solid ${D.border}`, background:pos===0&&vsParHC!==null?D.goldDim+"55":"transparent" }}>
+                    <td style={{ padding:"6px 6px", position:"sticky", left:0, background:pos===0&&vsParHC!==null?D.goldDim+"55":D.card, zIndex:1 }}>
+                      <div style={{ display:"flex", alignItems:"center", gap:4 }}>
+                        <span style={{ fontSize:10, fontWeight:700, color:pos===0?D.gold:D.textSub, minWidth:12 }}>{pos+1}</span>
+                        <Avatar name={String(name||'?')} id={id||pos} size={18} />
+                        <div>
+                          <div style={{ fontSize:11, fontWeight:600, whiteSpace:"nowrap" }}>{name}</div>
+                          <div style={{ fontSize:9, color:D.textDim }}>{grupoNombre}</div>
+                        </div>
+                      </div>
+                    </td>
+                    {pars.map((par, hi) => (
+                      <td key={hi} style={{ textAlign:"center", padding:"2px 1px" }}>
+                        <ScoreCell s={sc[hi]??null} par={par} size={20} />
+                      </td>
+                    ))}
+                    <td style={{ textAlign:"center", padding:"5px 4px", fontWeight:700, fontSize:11, borderLeft:`1px solid ${D.border}` }}>{bruto??'—'}</td>
+                    <td style={{ textAlign:"center", padding:"5px 3px", fontSize:11, color:D.textSub }}>{hc}</td>
+                    <td style={{ textAlign:"center", padding:"5px 4px", fontWeight:700, fontSize:11, color:vsColor(vsPar), borderLeft:`1px solid ${D.border}` }}>{fmtVs(vsPar)}</td>
+                    <td style={{ textAlign:"center", padding:"5px 4px", fontWeight:900, fontSize:12, color:vsColor(vsParHC), borderLeft:`1px solid ${D.border}` }}>{fmtVs(vsParHC)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <ScoreLegend />
+          </div>
+        </Card>
+
+        {/* Peor score global */}
+        {(() => {
+          const peorGlobal = ranked[ranked.length - 1];
+          return peorGlobal?.vsParHC !== null ? (
+            <Card>
+              <SLabel>🪣 Peor score global</SLabel>
+              <div style={{ display:"flex", alignItems:"center", gap:10, padding:"8px 0" }}>
+                <Avatar name={String(peorGlobal.name||'?')} id={peorGlobal.id||0} size={32} />
+                <div style={{ flex:1 }}>
+                  <div style={{ fontSize:14, fontWeight:700, color:D.danger }}>{peorGlobal.name}</div>
+                  <div style={{ fontSize:11, color:D.textSub }}>{peorGlobal.grupoNombre}</div>
+                </div>
+                <div style={{ fontSize:16, fontWeight:900, color:D.danger }}>{fmtVs(peorGlobal.vsParHC)}</div>
+              </div>
+            </Card>
+          ) : null;
+        })()}
+
+        {/* Resultados por grupo */}
+        {grupos.map(([gid, g]) => (
+          <Card key={gid}>
+            <SLabel>🏌️ {g.nombre || `Grupo ${gid.slice(-3)}`}</SLabel>
+            {(Array.isArray(g.players) ? g.players : Object.values(g.players||{})).map((p, pi) => {
+              const sc = (Array.isArray(g.scores) ? g.scores[pi] : Object.values(g.scores||{})[pi]) || [];
+              const jugados = sc.filter(s=>s!==null&&s!==undefined);
+              const bruto = jugados.length > 0 ? jugados.reduce((a,b)=>a+b,0) : null;
+              return (
+                <div key={pi} style={{ display:"flex", alignItems:"center", gap:8, padding:"7px 0", borderBottom:pi<(g.players?.length||0)-1?`1px solid ${D.border}`:"none" }}>
+                  <Avatar name={String(p.name||'?')} id={p.id||pi} size={26} />
+                  <div style={{ flex:1, fontSize:13, fontWeight:600 }}>{p.name}</div>
+                  <div style={{ fontSize:11, color:D.textSub }}>HC {p.hc}</div>
+                  <div style={{ fontSize:13, fontWeight:700, color:D.gold }}>{bruto??'—'} golpes</div>
+                </div>
+              );
+            })}
+          </Card>
+        ))}
+
+        <div style={{ textAlign:"center", fontSize:11, color:D.textDim, marginTop:8 }}>Vista en vivo · Actualización automática</div>
+      </div>
+    </div>
+  );
+}
+
 // ─── APP PRINCIPAL ────────────────────────────────
 export default function H19() {
   const [mode, setMode] = useState(null);
@@ -878,12 +1186,14 @@ export default function H19() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const rid = params.get("ronda");
+    const tid = params.get("torneo");
     if (rid) { setRondaId(rid); setMode("spectator"); setShowSplash(false); return; }
+    if (tid) { setRondaId(tid); setMode("torneo-spectator"); setShowSplash(false); return; }
     else setMode("home");
     // Splash animation sequence
-    setTimeout(() => setSplashPhase(1), 600);   // aparece "Welcome to H19Golf"
-    setTimeout(() => setSplashPhase(2), 2800);  // fade out
-    setTimeout(() => setShowSplash(false), 3600); // desaparece
+    setTimeout(() => setSplashPhase(1), 600);
+    setTimeout(() => setSplashPhase(2), 2800);
+    setTimeout(() => setShowSplash(false), 3600);
   }, []);
 
   const appStyle = { fontSize:14, fontFamily:"-apple-system,sans-serif", color:D.text, background:D.bg, minHeight:"100vh", maxWidth:420, margin:"0 auto" };
@@ -899,12 +1209,58 @@ export default function H19() {
     return (
       <div style={{ ...appStyle, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:24, gap:16 }}>
         <div style={{ fontSize:64, fontWeight:900, letterSpacing:-3, color:D.gold }}>H19</div>
-        <div style={{ fontSize:18, color:D.textSub, letterSpacing:3, textTransform:"uppercase", marginBottom:16 }}>Chacales Team</div>
-        <Btn onClick={() => setMode("pin")}>🏌️ Entrar como Admin</Btn>
+        <div style={{ fontSize:18, color:D.textSub, letterSpacing:3, textTransform:"uppercase", marginBottom:8 }}>Chacales Team</div>
+        <Btn onClick={() => setMode("pin")}>🏌️ Admin — Única salida</Btn>
+        <Btn onClick={() => setMode("pin-torneo")} style={{ background:`linear-gradient(135deg,#1A5C24,#2E7D32)` }}>🏌️🏌️ Admin — Varias salidas</Btn>
         <Btn outline onClick={() => setMode("spectator-input")}>👀 Ver ronda en vivo</Btn>
+        <Btn outline onClick={() => setMode("torneo-spectator-input")}>🏆 Ver torneo en vivo</Btn>
       </div>
     );
   }
+
+  if (mode === "pin-torneo") {
+    return (
+      <div style={{ ...appStyle, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:24, gap:14 }}>
+        <div style={{ fontSize:40, fontWeight:900, color:D.gold }}>H19</div>
+        <div style={{ fontSize:14, color:D.textSub, marginBottom:8 }}>PIN de administrador</div>
+        <input type="password" value={pinInput} onChange={e => setPinInput(e.target.value)} placeholder="PIN" maxLength={6}
+          style={{ width:"100%", padding:14, border:`1px solid ${pinError?D.danger:D.border}`, borderRadius:12, background:D.surface, color:D.text, fontSize:22, textAlign:"center", letterSpacing:8, fontWeight:700 }} />
+        {pinError && <div style={{ color:D.danger, fontSize:13 }}>PIN incorrecto</div>}
+        <Btn onClick={() => { if (pinInput===ADMIN_PIN) { setMode("torneo-menu"); setPinError(false); } else setPinError(true); }}>Entrar</Btn>
+        <button onClick={() => { setMode("home"); setPinInput(""); setPinError(false); }} style={{ fontSize:13, color:D.textSub, background:"none", border:"none", cursor:"pointer" }}>← Volver</button>
+      </div>
+    );
+  }
+
+  if (mode === "torneo-menu") {
+    return (
+      <div style={{ ...appStyle, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:24, gap:16 }}>
+        <div style={{ fontSize:40, fontWeight:900, color:D.gold }}>H19</div>
+        <div style={{ fontSize:14, color:D.textSub, marginBottom:8, textAlign:"center" }}>Modo Varias Salidas</div>
+        <Btn onClick={() => setMode("torneo-crear")} style={{ background:`linear-gradient(135deg,#1A5C24,#2E7D32)` }}>🆕 Crear nuevo torneo</Btn>
+        <Btn outline onClick={() => setMode("torneo-unirse")}>🔗 Unirse a torneo existente</Btn>
+        <button onClick={() => setMode("home")} style={{ fontSize:13, color:D.textSub, background:"none", border:"none", cursor:"pointer" }}>← Volver</button>
+      </div>
+    );
+  }
+
+  if (mode === "torneo-crear") return <TorneoCrear onExit={() => setMode("home")} appStyle={appStyle} />;
+  if (mode === "torneo-unirse") return <TorneoUnirse onExit={() => setMode("home")} appStyle={appStyle} />;
+
+  if (mode === "torneo-spectator-input") {
+    return (
+      <div style={{ ...appStyle, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:24, gap:14 }}>
+        <div style={{ fontSize:40, fontWeight:900, color:D.gold }}>H19</div>
+        <div style={{ fontSize:14, color:D.textSub, marginBottom:8, textAlign:"center" }}>Ingresa el código del torneo</div>
+        <input value={spectatorInput} onChange={e => setSpectatorInput(e.target.value.toUpperCase())} placeholder="Código torneo" maxLength={10}
+          style={{ width:"100%", padding:14, border:`1px solid ${D.border}`, borderRadius:12, background:D.surface, color:D.text, fontSize:20, textAlign:"center", letterSpacing:4, fontWeight:700 }} />
+        <Btn onClick={() => { if (spectatorInput.trim()) { setRondaId(spectatorInput.trim()); setMode("torneo-spectator"); } }}>Ver torneo</Btn>
+        <button onClick={() => setMode("home")} style={{ fontSize:13, color:D.textSub, background:"none", border:"none", cursor:"pointer" }}>← Volver</button>
+      </div>
+    );
+  }
+
+  if (mode === "torneo-spectator" && rondaId) return <TorneoSpectator torneoId={rondaId} appStyle={appStyle} />;
 
   if (mode === "pin") {
     return (
@@ -939,16 +1295,17 @@ export default function H19() {
 }
 
 // ─── ADMIN APP ────────────────────────────────────
-function AdminApp({ onExit }) {
-  const [screen, setScreen] = useState("dir");
+function AdminApp({ onExit, torneoConfig = null }) {
+  const [screen, setScreen] = useState(torneoConfig ? "grupo-nombre" : "dir");
+  const [grupoNombre, setGrupoNombre] = useState("");
   const [dir, setDir] = useState([]);
   const [nid, setNid] = useState(6);
   const [sel, setSel] = useState(new Set());
-  const [nHoles, setNHoles] = useState(9);
-  const [campo, setCampo] = useState("huerta");
-  const [apuesta, setApuesta] = useState(DEFAULT_APUESTA);
-  const [marcaVal, setMarcaVal] = useState(DEFAULT_MARCA_VAL);
-  const [tarjetaVal, setTarjetaVal] = useState(DEFAULT_TARJETA_VAL);
+  const [nHoles, setNHoles] = useState(torneoConfig?.nHoles || 9);
+  const [campo, setCampo] = useState(torneoConfig?.campo || "huerta");
+  const [apuesta, setApuesta] = useState(torneoConfig?.apuesta || DEFAULT_APUESTA);
+  const [marcaVal, setMarcaVal] = useState(torneoConfig?.marcaVal || DEFAULT_MARCA_VAL);
+  const [tarjetaVal, setTarjetaVal] = useState(torneoConfig?.tarjetaVal || DEFAULT_TARJETA_VAL);
   const [playerOpts, setPlayerOpts] = useState({});
   const [newName, setNewName] = useState("");
   const [newHC, setNewHC] = useState("");
@@ -1027,9 +1384,26 @@ function AdminApp({ onExit }) {
     try { localStorage.setItem("h19-ronda-activa", JSON.stringify({ ...state, savedAt:Date.now() })); } catch(e) {}
   };
 
+  const grupoId = torneoConfig ? rondaId : null;
+
   const syncFirebase = (state) => {
     if (!rondaId) return;
-    try { set(ref(db, `rondas/${rondaId}`), { ...state, updatedAt:Date.now() }); } catch(e) {}
+    try {
+      set(ref(db, `rondas/${rondaId}`), { ...state, updatedAt:Date.now() });
+      // Si estamos en modo torneo, también sincroniza bajo el torneo
+      if (torneoConfig && grupoId) {
+        set(ref(db, `torneos/${torneoConfig.torneoId}/grupos/${grupoId}`), {
+          nombre: state.grupoNombre || `Grupo ${grupoId.slice(-3)}`,
+          players: state.players,
+          scores: state.scores,
+          marcas: state.marcas,
+          tarjetas: state.tarjetas,
+          hole: state.hole,
+          status: state.status,
+          updatedAt: Date.now(),
+        });
+      }
+    } catch(e) {}
   };
 
   const updateGame = (state) => { saveToLocal(state); syncFirebase(state); };
@@ -1070,9 +1444,15 @@ function AdminApp({ onExit }) {
     setRondaId(rid); setPlayers(ps); setPars(p);
     setScores(initScores); setMarcas(initMarcas); setTarjetas(initTarjetas);
     setHole(0); setTab("score"); setResults(null);
-    const state = { players:ps, pars:p, scores:initScores, marcas:initMarcas, tarjetas:initTarjetas, hole:0, campo, status:"en_juego", rondaId:rid };
+    const state = { players:ps, pars:p, scores:initScores, marcas:initMarcas, tarjetas:initTarjetas, hole:0, campo, status:"en_juego", rondaId:rid, grupoNombre };
     saveToLocal(state);
     try { set(ref(db, `rondas/${rid}`), { ...state, createdAt:Date.now(), updatedAt:Date.now() }); } catch(e) {}
+    // Si estamos en modo torneo, registrar el grupo
+    if (torneoConfig) {
+      try { set(ref(db, `torneos/${torneoConfig.torneoId}/grupos/${rid}`), {
+        nombre: grupoNombre, players:ps, scores:initScores, marcas:initMarcas, tarjetas:initTarjetas, hole:0, status:"en_juego", updatedAt:Date.now()
+      }); } catch(e) {}
+    }
     setScreen("score");
   };
 
@@ -1286,9 +1666,12 @@ function AdminApp({ onExit }) {
   };
 
   const shareRonda = () => {
-    const url = `${window.location.origin}${window.location.pathname}?ronda=${rondaId}`;
-    if (navigator.clipboard) { navigator.clipboard.writeText(url); setShareMsg("¡Link copiado!"); setTimeout(()=>setShareMsg(""),2500); }
-    else { setShareMsg(`Código: ${rondaId}`); setTimeout(()=>setShareMsg(""),4000); }
+    const url = torneoConfig
+      ? `${window.location.origin}${window.location.pathname}?torneo=${torneoConfig.torneoId}`
+      : `${window.location.origin}${window.location.pathname}?ronda=${rondaId}`;
+    const label = torneoConfig ? "¡Link del torneo copiado!" : "¡Link copiado!";
+    if (navigator.clipboard) { navigator.clipboard.writeText(url); setShareMsg(label); setTimeout(()=>setShareMsg(""),2500); }
+    else { setShareMsg(torneoConfig ? `Código torneo: ${torneoConfig.torneoId}` : `Código: ${rondaId}`); setTimeout(()=>setShareMsg(""),4000); }
   };
 
   const getDisplay = (pi, h) => scores[pi]?.[h]===null ? pars[h] : scores[pi]?.[h];
@@ -1308,6 +1691,34 @@ function AdminApp({ onExit }) {
   const appSt = { fontSize:14, fontFamily:"-apple-system,sans-serif", color:D.text, background:D.bg, minHeight:"100vh", maxWidth:420, margin:"0 auto", paddingBottom:32 };
   const tog = (a) => ({ flex:1, padding:9, border:`1px solid ${a?D.gold:D.border}`, borderRadius:10, background:a?D.goldDim:"transparent", color:a?D.gold:D.textSub, fontSize:13, fontWeight:700, cursor:"pointer" });
 
+  // ── NOMBRE DEL GRUPO (solo en modo torneo) ──
+  if (screen === "grupo-nombre" && torneoConfig) return (
+    <div style={appSt}>
+      <div style={{ background:D.surface, borderBottom:`1px solid ${D.border}`, padding:"20px 16px 14px", textAlign:"center" }}>
+        <div style={{ fontSize:22, fontWeight:900, color:D.gold }}>H19 — Torneo</div>
+        <div style={{ fontSize:13, color:D.textSub, marginTop:2 }}>{torneoConfig.nombre}</div>
+      </div>
+      <div style={{ padding:"24px 16px", display:"flex", flexDirection:"column", gap:16, alignItems:"center" }}>
+        <div style={{ textAlign:"center" }}>
+          <div style={{ fontSize:32, marginBottom:8 }}>🏌️</div>
+          <div style={{ fontSize:16, fontWeight:700, color:D.text, marginBottom:4 }}>¿Cómo se llama tu grupo?</div>
+          <div style={{ fontSize:12, color:D.textSub }}>Ej: "Grupo 1", "Los Chacales A", "Salida 8am"</div>
+        </div>
+        <input value={grupoNombre} onChange={e=>setGrupoNombre(e.target.value)} placeholder="Nombre del grupo"
+          style={{ width:"100%", padding:"14px 16px", border:`1px solid ${D.border}`, borderRadius:12, background:D.surface, color:D.text, fontSize:16, textAlign:"center", boxSizing:"border-box" }} />
+        <div style={{ width:"100%", padding:"10px 14px", background:D.goldDim, borderRadius:10, fontSize:12, color:D.gold }}>
+          <div style={{ fontWeight:700, marginBottom:4 }}>📋 Configuración del torneo:</div>
+          <div>{CAMPOS[torneoConfig.campo]?.nombre} · {torneoConfig.nHoles} hoyos</div>
+          <div>Score ${torneoConfig.apuesta} · Marcas ${torneoConfig.marcaVal} · Tarjetas ${torneoConfig.tarjetaVal}</div>
+        </div>
+        <Btn onClick={() => { if (grupoNombre.trim()) setScreen("dir"); }} disabled={!grupoNombre.trim()}>
+          Continuar →
+        </Btn>
+        <button onClick={onExit} style={{ fontSize:13, color:D.textSub, background:"none", border:"none", cursor:"pointer" }}>← Volver</button>
+      </div>
+    </div>
+  );
+
   // ── DIRECTORIO ──
   if (screen==="dir") return (
     <div style={appSt}>
@@ -1320,6 +1731,13 @@ function AdminApp({ onExit }) {
       </div>
       <div style={{ padding:"12px 12px" }}>
         <TabBar tabs={[{key:"dir",label:"👥 Jugadores"},{key:"hist",label:"📋 Historial"},{key:"sel",label:"⛳ Nueva ronda"}]} active="dir" onChange={k => { if(k==="sel") setScreen("sel"); if(k==="hist") setScreen("hist"); }} />
+        {torneoConfig && (
+          <div style={{ background:D.goldDim, border:`1px solid ${D.gold}`, borderRadius:12, padding:"12px 16px", marginBottom:12 }}>
+            <div style={{ fontSize:13, fontWeight:700, color:D.gold, marginBottom:4 }}>🏆 Modo Torneo</div>
+            <div style={{ fontSize:12, color:D.textSub }}>{torneoConfig.nombre}</div>
+            <div style={{ fontSize:11, color:D.textSub, marginTop:2 }}>Grupo: <strong>{grupoNombre}</strong> · {CAMPOS[torneoConfig.campo]?.nombre} · {torneoConfig.nHoles} hoyos</div>
+          </div>
+        )}
         {savedRonda && (
           <div style={{ background:D.greenBg, border:`1px solid ${D.success}`, borderRadius:12, padding:"12px 16px", marginBottom:12 }}>
             <div style={{ fontSize:13, fontWeight:700, color:D.success, marginBottom:4 }}>⛳ Ronda guardada encontrada</div>
