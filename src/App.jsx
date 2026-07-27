@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { initializeApp } from "firebase/app";
-import { getDatabase, ref, set, onValue, remove } from "firebase/database";
+import { getDatabase, ref, set, onValue, remove, get } from "firebase/database";
 
 const firebaseConfig = {
   apiKey: "AIzaSyAsWuJRelERz7W2QG3-DPaOprKKT0TJBA4",
@@ -1105,27 +1105,36 @@ function TorneoUnirse({ onExit, appStyle }) {
   const [error, setError] = useState("");
   const [buscando, setBuscando] = useState(false);
 
-  const buscar = () => {
+  const buscar = async () => {
     if (!codigo.trim()) return;
     setBuscando(true); setError("");
     const gid = codigo.trim().toUpperCase();
-    onValue(ref(db, `codigosGrupo/${gid}`), snap => {
-      if (!snap.exists()) { setBuscando(false); setError("Código no encontrado. Verifica con el organizador."); return; }
-      const { torneoId, grupoId, grupoNombre, players } = snap.val();
-      onValue(ref(db, `torneos/${torneoId}`), tSnap => {
+    try {
+      const grupoSnap = await get(ref(db, `codigosGrupo/${gid}`));
+      if (!grupoSnap.exists()) {
         setBuscando(false);
-        if (tSnap.exists()) {
-          const t = tSnap.val();
-          setTorneoConfig({
-            torneoId, grupoId, grupoNombre,
-            campo: t.campo, nHoles: t.nHoles,
-            apuesta: t.apuesta, marcaVal: t.marcaVal, tarjetaVal: t.tarjetaVal,
-            nombre: t.nombre,
-            playersPreasignados: players || [], // jugadores ya asignados por el admin principal
-          });
-        } else { setError("Error al cargar el torneo."); }
-      }, { onlyOnce: true });
-    }, { onlyOnce: true });
+        setError("Código no encontrado. Verifica con el organizador.");
+        return;
+      }
+      const { torneoId, grupoId, grupoNombre, players } = grupoSnap.val();
+      const torneoSnap = await get(ref(db, `torneos/${torneoId}`));
+      setBuscando(false);
+      if (torneoSnap.exists()) {
+        const t = torneoSnap.val();
+        setTorneoConfig({
+          torneoId, grupoId, grupoNombre,
+          campo: t.campo, nHoles: t.nHoles,
+          apuesta: t.apuesta, marcaVal: t.marcaVal, tarjetaVal: t.tarjetaVal,
+          nombre: t.nombre,
+          playersPreasignados: players || [],
+        });
+      } else {
+        setError("Error al cargar el torneo.");
+      }
+    } catch(e) {
+      setBuscando(false);
+      setError("Error de conexión. Intenta de nuevo.");
+    }
   };
 
   if (torneoConfig) {
@@ -1360,7 +1369,8 @@ export default function H19() {
         <div style={{ fontSize:64, fontWeight:900, letterSpacing:-3, color:D.gold }}>H19</div>
         <div style={{ fontSize:18, color:D.textSub, letterSpacing:3, textTransform:"uppercase", marginBottom:8 }}>Chacales Team</div>
         <Btn onClick={() => setMode("pin")}>🏌️ Admin — Única salida</Btn>
-        <Btn onClick={() => setMode("pin-torneo")} style={{ background:`linear-gradient(135deg,#1A5C24,#2E7D32)` }}>🏌️🏌️ Admin — Varias salidas</Btn>
+        <Btn onClick={() => setMode("pin-torneo")} style={{ background:`linear-gradient(135deg,#1A5C24,#2E7D32)` }}>🏌️🏌️ Admin — Crear torneo</Btn>
+        <Btn outline onClick={() => setMode("torneo-unirse")}>🔗 Entrar con código de grupo</Btn>
         <div style={{ width:"100%", borderTop:`1px solid ${D.border}`, margin:"4px 0" }} />
         <Btn outline onClick={() => setMode("spectator-input")}>👀 Ver ronda en vivo</Btn>
         <Btn outline onClick={() => setMode("torneo-spectator-input")}>🏆 Ver torneo en vivo</Btn>
