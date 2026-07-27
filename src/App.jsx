@@ -1045,57 +1045,80 @@ function TorneoCrear({ onExit, onIniciarGrupo, appStyle }) {
   }
 
   // ── PASO 3: Compartir códigos por grupo ──
-  return (
-    <div style={appStyle}>
-      <div style={{ background:D.surface, borderBottom:`1px solid ${D.border}`, padding:"16px 16px 12px", textAlign:"center" }}>
-        <div style={{ fontSize:22, fontWeight:900, color:D.gold }}>🏆 ¡Torneo creado!</div>
-        <div style={{ fontSize:13, color:D.textSub, marginTop:2 }}>{nombre || "Torneo"}</div>
-      </div>
-      <div style={{ padding:"12px" }}>
-        <div style={{ fontSize:12, color:D.textSub, marginBottom:12, textAlign:"center" }}>
-          Comparte el código de cada grupo con su admin. Cada código es único para ese grupo.
+  // Guardar torneoId en localStorage para que el admin pueda regresar
+  useEffect(() => {
+    if (paso === 3 && torneoId) {
+      try { localStorage.setItem("h19-torneo-admin", JSON.stringify({ torneoId, nombre: nombre.trim() || "Torneo", campo, nHoles, apuesta, marcaVal, tarjetaVal })); } catch(e) {}
+    }
+  }, [paso, torneoId]);
+
+  if (paso === 3) {
+    const torneoUrl = `${window.location.origin}${window.location.pathname}?torneo=${torneoId}`;
+    return (
+      <div style={appStyle}>
+        <div style={{ background:D.surface, borderBottom:`1px solid ${D.border}`, padding:"16px 16px 12px", textAlign:"center" }}>
+          <div style={{ fontSize:22, fontWeight:900, color:D.gold }}>🏆 ¡Torneo creado!</div>
+          <div style={{ fontSize:13, color:D.textSub, marginTop:2 }}>{nombre || "Torneo"}</div>
+          <div style={{ fontSize:11, color:D.textDim, marginTop:2 }}>Código: <span style={{ color:D.gold, fontWeight:700 }}>{torneoId}</span></div>
         </div>
+        <div style={{ padding:"12px" }}>
 
-        {/* Link del torneo para espectadores */}
-        <Card>
-          <SLabel>👀 Link para ver el torneo en vivo</SLabel>
-          <button onClick={() => {
-            const url = `${window.location.origin}${window.location.pathname}?torneo=${torneoId}`;
-            const msg = `🏆 H19 Golf — ${nombre||"Torneo"}\nVer en vivo todos los grupos: ${url}`;
-            window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, "_blank");
-          }} style={{ width:"100%", padding:"10px", border:"none", borderRadius:10, background:"#25D366", color:"#fff", fontSize:13, fontWeight:700, cursor:"pointer" }}>
-            💬 Compartir link de torneo por WhatsApp
-          </button>
-        </Card>
-
-        {/* Código por grupo */}
-        {grupos.map((g, i) => (
-          <Card key={i}>
-            <SLabel>Grupo {i+1}: {g.nombre}</SLabel>
-            <div style={{ fontSize:28, fontWeight:900, letterSpacing:4, color:D.gold, textAlign:"center", padding:"10px 0" }}>{g.id}</div>
+          {/* PANEL DEL ADMIN GENERAL */}
+          <Card style={{ border:`2px solid ${D.gold}` }}>
+            <SLabel>🎖️ Tu panel de Admin General</SLabel>
+            <div style={{ fontSize:12, color:D.textSub, marginBottom:10 }}>Guarda este link para ver y controlar todo el torneo:</div>
             <div style={{ display:"flex", gap:8 }}>
               <button onClick={() => {
-                const msg = `🏌️ H19 Golf — ${nombre||"Torneo"}\nTu grupo: *${g.nombre}*\nCódigo para ingresar: *${g.id}*\nEntra en: ${window.location.origin}`;
+                const msg = `🏆 H19 — ${nombre||"Torneo"} (Admin General)\nVer torneo completo: ${torneoUrl}`;
+                if (navigator.clipboard) navigator.clipboard.writeText(torneoUrl);
                 window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, "_blank");
               }} style={{ flex:1, padding:"10px", border:"none", borderRadius:10, background:"#25D366", color:"#fff", fontSize:12, fontWeight:700, cursor:"pointer" }}>
-                💬 WhatsApp
+                💬 Guardar link del torneo
               </button>
               <button onClick={() => {
-                if (navigator.clipboard) navigator.clipboard.writeText(g.id);
+                window.open(torneoUrl, "_blank");
               }} style={{ flex:1, padding:"10px", border:`1px solid ${D.gold}`, borderRadius:10, background:D.goldDim, color:D.gold, fontSize:12, fontWeight:700, cursor:"pointer" }}>
-                📋 Copiar código
+                👁️ Ver torneo ahora
               </button>
             </div>
           </Card>
-        ))}
 
-        <Btn onClick={() => onIniciarGrupo({ ...torneoData, grupoId: grupos[0].id, grupoNombre: grupos[0].nombre })}>
-          🏌️ Iniciar mi grupo ({grupos[0]?.nombre}) →
-        </Btn>
-        <Btn outline onClick={onExit} style={{ marginTop:8 }}>← Volver al inicio</Btn>
+          {/* Códigos por grupo */}
+          <div style={{ fontSize:12, color:D.textSub, margin:"8px 0", textAlign:"center" }}>
+            Envía a cada admin el código de su grupo:
+          </div>
+          {grupos.map((g, i) => (
+            <Card key={i}>
+              <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:6 }}>
+                <SLabel style={{ marginBottom:0 }}>Grupo {i+1}: {g.nombre}</SLabel>
+                <div style={{ fontSize:11, color:D.textSub }}>{g.players?.length||0} jugadores</div>
+              </div>
+              <div style={{ fontSize:28, fontWeight:900, letterSpacing:4, color:D.gold, textAlign:"center", padding:"8px 0" }}>{g.id}</div>
+              <div style={{ display:"flex", gap:8 }}>
+                <button onClick={() => {
+                  const playersStr = (g.players||[]).map(p=>`• ${p.name} (HC ${p.hc})`).join('\n');
+                  const msg = `🏌️ H19 Golf — *${nombre||"Torneo"}*\n*Tu grupo: ${g.nombre}*\nJugadores:\n${playersStr}\n\n*Código para ingresar: ${g.id}*\nAbre la app: ${window.location.origin}\n→ "Entrar con código de grupo"\nVer torneo en vivo: ${torneoUrl}`;
+                  window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, "_blank");
+                }} style={{ flex:1, padding:"10px", border:"none", borderRadius:10, background:"#25D366", color:"#fff", fontSize:12, fontWeight:700, cursor:"pointer" }}>
+                  💬 WhatsApp al admin
+                </button>
+                <button onClick={() => {
+                  if (navigator.clipboard) navigator.clipboard.writeText(g.id);
+                }} style={{ flex:1, padding:"10px", border:`1px solid ${D.gold}`, borderRadius:10, background:D.goldDim, color:D.gold, fontSize:12, fontWeight:700, cursor:"pointer" }}>
+                  📋 Copiar código
+                </button>
+              </div>
+            </Card>
+          ))}
+
+          <Btn onClick={() => onIniciarGrupo({ ...torneoData, grupoId: grupos[0].id, grupoNombre: grupos[0].nombre })}>
+            🏌️ Iniciar mi grupo ({grupos[0]?.nombre}) →
+          </Btn>
+          <Btn outline onClick={onExit} style={{ marginTop:8 }}>← Volver al inicio</Btn>
+        </div>
       </div>
-    </div>
-  );
+    );
+  }
 }
 
 // ─── TORNEO: UNIRSE ────────────────────────────────
@@ -1340,6 +1363,14 @@ export default function H19() {
   const [showSplash, setShowSplash] = useState(true);
   const [splashPhase, setSplashPhase] = useState(0);
   const [activeTorneoConfig, setActiveTorneoConfig] = useState(null);
+  const [savedTorneoAdmin, setSavedTorneoAdmin] = useState(null);
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("h19-torneo-admin");
+      if (saved) setSavedTorneoAdmin(JSON.parse(saved));
+    } catch(e) {}
+  }, []);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -1368,6 +1399,21 @@ export default function H19() {
       <div style={{ ...appStyle, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:24, gap:12 }}>
         <div style={{ fontSize:64, fontWeight:900, letterSpacing:-3, color:D.gold }}>H19</div>
         <div style={{ fontSize:18, color:D.textSub, letterSpacing:3, textTransform:"uppercase", marginBottom:8 }}>Chacales Team</div>
+        {savedTorneoAdmin && (
+          <div style={{ width:"100%", background:"#E8F5E9", border:`1px solid ${D.success}`, borderRadius:12, padding:"12px 14px", marginBottom:4 }}>
+            <div style={{ fontSize:12, fontWeight:700, color:D.success, marginBottom:6 }}>🏆 Torneo activo: {savedTorneoAdmin.nombre}</div>
+            <div style={{ display:"flex", gap:8 }}>
+              <button onClick={() => { setRondaId(savedTorneoAdmin.torneoId); setMode("torneo-spectator"); }}
+                style={{ flex:1, padding:"8px", border:"none", borderRadius:8, background:D.success, color:"#fff", fontSize:12, fontWeight:700, cursor:"pointer" }}>
+                👁️ Ver torneo
+              </button>
+              <button onClick={() => { localStorage.removeItem("h19-torneo-admin"); setSavedTorneoAdmin(null); }}
+                style={{ padding:"8px 10px", border:`1px solid ${D.border}`, borderRadius:8, background:"transparent", color:D.textSub, fontSize:11, cursor:"pointer" }}>
+                ✕
+              </button>
+            </div>
+          </div>
+        )}
         <Btn onClick={() => setMode("pin")}>🏌️ Admin — Única salida</Btn>
         <Btn onClick={() => setMode("pin-torneo")} style={{ background:`linear-gradient(135deg,#1A5C24,#2E7D32)` }}>🏌️🏌️ Admin — Crear torneo</Btn>
         <Btn outline onClick={() => setMode("torneo-unirse")}>🔗 Entrar con código de grupo</Btn>
