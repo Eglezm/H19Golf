@@ -1378,20 +1378,27 @@ function TorneoSpectator({ torneoId, appStyle, isAdmin = false }) {
 
         {/* Peor score global */}
         {(() => {
-          const peorGlobal = rankedWithMoney[rankedWithMoney.length - 1];
-          return peorGlobal?.vsParHC !== null ? (
+          const conScore = rankedWithMoney.filter(p => p.vsParHC !== null);
+          if (conScore.length === 0) return null;
+          const peorVsParHC = conScore[conScore.length - 1].vsParHC;
+          const peores = conScore.filter(p => p.vsParHC === peorVsParHC);
+          const esEmpate = peores.length > 1;
+          return (
             <Card>
-              <SLabel>🪣 Peor score global</SLabel>
-              <div style={{ display:"flex", alignItems:"center", gap:10, padding:"8px 0" }}>
-                <Avatar name={String(peorGlobal.name||'?')} id={peorGlobal.id||0} size={32} />
-                <div style={{ flex:1 }}>
-                  <div style={{ fontSize:14, fontWeight:700, color:D.danger }}>{peorGlobal.name}</div>
-                  <div style={{ fontSize:11, color:D.textSub }}>{peorGlobal.grupoNombre}</div>
+              <SLabel>🪣 Peor score global {esEmpate ? `(empate — tarjeta repartida entre ${peores.length})` : ""}</SLabel>
+              {peores.map((p, i) => (
+                <div key={`${p.grupoId}-${p.id}`} style={{ display:"flex", alignItems:"center", gap:10, padding:"8px 0", borderBottom:i<peores.length-1?`1px solid ${D.border}`:"none" }}>
+                  <Avatar name={String(p.name||'?')} id={p.id||0} size={32} />
+                  <div style={{ flex:1 }}>
+                    <div style={{ fontSize:14, fontWeight:700, color:D.danger }}>{p.name}</div>
+                    <div style={{ fontSize:11, color:D.textSub }}>{p.grupoNombre}</div>
+                  </div>
+                  <div style={{ fontSize:16, fontWeight:900, color:D.danger }}>{fmtVs(p.vsParHC)}</div>
                 </div>
-                <div style={{ fontSize:16, fontWeight:900, color:D.danger }}>{fmtVs(peorGlobal.vsParHC)}</div>
-              </div>
+              ))}
+              {esEmpate && <div style={{ fontSize:11, color:D.textSub, marginTop:6, textAlign:"center" }}>Cada uno paga su parte proporcional</div>}
             </Card>
-          ) : null;
+          );
         })()}
 
         {/* Dinero en vivo */}
@@ -1901,11 +1908,11 @@ function AdminApp({ onExit, torneoConfig = null }) {
   const grupoId = torneoConfig?.grupoId || rondaId;
 
   const syncFirebase = (state) => {
-    if (!rondaId) return;
     try {
-      set(ref(db, `rondas/${rondaId}`), { ...state, updatedAt:Date.now() });
+      // En modo torneo, el grupoId es el identificador primario
       if (torneoConfig && torneoConfig.torneoId) {
-        const gid = torneoConfig.grupoId || rondaId;
+        const gid = torneoConfig.grupoId;
+        if (!gid) return;
         set(ref(db, `torneos/${torneoConfig.torneoId}/grupos/${gid}`), {
           nombre: state.grupoNombre || torneoConfig.grupoNombre || grupoNombre || `Grupo`,
           players: state.players,
@@ -1917,11 +1924,15 @@ function AdminApp({ onExit, torneoConfig = null }) {
           updatedAt: Date.now(),
         });
       }
+      // También guardar en rondas si tenemos rondaId
+      if (rondaId) {
+        set(ref(db, `rondas/${rondaId}`), { ...state, updatedAt:Date.now() });
+      }
     } catch(e) {}
   };
 
   const updateGame = (state) => { saveToLocal(state); syncFirebase(state); };
-  const getState = () => ({ players, pars, scores, marcas, tarjetas, hole, campo, status:"en_juego", rondaId, apuesta, marcaVal, tarjetaVal });
+  const getState = () => ({ players, pars, scores, marcas, tarjetas, hole, campo, status:"en_juego", rondaId, apuesta, marcaVal, tarjetaVal, grupoNombre });
 
   const resumeRonda = () => {
     if (!savedRonda) return;
@@ -2283,14 +2294,20 @@ function AdminApp({ onExit, torneoConfig = null }) {
       setTab("score");
       setGrupoNombre(torneoConfig.grupoNombre || "Mi Grupo");
 
-      // Buscar el rondaId en localStorage
+      // Buscar el rondaId en localStorage, si no hay generar uno nuevo
+      let rid = null;
       try {
         const saved = localStorage.getItem("h19-ronda-activa");
         if (saved) {
           const data = JSON.parse(saved);
-          if (data.rondaId) setRondaId(data.rondaId);
+          if (data.rondaId) rid = data.rondaId;
         }
       } catch(e) {}
+      if (!rid) rid = Math.random().toString(36).substring(2,8).toUpperCase();
+      setRondaId(rid);
+      // Guardar estado actual en localStorage
+      const state = { players:ps, pars:p, scores:sc, marcas:mc, tarjetas:tj, hole:h, campo, status:"en_juego", rondaId:rid, grupoNombre:torneoConfig.grupoNombre };
+      saveToLocal(state);
 
       setScreen("score");
     };
@@ -3109,6 +3126,19 @@ function AdminApp({ onExit, torneoConfig = null }) {
 
     return (
       <div style={appSt}>
+        {/* Banner de torneo para admins de grupo */}
+        {torneoConfig && (
+          <div style={{ background:`linear-gradient(135deg,#1A5C24,#2E7D32)`, padding:"12px 16px", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+            <div>
+              <div style={{ fontSize:11, color:"#fff", opacity:0.8 }}>Torneo · {torneoConfig.nombre}</div>
+              <div style={{ fontSize:13, fontWeight:700, color:"#fff" }}>Grupo finalizado: {grupoNombre || torneoConfig.grupoNombre}</div>
+            </div>
+            <button onClick={() => window.open(`${window.location.origin}${window.location.pathname}?torneo=${torneoConfig.torneoId}`, "_blank")}
+              style={{ padding:"8px 12px", border:"1px solid #fff", borderRadius:10, background:"transparent", color:"#fff", fontSize:12, fontWeight:700, cursor:"pointer" }}>
+              🏆 Ver torneo global
+            </button>
+          </div>
+        )}
         <div style={{ background:`linear-gradient(135deg,#FDF8EE,#F5EDD0)`, borderBottom:`1px solid ${D.gold}44`, padding:"28px 16px", textAlign:"center", marginBottom:16 }}>
           <div style={{ fontSize:36, marginBottom:8 }}>🏆</div>
           <div style={{ fontSize:11, color:D.gold, letterSpacing:2, textTransform:"uppercase", marginBottom:6 }}>1er Lugar · Score</div>
