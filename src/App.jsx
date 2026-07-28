@@ -1235,8 +1235,49 @@ function CerrarTorneoPanel({ torneoId, torneo, grupos, allPlayers, ranked, pars,
       // Marcar torneo como finalizado
       await set(ref(db, `torneos/${torneoId}/status`), "finalizado");
 
+      // Guardar desglose completo por grupo en el torneo
+      const fecha = new Date();
+      const fechaStr = `${fecha.getDate().toString().padStart(2,'0')}/${(fecha.getMonth()+1).toString().padStart(2,'0')}`;
+      for (const [gid, g] of grupos) {
+        try {
+          const gPlayers = (Array.isArray(g.players) ? g.players : Object.values(g.players||{}))
+            .map(p => ({...p, opts:{score:true,marcas:true,tarjetas:true}}));
+          const gScoresRaw = Array.isArray(g.scores) ? g.scores : Object.values(g.scores||{});
+          const gMarcas = g.marcas ? (Array.isArray(g.marcas) ? g.marcas : Object.values(g.marcas)) : null;
+          const gTarjetas = g.tarjetas || null;
+          const gFullScores = gPlayers.map((_, pi) => {
+            const rowRaw = gScoresRaw[pi];
+            const row = Array.isArray(rowRaw) ? rowRaw : Object.values(rowRaw||{});
+            return pars.map((par,h) => { const v = row[h]; return (v===null||v===undefined)?par:v; });
+          });
+          const r = calcMoney(gPlayers, gFullScores, torneo.apuesta||50);
+          const mMoney = gMarcas ? calcMarcasMoney(gPlayers, gMarcas, torneo.marcaVal||10) : gPlayers.map(()=>0);
+          const mPts = gMarcas ? calcMarcasPts(gPlayers, gMarcas) : gPlayers.map(()=>0);
+          const tMoney = gTarjetas ? calcTarjetasMoney(gPlayers, gTarjetas, torneo.tarjetaVal||10) : gPlayers.map(()=>0);
+          const tCount = gTarjetas ? gPlayers.map((_,i) => {
+            let c=0; TARJETAS.forEach(t=>{ const o=gTarjetas[t.key]; c += Array.isArray(o)?o.includes(i)?1/o.length:0:o===i?1:0; }); return Math.round(c*10)/10;
+          }) : gPlayers.map(()=>0);
+          const jugadoresDetalle = gPlayers.map((p,i) => ({
+            name:p.name, hc:p.hc,
+            bruto:gFullScores[i].reduce((a,b)=>a+b,0),
+            neto:r.nets[i],
+            scoreMoney:r.money[i], marcasMoney:mMoney[i], marcasPts:mPts[i],
+            tarjetasMoney:tMoney[i], tarjetasCount:tCount[i],
+            total:r.money[i]+mMoney[i]+tMoney[i],
+          }));
+          await set(ref(db, `torneos/${torneoId}/grupos/${gid}/resumenFinal`), {
+            jugadores: jugadoresDetalle,
+            ganador: r.fi.map(i=>gPlayers[i].name).join(" · "),
+            netGanador: r.nets[r.fi[0]],
+            fechaTs: Date.now(), fecha: fechaStr,
+            pars, playerNames: gPlayers.map(p=>p.name),
+            scoresPorHoyo: gFullScores,
+            marcas: gMarcas, tarjetas: gTarjetas,
+          });
+        } catch(e) {}
+      }
+
       if (guardarHC && hcUpdates) {
-        // Actualizar HC de cada jugador en el directorio
         const dirSnap = await get(ref(db, "directorio"));
         if (dirSnap.exists()) {
           const dirData = dirSnap.val();
@@ -2843,30 +2884,100 @@ function AdminApp({ onExit, torneoConfig = null }) {
                   {isOpen && (
                     <div style={{ marginTop:10, background:D.bg, borderRadius:10, padding:10 }}>
                       {grupos.map(([gid, g]) => {
-                        const gPs = Array.isArray(g.players) ? g.players : Object.values(g.players||{});
-                        const gSc = Array.isArray(g.scores) ? g.scores : Object.values(g.scores||{});
-                        const pars = (CAMPOS[t.campo]?.pares||[]).slice(0, t.nHoles);
+                        const rf = g.resumenFinal;
+                        const gPs = rf?.jugadores || (Array.isArray(g.players) ? g.players : Object.values(g.players||{}));
+                        const pars2 = rf?.pars || (CAMPOS[t.campo]?.pares||[]).slice(0, t.nHoles);
+                        const isGrupoOpen = expandedTorneoHist === `${t.id}-${gid}`;
                         return (
-                          <div key={gid} style={{ marginBottom:12, paddingBottom:12, borderBottom:`1px solid ${D.border}` }}>
-                            <div style={{ fontSize:12, fontWeight:700, color:D.gold, marginBottom:6 }}>
-                              🏌️ {g.nombre || `Grupo ${gid.slice(-3)}`}
-                              {g.resultados?.ganador && <span style={{ color:D.text, fontWeight:400 }}> · 🏆 {g.resultados.ganador}</span>}
+                          <div key={gid} style={{ marginBottom:10, paddingBottom:10, borderBottom:`1px solid ${D.border}` }}>
+                            <div onClick={() => setExpandedTorneoHist(isGrupoOpen ? t.id : `${t.id}-${gid}`)} style={{ cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+                              <div>
+                                <div style={{ fontSize:13, fontWeight:700, color:D.gold }}>🏌️ {g.nombre || `Grupo ${gid.slice(-3)}`}</div>
+                                {rf?.ganador && <div style={{ fontSize:11, color:D.textSub }}>🏆 {rf.ganador} ({rf.netGanador} neto)</div>}
+                              </div>
+                              <div style={{ fontSize:10, color:D.textSub }}>{isGrupoOpen ? "▲" : "▼ Desglose"}</div>
                             </div>
-                            {gPs.map((p, pi) => {
-                              const rowRaw = gSc[pi];
-                              const row = Array.isArray(rowRaw) ? rowRaw : Object.values(rowRaw||{});
-                              const jugados = row.filter(s=>s!==null&&s!==undefined);
-                              const bruto = jugados.length>0 ? jugados.reduce((a,b)=>a+b,0) : null;
-                              const neto = bruto !== null ? bruto - p.hc : null;
-                              return (
-                                <div key={pi} style={{ display:"flex", alignItems:"center", gap:8, padding:"5px 0" }}>
-                                  <Avatar name={String(p.name||'?')} id={p.id||pi} size={22} />
-                                  <div style={{ flex:1, fontSize:12, fontWeight:600 }}>{p.name}</div>
-                                  <div style={{ fontSize:11, color:D.textSub }}>HC {p.hc}</div>
-                                  <div style={{ fontSize:12, fontWeight:700, color:D.gold }}>{bruto??'—'} / {neto??'—'} neto</div>
-                                </div>
-                              );
-                            })}
+                            {isGrupoOpen && rf && (
+                              <div style={{ marginTop:8 }}>
+                                {/* Jugadores con $ */}
+                                {rf.jugadores?.slice().sort((a,b)=>a.neto-b.neto).map((j,pos) => (
+                                  <div key={j.name} style={{ display:"flex", alignItems:"center", gap:8, padding:"7px 0", borderBottom:`1px solid ${D.border}` }}>
+                                    <div style={{ width:18, fontSize:11, fontWeight:900, color:pos===0?D.gold:D.textSub }}>{pos+1}</div>
+                                    <div style={{ flex:1 }}>
+                                      <div style={{ fontSize:12, fontWeight:600 }}>{j.name}</div>
+                                      <div style={{ fontSize:10, color:D.textSub }}>HC {j.hc} · {j.bruto} bruto · {j.neto} neto</div>
+                                    </div>
+                                    <div style={{ textAlign:"right" }}>
+                                      <div style={{ fontSize:13, fontWeight:900, color:j.total>=0?D.success:D.danger }}>{j.total>=0?`+$${j.total}`:`-$${Math.abs(j.total)}`}</div>
+                                      <div style={{ fontSize:9, color:D.textDim }}>Sc ${j.scoreMoney} · Mk ${j.marcasMoney} · Tj ${j.tarjetasMoney}</div>
+                                    </div>
+                                  </div>
+                                ))}
+                                {/* Tarjeta hoyo por hoyo */}
+                                {rf.scoresPorHoyo && rf.pars && (
+                                  <div style={{ marginTop:8, overflowX:"auto" }}>
+                                    <div style={{ fontSize:10, fontWeight:700, color:D.textSub, marginBottom:4, textTransform:"uppercase" }}>🏌️ Tarjeta</div>
+                                    <table style={{ width:"100%", borderCollapse:"collapse", fontSize:10, minWidth:rf.pars.length*26+80 }}>
+                                      <thead>
+                                        <tr>
+                                          <td style={{ padding:"3px 4px", color:D.textDim, position:"sticky", left:0, background:D.bg }}>Par</td>
+                                          {rf.pars.map((par,h) => <td key={h} style={{ textAlign:"center", padding:"2px 2px", color:D.textDim }}>{par}</td>)}
+                                          <td style={{ textAlign:"center", padding:"2px 4px", color:D.textSub, fontWeight:700 }}>Tot</td>
+                                        </tr>
+                                      </thead>
+                                      <tbody>
+                                        {(rf.playerNames||[]).map((name,pi) => {
+                                          const row = rf.scoresPorHoyo[pi]||[];
+                                          return (
+                                            <tr key={name} style={{ borderTop:`1px solid ${D.border}` }}>
+                                              <td style={{ padding:"4px 4px", fontWeight:600, position:"sticky", left:0, background:D.bg, whiteSpace:"nowrap" }}>{name}</td>
+                                              {rf.pars.map((par,h) => <td key={h} style={{ textAlign:"center", padding:"2px 1px" }}><ScoreCell s={row[h]??null} par={par} size={18} /></td>)}
+                                              <td style={{ textAlign:"center", padding:"4px 4px", fontWeight:900, color:D.gold }}>{row.filter(s=>s!=null).reduce((a,b)=>a+b,0)||'—'}</td>
+                                            </tr>
+                                          );
+                                        })}
+                                      </tbody>
+                                    </table>
+                                    <ScoreLegend />
+                                  </div>
+                                )}
+                                {/* Marcas */}
+                                {rf.marcas && rf.jugadores && (() => {
+                                  const eventos = calcMarcasResumen(rf.jugadores.map(j=>({name:j.name,opts:{marcas:true}})), rf.marcas);
+                                  return eventos.length > 0 ? (
+                                    <div style={{ marginTop:8 }}>
+                                      <div style={{ fontSize:10, fontWeight:700, color:D.textSub, marginBottom:4, textTransform:"uppercase" }}>⭐ Marcas</div>
+                                      {eventos.map((ev,i) => (
+                                        <div key={i} style={{ display:"flex", gap:6, padding:"3px 0", fontSize:11 }}>
+                                          <span style={{ color:D.textDim, width:38 }}>Hoyo {ev.hole}</span>
+                                          <span style={{ flex:1 }}>{ev.label}</span>
+                                          <span style={{ fontWeight:700, color:D.gold }}>{ev.playerName}</span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  ) : null;
+                                })()}
+                                {/* Tarjetas */}
+                                {rf.tarjetas && (() => {
+                                  const conDueno = TARJETAS.filter(tj => { const o=rf.tarjetas[tj.key]; return Array.isArray(o)?o.length>0:(o!==null&&o!==undefined); });
+                                  return conDueno.length > 0 ? (
+                                    <div style={{ marginTop:8 }}>
+                                      <div style={{ fontSize:10, fontWeight:700, color:D.danger, marginBottom:4, textTransform:"uppercase" }}>🃏 Tarjetas</div>
+                                      {conDueno.map(tj => {
+                                        const owner = rf.tarjetas[tj.key];
+                                        const names = Array.isArray(owner)
+                                          ? owner.map(i => rf.playerNames?.[i]).filter(Boolean).join(" · ")
+                                          : rf.playerNames?.[owner] || "—";
+                                        return <div key={tj.key} style={{ display:"flex", justifyContent:"space-between", fontSize:11, padding:"2px 0" }}><span style={{ color:D.textSub }}>{tj.label}</span><span style={{ fontWeight:700, color:D.danger }}>{names}</span></div>;
+                                      })}
+                                    </div>
+                                  ) : null;
+                                })()}
+                              </div>
+                            )}
+                            {isGrupoOpen && !rf && (
+                              <div style={{ fontSize:11, color:D.textDim, marginTop:6 }}>Desglose no disponible (torneo cerrado sin guardar detalle)</div>
+                            )}
                           </div>
                         );
                       })}
