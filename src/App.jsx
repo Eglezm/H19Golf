@@ -1200,6 +1200,111 @@ function TorneoUnirse({ onExit, appStyle }) {
   );
 }
 
+// ─── CERRAR TORNEO ────────────────────────────────
+function CerrarTorneoPanel({ torneoId, torneo, grupos, allPlayers, ranked, pars, onCerrado }) {
+  const [hcUpdates, setHcUpdates] = useState(null);
+  const [guardando, setGuardando] = useState(false);
+  const [cerrado, setCerrado] = useState(false);
+
+  useEffect(() => {
+    // Calcular ajuste de HC: usar el ganador global (menor vsParHC)
+    // y el segundo lugar si aplica regla 10+
+    const conScore = ranked.filter(p => p.vsParHC !== null);
+    if (conScore.length === 0) return;
+
+    // Para calcular HC necesitamos los scores completos
+    // Usamos fullScores aproximados (reemplazando null con par)
+    const playersGlobal = allPlayers.map(p => ({
+      ...p, id: p.id || p.name, opts:{score:true,marcas:true,tarjetas:true}
+    }));
+    const scoresGlobal = allPlayers.map(p => pars.map((par,h) => {
+      const v = p.scores[h];
+      return (v===null||v===undefined) ? par : v;
+    }));
+
+    const r = calcMoney(playersGlobal, scoresGlobal, torneo.apuesta||50);
+    const playsScoreCount = playersGlobal.length;
+    const siParaHC = (playsScoreCount >= 10 && r.fi.length === 1) ? r.si : [];
+    const hc = calcHC(playersGlobal, scoresGlobal, siParaHC);
+    setHcUpdates(hc);
+  }, []);
+
+  const guardarYCerrar = async (guardarHC) => {
+    setGuardando(true);
+    try {
+      // Marcar torneo como finalizado
+      await set(ref(db, `torneos/${torneoId}/status`), "finalizado");
+
+      if (guardarHC && hcUpdates) {
+        // Actualizar HC de cada jugador en el directorio
+        const dirSnap = await get(ref(db, "directorio"));
+        if (dirSnap.exists()) {
+          const dirData = dirSnap.val();
+          const players = dirData.players || [];
+          const updatedPlayers = players.map(p => {
+            const upd = hcUpdates.find(u => u.name === p.name);
+            return upd ? { ...p, hc: upd.after } : p;
+          });
+          await set(ref(db, "directorio"), { ...dirData, players: updatedPlayers });
+        }
+      }
+
+      setCerrado(true);
+      setTimeout(() => onCerrado(), 2000);
+    } catch(e) {
+      setGuardando(false);
+      alert("Error al cerrar torneo: " + e.message);
+    }
+  };
+
+  if (cerrado) return (
+    <div style={{ background:"#E8F5E9", border:`2px solid ${D.success}`, borderRadius:12, padding:"20px", marginBottom:12, textAlign:"center" }}>
+      <div style={{ fontSize:32, marginBottom:8 }}>✅</div>
+      <div style={{ fontSize:16, fontWeight:700, color:D.success }}>¡Torneo cerrado!</div>
+      <div style={{ fontSize:12, color:D.textSub, marginTop:4 }}>Regresando al inicio...</div>
+    </div>
+  );
+
+  return (
+    <div style={{ background:"#E8F5E9", border:`2px solid ${D.success}`, borderRadius:12, padding:"16px", marginBottom:12 }}>
+      <div style={{ fontSize:15, fontWeight:700, color:D.success, marginBottom:4, textAlign:"center" }}>✅ Todos los grupos han finalizado</div>
+      <div style={{ fontSize:12, color:D.textSub, marginBottom:12, textAlign:"center" }}>Como admin general, elige cómo cerrar el torneo:</div>
+
+      {/* Ajuste de HC */}
+      {hcUpdates && hcUpdates.some(u => u.delta !== 0) && (
+        <Card style={{ marginBottom:10 }}>
+          <SLabel>📈 Ajuste de Handicaps</SLabel>
+          {hcUpdates.filter(u => u.delta !== 0).map((u, i) => {
+            const up = u.delta > 0, dn = u.delta < 0;
+            return (
+              <div key={u.name} style={{ display:"flex", alignItems:"center", gap:8, padding:"7px 0", borderBottom:i<hcUpdates.filter(x=>x.delta!==0).length-1?`1px solid ${D.border}`:"none" }}>
+                <div style={{ flex:1, fontSize:13, fontWeight:600 }}>{u.name}</div>
+                <div style={{ fontSize:11, color:D.textSub }}>HC {u.before}</div>
+                <div style={{ fontSize:12, padding:"3px 10px", borderRadius:10, fontWeight:700,
+                  background:up?D.redBg:D.greenBg, color:up?D.danger:D.success,
+                  border:`1px solid ${up?D.danger+"44":D.success+"44"}` }}>
+                  {up?`+${u.delta} → HC ${u.after}`:`${u.delta} → HC ${u.after}`}
+                </div>
+              </div>
+            );
+          })}
+        </Card>
+      )}
+
+      <div style={{ display:"flex", gap:8, flexDirection:"column" }}>
+        <button onClick={() => guardarYCerrar(true)} disabled={guardando}
+          style={{ width:"100%", padding:"12px", border:"none", borderRadius:10, background:D.success, color:"#fff", fontSize:14, fontWeight:700, cursor:"pointer" }}>
+          {guardando ? "Guardando..." : "✅ Cerrar torneo y guardar handicaps"}
+        </button>
+        <button onClick={() => guardarYCerrar(false)} disabled={guardando}
+          style={{ width:"100%", padding:"12px", border:`1px solid ${D.border}`, borderRadius:10, background:"transparent", color:D.textSub, fontSize:13, fontWeight:600, cursor:"pointer" }}>
+          Cerrar torneo sin guardar handicaps
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ─── TORNEO: SPECTATOR ────────────────────────────────
 function TorneoSpectator({ torneoId, appStyle, isAdmin = false }) {
   const [torneo, setTorneo] = useState(null);
@@ -1536,21 +1641,10 @@ function TorneoSpectator({ torneoId, appStyle, isAdmin = false }) {
         </Card>
 
         {isAdmin && grupos.length > 0 && grupos.every(([,g]) => g.status === "finalizada") && (
-          <div style={{ background:"#E8F5E9", border:`2px solid ${D.success}`, borderRadius:12, padding:"16px", marginBottom:12, textAlign:"center" }}>
-            <div style={{ fontSize:15, fontWeight:700, color:D.success, marginBottom:8 }}>✅ Todos los grupos han finalizado</div>
-            <div style={{ fontSize:12, color:D.textSub, marginBottom:12 }}>Como admin general puedes cerrar el torneo y guardar los handicaps</div>
-            <button onClick={async () => {
-              if (!confirm("¿Cerrar el torneo y guardar handicaps finales?")) return;
-              // Calcular HC de todos los jugadores combinados
-              const allParsCalc = (CAMPOS[torneo.campo]?.pares||[]).slice(0, torneo.nHoles);
-              try {
-                await set(ref(db, `torneos/${torneoId}/status`), "finalizado");
-                alert("✅ Torneo cerrado. Los handicaps se guardan en cada ronda individual.");
-              } catch(e) { alert("Error al cerrar torneo"); }
-            }} style={{ width:"100%", padding:"12px", border:"none", borderRadius:10, background:D.success, color:"#fff", fontSize:14, fontWeight:700, cursor:"pointer" }}>
-              🏆 Cerrar torneo
-            </button>
-          </div>
+          <CerrarTorneoPanel torneoId={torneoId} torneo={torneo} grupos={grupos} allPlayers={allPlayers} ranked={ranked} pars={pars} onCerrado={() => {
+            try { localStorage.removeItem("h19-torneo-admin"); } catch(e) {}
+            window.location.href = window.location.pathname; // volver a home limpio
+          }} />
         )}
 
         {isAdmin && grupos.some(([,g]) => g.status !== "finalizada") && (
