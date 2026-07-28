@@ -1303,15 +1303,45 @@ function TorneoSpectator({ torneoId, appStyle, isAdmin = false }) {
     }
   });
 
-  const rankedWithMoney = ranked.map((p, globalIdx) => {
+  // ── PEOR SCORE GLOBAL: aplica sobre todos los jugadores del torneo ──
+  // Identificar quién(es) tienen el peor VS Par-HC entre TODOS los jugadores
+  const conScoreGlobal = ranked.filter(p => p.vsParHC !== null);
+  const peorVsParHCGlobal = conScoreGlobal.length > 0 ? Math.max(...conScoreGlobal.map(p => p.vsParHC)) : null;
+  const peoresGlobal = peorVsParHCGlobal !== null
+    ? conScoreGlobal.filter(p => p.vsParHC === peorVsParHCGlobal)
+    : [];
+  const totalJugadoresConScore = conScoreGlobal.length;
+  const peorScoreMoneyGlobal = {}; // key: `${grupoId}-${id}`
+  if (peoresGlobal.length > 0 && totalJugadoresConScore > peoresGlobal.length) {
+    const tv = torneo.tarjetaVal || 10;
+    peoresGlobal.forEach(peor => {
+      // El peor paga a todos los demás (fracción si hay empate)
+      const pagoTotal = (totalJugadoresConScore - peoresGlobal.length) * tv;
+      peorScoreMoneyGlobal[`${peor.grupoId}-${peor.id}`] = -(pagoTotal / peoresGlobal.length);
+    });
+    // Los que no son el peor cobran
+    conScoreGlobal.forEach(p => {
+      const key = `${p.grupoId}-${p.id}`;
+      if (!peorScoreMoneyGlobal[key]) {
+        peorScoreMoneyGlobal[key] = tv; // cobra $tarjetaVal de cada peor (fraccionado)
+        // Ajuste: si hay varios peores, cada uno paga tv/peoresGlobal.length
+        peorScoreMoneyGlobal[key] = (tv * peoresGlobal.length) / peoresGlobal.length; // = tv
+      }
+    });
+  }
+
+  const rankedWithMoney = ranked.map((p) => {
     const scoreM = moneyGlobal[allPlayers.findIndex(ap => ap.grupoId===p.grupoId && ap.id===p.id)] || 0;
-    // Encontrar el índice dentro del grupo
     const gPlayers = Array.isArray(torneo.grupos[p.grupoId]?.players)
       ? torneo.grupos[p.grupoId].players
       : Object.values(torneo.grupos[p.grupoId]?.players||{});
     const piInGrupo = gPlayers.findIndex(gp => gp.id === p.id);
     const marcasM = marcasMoneyMap[`${p.grupoId}-${piInGrupo}`] || 0;
-    const tarjetasM = tarjetasMoneyMap[`${p.grupoId}-${piInGrupo}`] || 0;
+    // Tarjetas locales del grupo (excluyendo peor score global que se calcula aparte)
+    const tarjetasLocalesM = tarjetasMoneyMap[`${p.grupoId}-${piInGrupo}`] || 0;
+    // Peor score global
+    const peorM = peorScoreMoneyGlobal[`${p.grupoId}-${p.id}`] || 0;
+    const tarjetasM = tarjetasLocalesM + peorM;
     return { ...p, scoreM, marcasM, tarjetasM, totalM: scoreM + marcasM + tarjetasM };
   });
 
@@ -1377,29 +1407,26 @@ function TorneoSpectator({ torneoId, appStyle, isAdmin = false }) {
         </Card>
 
         {/* Peor score global */}
-        {(() => {
-          const conScore = rankedWithMoney.filter(p => p.vsParHC !== null);
-          if (conScore.length === 0) return null;
-          const peorVsParHC = conScore[conScore.length - 1].vsParHC;
-          const peores = conScore.filter(p => p.vsParHC === peorVsParHC);
-          const esEmpate = peores.length > 1;
-          return (
-            <Card>
-              <SLabel>🪣 Peor score global {esEmpate ? `(empate — tarjeta repartida entre ${peores.length})` : ""}</SLabel>
-              {peores.map((p, i) => (
-                <div key={`${p.grupoId}-${p.id}`} style={{ display:"flex", alignItems:"center", gap:10, padding:"8px 0", borderBottom:i<peores.length-1?`1px solid ${D.border}`:"none" }}>
-                  <Avatar name={String(p.name||'?')} id={p.id||0} size={32} />
-                  <div style={{ flex:1 }}>
-                    <div style={{ fontSize:14, fontWeight:700, color:D.danger }}>{p.name}</div>
-                    <div style={{ fontSize:11, color:D.textSub }}>{p.grupoNombre}</div>
-                  </div>
-                  <div style={{ fontSize:16, fontWeight:900, color:D.danger }}>{fmtVs(p.vsParHC)}</div>
+        {peoresGlobal.length > 0 && (
+          <Card>
+            <SLabel>🪣 Peor score global {peoresGlobal.length > 1 ? `(empate — tarjeta repartida entre ${peoresGlobal.length})` : ""}</SLabel>
+            {peoresGlobal.map((p, i) => (
+              <div key={`${p.grupoId}-${p.id}`} style={{ display:"flex", alignItems:"center", gap:10, padding:"8px 0", borderBottom:i<peoresGlobal.length-1?`1px solid ${D.border}`:"none" }}>
+                <Avatar name={String(p.name||'?')} id={p.id||0} size={32} />
+                <div style={{ flex:1 }}>
+                  <div style={{ fontSize:14, fontWeight:700, color:D.danger }}>{p.name}</div>
+                  <div style={{ fontSize:11, color:D.textSub }}>{p.grupoNombre}</div>
                 </div>
-              ))}
-              {esEmpate && <div style={{ fontSize:11, color:D.textSub, marginTop:6, textAlign:"center" }}>Cada uno paga su parte proporcional</div>}
-            </Card>
-          );
-        })()}
+                <div style={{ fontSize:16, fontWeight:900, color:D.danger }}>{fmtVs(p.vsParHC)}</div>
+              </div>
+            ))}
+            {peoresGlobal.length > 1 && (
+              <div style={{ fontSize:11, color:D.textSub, marginTop:6, textAlign:"center" }}>
+                Cada uno paga ${Math.round((totalJugadoresConScore - peoresGlobal.length) * (torneo.tarjetaVal||10) / peoresGlobal.length)} a cada uno de los demás {totalJugadoresConScore - peoresGlobal.length} jugadores
+              </div>
+            )}
+          </Card>
+        )}
 
         {/* Dinero en vivo */}
         {rankedWithMoney.some(p => p.vsParHC !== null) && (
