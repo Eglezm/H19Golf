@@ -2949,8 +2949,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
                       {CAMPOS[t.campo]?.nombre||t.campo} · {t.nHoles} hoyos · {grupos.length} grupos · {totalJugadores} jugadores
                     </div>
                     {rg && <div style={{ fontSize:12, background:D.goldDim, color:D.gold, padding:"2px 10px", borderRadius:10, fontWeight:700, display:"inline-block", marginBottom:4 }}>🏆 {ganadorNombre} ({rg.netGanador} neto)</div>}
-                    </div>
-                    <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+                    <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginTop:4 }}>
                       <div style={{ fontSize:11, color:D.textSub }}>{isOpen ? "▲ Ocultar grupos" : "▼ Ver grupos"}</div>
                       <button onClick={e => { e.stopPropagation(); remove(ref(db, `torneos/${t.id}`)); setExpandedTorneoHist(null); }}
                         style={{ fontSize:11, color:D.danger, background:"transparent", border:`1px solid ${D.danger}44`, borderRadius:6, padding:"2px 8px", cursor:"pointer" }}>
