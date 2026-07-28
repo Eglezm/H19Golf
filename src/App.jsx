@@ -1971,7 +1971,10 @@ function AdminApp({ onExit, torneoConfig = null }) {
   const [savedRonda, setSavedRonda] = useState(null);
   const [nombreRonda, setNombreRonda] = useState("");
   const [historial, setHistorial] = useState([]);
+  const [historialTorneos, setHistorialTorneos] = useState([]);
   const [expandedHist, setExpandedHist] = useState(null);
+  const [expandedTorneoHist, setExpandedTorneoHist] = useState(null);
+  const [histTab, setHistTab] = useState("rondas"); // "rondas" | "torneos"
   const [confirmDeleteHist, setConfirmDeleteHist] = useState(null);
 
   // Load historial from Firebase
@@ -1983,6 +1986,22 @@ function AdminApp({ onExit, torneoConfig = null }) {
         const lista = Object.entries(data).map(([id, r]) => ({id, ...r}))
           .sort((a,b) => (b.fechaTs||0) - (a.fechaTs||0));
         setHistorial(lista);
+      }
+    });
+    return () => unsub();
+  }, []);
+
+  // Load historial de torneos from Firebase
+  useEffect(() => {
+    const torneoRef = ref(db, "torneos");
+    const unsub = onValue(torneoRef, snap => {
+      if (snap.exists()) {
+        const data = snap.val();
+        const lista = Object.entries(data)
+          .filter(([,t]) => t.status === "finalizado")
+          .map(([id, t]) => ({ id, ...t }))
+          .sort((a,b) => (b.createdAt||0) - (a.createdAt||0));
+        setHistorialTorneos(lista);
       }
     });
     return () => unsub();
@@ -2639,11 +2658,24 @@ function AdminApp({ onExit, torneoConfig = null }) {
       </div>
       <div style={{ padding:"12px 12px" }}>
         <TabBar tabs={[{key:"dir",label:"👥 Jugadores"},{key:"hist",label:"📋 Historial"},{key:"sel",label:"⛳ Nueva ronda"}]} active="hist" onChange={k => { if(k==="dir") setScreen("dir"); if(k==="sel") setScreen("sel"); }} />
-        <Card>
-          <SLabel>Rondas jugadas</SLabel>
-          {historial.length === 0 && (
-            <div style={{ textAlign:"center", color:D.textSub, padding:24, fontSize:13 }}>No hay rondas guardadas aún</div>
-          )}
+
+        {/* Sub-tabs: Rondas vs Torneos */}
+        <div style={{ display:"flex", gap:8, marginBottom:12 }}>
+          <button onClick={() => setHistTab("rondas")} style={{ flex:1, padding:"9px", border:`1px solid ${histTab==="rondas"?D.gold:D.border}`, borderRadius:10, background:histTab==="rondas"?D.goldDim:"transparent", color:histTab==="rondas"?D.gold:D.textSub, fontSize:13, fontWeight:700, cursor:"pointer" }}>
+            🏌️ Rondas ({historial.length})
+          </button>
+          <button onClick={() => setHistTab("torneos")} style={{ flex:1, padding:"9px", border:`1px solid ${histTab==="torneos"?D.gold:D.border}`, borderRadius:10, background:histTab==="torneos"?D.goldDim:"transparent", color:histTab==="torneos"?D.gold:D.textSub, fontSize:13, fontWeight:700, cursor:"pointer" }}>
+            🏆 Torneos ({historialTorneos.length})
+          </button>
+        </div>
+
+        {/* ── RONDAS ── */}
+        {histTab === "rondas" && (
+          <Card>
+            <SLabel>Rondas jugadas</SLabel>
+            {historial.length === 0 && (
+              <div style={{ textAlign:"center", color:D.textSub, padding:24, fontSize:13 }}>No hay rondas guardadas aún</div>
+            )}
           {historial.map((r, idx) => {
             const isOpen = expandedHist === r.id;
             return (
@@ -2772,7 +2804,80 @@ function AdminApp({ onExit, torneoConfig = null }) {
             </div>
             );
           })}
-        </Card>
+          </Card>
+        )}
+
+        {/* ── TORNEOS ── */}
+        {histTab === "torneos" && (
+          <Card>
+            <SLabel>Torneos finalizados</SLabel>
+            {historialTorneos.length === 0 && (
+              <div style={{ textAlign:"center", color:D.textSub, padding:24, fontSize:13 }}>No hay torneos guardados aún</div>
+            )}
+            {historialTorneos.map((t, idx) => {
+              const isOpen = expandedTorneoHist === t.id;
+              const grupos = t.grupos ? Object.entries(t.grupos) : [];
+              const fecha = t.createdAt ? new Date(t.createdAt).toLocaleDateString('es-MX') : "—";
+              const totalJugadores = grupos.reduce((sum, [,g]) => {
+                const ps = Array.isArray(g.players) ? g.players : Object.values(g.players||{});
+                return sum + ps.length;
+              }, 0);
+              return (
+                <div key={t.id} style={{ padding:"12px 0", borderBottom:idx<historialTorneos.length-1?`1px solid ${D.border}`:"none" }}>
+                  <div onClick={() => setExpandedTorneoHist(isOpen ? null : t.id)} style={{ cursor:"pointer" }}>
+                    <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:4 }}>
+                      <div style={{ fontSize:14, fontWeight:700 }}>{t.nombre}</div>
+                      <div style={{ fontSize:11, color:D.textSub }}>{fecha}</div>
+                    </div>
+                    <div style={{ fontSize:12, color:D.textSub, marginBottom:6 }}>
+                      {CAMPOS[t.campo]?.nombre || t.campo} · {t.nHoles} hoyos · {grupos.length} grupos · {totalJugadores} jugadores
+                    </div>
+                    <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+                      <div style={{ fontSize:11, color:D.textSub }}>{isOpen ? "▲ Ocultar grupos" : "▼ Ver grupos"}</div>
+                      <button onClick={e => { e.stopPropagation(); remove(ref(db, `torneos/${t.id}`)); setExpandedTorneoHist(null); }}
+                        style={{ fontSize:11, color:D.danger, background:"transparent", border:`1px solid ${D.danger}44`, borderRadius:6, padding:"2px 8px", cursor:"pointer" }}>
+                        🗑️ Eliminar
+                      </button>
+                    </div>
+                  </div>
+                  {isOpen && (
+                    <div style={{ marginTop:10, background:D.bg, borderRadius:10, padding:10 }}>
+                      {grupos.map(([gid, g]) => {
+                        const gPs = Array.isArray(g.players) ? g.players : Object.values(g.players||{});
+                        const gSc = Array.isArray(g.scores) ? g.scores : Object.values(g.scores||{});
+                        const pars = (CAMPOS[t.campo]?.pares||[]).slice(0, t.nHoles);
+                        return (
+                          <div key={gid} style={{ marginBottom:12, paddingBottom:12, borderBottom:`1px solid ${D.border}` }}>
+                            <div style={{ fontSize:12, fontWeight:700, color:D.gold, marginBottom:6 }}>
+                              🏌️ {g.nombre || `Grupo ${gid.slice(-3)}`}
+                              {g.resultados?.ganador && <span style={{ color:D.text, fontWeight:400 }}> · 🏆 {g.resultados.ganador}</span>}
+                            </div>
+                            {gPs.map((p, pi) => {
+                              const rowRaw = gSc[pi];
+                              const row = Array.isArray(rowRaw) ? rowRaw : Object.values(rowRaw||{});
+                              const jugados = row.filter(s=>s!==null&&s!==undefined);
+                              const bruto = jugados.length>0 ? jugados.reduce((a,b)=>a+b,0) : null;
+                              const neto = bruto !== null ? bruto - p.hc : null;
+                              return (
+                                <div key={pi} style={{ display:"flex", alignItems:"center", gap:8, padding:"5px 0" }}>
+                                  <Avatar name={String(p.name||'?')} id={p.id||pi} size={22} />
+                                  <div style={{ flex:1, fontSize:12, fontWeight:600 }}>{p.name}</div>
+                                  <div style={{ fontSize:11, color:D.textSub }}>HC {p.hc}</div>
+                                  <div style={{ fontSize:12, fontWeight:700, color:D.gold }}>{bruto??'—'} / {neto??'—'} neto</div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </Card>
+        )}
+
       </div>
     </div>
   );
