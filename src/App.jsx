@@ -1432,8 +1432,9 @@ function TorneoSpectator({ torneoId, appStyle, isAdmin = false }) {
     ? calcMoney(playersForCalc, fullScoresForCalc, torneo.apuesta || 50).money
     : allPlayers.map(() => 0);
 
-  // Marcas y tarjetas por grupo
-  const marcasMoneyMap = {}; // key: `${grupoId}-${pi}`
+  // Marcas y tarjetas por grupo (excluyendo peorscore que se calcula globalmente)
+  const TARJETAS_SIN_PEORSCORE = TARJETAS.filter(t => t.key !== "peorscore");
+  const marcasMoneyMap = {};
   const tarjetasMoneyMap = {};
   grupos.forEach(([gid, g]) => {
     const gPlayers = (Array.isArray(g.players) ? g.players : Object.values(g.players||{})).map(p=>({...p,opts:{score:true,marcas:true,tarjetas:true}}));
@@ -1444,7 +1445,26 @@ function TorneoSpectator({ torneoId, appStyle, isAdmin = false }) {
       gPlayers.forEach((p, pi) => { marcasMoneyMap[`${gid}-${pi}`] = mm[pi]; });
     }
     if (gTarjetas && gPlayers.length > 0) {
-      const tm = calcTarjetasMoney(gPlayers, gTarjetas, torneo.tarjetaVal || 10);
+      // Calcular tarjetas locales excluyendo peorscore (se calcula globalmente)
+      const tarjetasSinPeor = { ...gTarjetas, peorscore: null };
+      const count = gPlayers.map((_, i) => {
+        let c = 0;
+        TARJETAS_SIN_PEORSCORE.forEach(t => {
+          const owner = tarjetasSinPeor[t.key];
+          if (Array.isArray(owner)) { if (owner.includes(i)) c += 1/owner.length; }
+          else if (owner === i) c += 1;
+        });
+        return c;
+      });
+      const playsTarjetas = gPlayers.map(p => p.opts ? p.opts.tarjetas !== false : true);
+      const tm = gPlayers.map((_, i) => {
+        if (!playsTarjetas[i]) return 0;
+        let b = 0;
+        gPlayers.forEach((_, j) => {
+          if (i !== j && playsTarjetas[j]) { b -= count[i]*(torneo.tarjetaVal||10); b += count[j]*(torneo.tarjetaVal||10); }
+        });
+        return Math.round(b);
+      });
       gPlayers.forEach((p, pi) => { tarjetasMoneyMap[`${gid}-${pi}`] = tm[pi]; });
     }
   });
@@ -2014,8 +2034,9 @@ function AdminApp({ onExit, torneoConfig = null }) {
   const [historial, setHistorial] = useState([]);
   const [historialTorneos, setHistorialTorneos] = useState([]);
   const [expandedHist, setExpandedHist] = useState(null);
-  const [expandedTorneoHist, setExpandedTorneoHist] = useState(null);
-  const [histTab, setHistTab] = useState("rondas"); // "rondas" | "torneos"
+  const [expandedTorneoHist, setExpandedTorneoHist] = useState(null); // torneoId
+  const [expandedGrupoHist, setExpandedGrupoHist] = useState(null);   // grupoId
+  const [histTab, setHistTab] = useState("rondas");
   const [confirmDeleteHist, setConfirmDeleteHist] = useState(null);
 
   // Load historial from Firebase
@@ -2865,7 +2886,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
               }, 0);
               return (
                 <div key={t.id} style={{ padding:"12px 0", borderBottom:idx<historialTorneos.length-1?`1px solid ${D.border}`:"none" }}>
-                  <div onClick={() => setExpandedTorneoHist(isOpen ? null : t.id)} style={{ cursor:"pointer" }}>
+                  <div onClick={() => { setExpandedTorneoHist(isOpen ? null : t.id); setExpandedGrupoHist(null); }} style={{ cursor:"pointer" }}>
                     <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:4 }}>
                       <div style={{ fontSize:14, fontWeight:700 }}>{t.nombre}</div>
                       <div style={{ fontSize:11, color:D.textSub }}>{fecha}</div>
@@ -2885,15 +2906,14 @@ function AdminApp({ onExit, torneoConfig = null }) {
                     <div style={{ marginTop:10, background:D.bg, borderRadius:10, padding:10 }}>
                       {grupos.map(([gid, g]) => {
                         const rf = g.resumenFinal;
-                        const gPs = rf?.jugadores || (Array.isArray(g.players) ? g.players : Object.values(g.players||{}));
-                        const pars2 = rf?.pars || (CAMPOS[t.campo]?.pares||[]).slice(0, t.nHoles);
-                        const isGrupoOpen = expandedTorneoHist === `${t.id}-${gid}`;
+                        const isGrupoOpen = expandedGrupoHist === gid;
                         return (
                           <div key={gid} style={{ marginBottom:10, paddingBottom:10, borderBottom:`1px solid ${D.border}` }}>
-                            <div onClick={() => setExpandedTorneoHist(isGrupoOpen ? t.id : `${t.id}-${gid}`)} style={{ cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+                            <div onClick={() => setExpandedGrupoHist(isGrupoOpen ? null : gid)} style={{ cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
                               <div>
                                 <div style={{ fontSize:13, fontWeight:700, color:D.gold }}>🏌️ {g.nombre || `Grupo ${gid.slice(-3)}`}</div>
                                 {rf?.ganador && <div style={{ fontSize:11, color:D.textSub }}>🏆 {rf.ganador} ({rf.netGanador} neto)</div>}
+                                {!rf && <div style={{ fontSize:11, color:D.textDim }}>Sin desglose guardado</div>}
                               </div>
                               <div style={{ fontSize:10, color:D.textSub }}>{isGrupoOpen ? "▲" : "▼ Desglose"}</div>
                             </div>
