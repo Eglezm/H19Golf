@@ -1486,6 +1486,93 @@ function TorneoSpectator({ torneoId, appStyle }) {
   );
 }
 
+// ─── TORNEO: VER CÓDIGOS ────────────────────────────────
+function TorneoCodigosView({ torneoAdmin, onExit, appStyle }) {
+  const [grupos, setGrupos] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    get(ref(db, `torneos/${torneoAdmin.torneoId}`)).then(snap => {
+      if (snap.exists()) {
+        const t = snap.val();
+        const gs = Array.isArray(t.gruposConfig) ? t.gruposConfig : Object.values(t.gruposConfig||{});
+        setGrupos(gs);
+      }
+      setLoading(false);
+    }).catch(() => setLoading(false));
+  }, [torneoAdmin.torneoId]);
+
+  const torneoUrl = `${window.location.origin}${window.location.pathname}?torneo=${torneoAdmin.torneoId}`;
+
+  return (
+    <div style={appStyle}>
+      <div style={{ background:D.surface, borderBottom:`1px solid ${D.border}`, padding:"16px 16px 12px", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+        <div>
+          <div style={{ fontSize:18, fontWeight:900, color:D.gold }}>Códigos del torneo</div>
+          <div style={{ fontSize:12, color:D.textSub }}>{torneoAdmin.nombre}</div>
+        </div>
+        <button onClick={onExit} style={{ fontSize:12, color:D.textSub, background:"none", border:`1px solid ${D.border}`, borderRadius:8, padding:"5px 10px", cursor:"pointer" }}>← Volver</button>
+      </div>
+      <div style={{ padding:"12px" }}>
+        {/* Link del torneo */}
+        <Card>
+          <SLabel>👀 Link del torneo en vivo</SLabel>
+          <div style={{ display:"flex", gap:8 }}>
+            <button onClick={() => {
+              const msg = `🏆 H19 — *${torneoAdmin.nombre}*\nVer todos los grupos en vivo: ${torneoUrl}`;
+              window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, "_blank");
+            }} style={{ flex:1, padding:"10px", border:"none", borderRadius:10, background:"#25D366", color:"#fff", fontSize:12, fontWeight:700, cursor:"pointer" }}>
+              💬 Compartir por WhatsApp
+            </button>
+            <button onClick={() => { if (navigator.clipboard) navigator.clipboard.writeText(torneoUrl); }}
+              style={{ flex:1, padding:"10px", border:`1px solid ${D.gold}`, borderRadius:10, background:D.goldDim, color:D.gold, fontSize:12, fontWeight:700, cursor:"pointer" }}>
+              📋 Copiar link
+            </button>
+          </div>
+        </Card>
+
+        {loading && <div style={{ textAlign:"center", color:D.textSub, padding:20 }}>Cargando grupos...</div>}
+
+        {/* Código por grupo */}
+        {grupos.map((g, i) => (
+          <Card key={g.id||i}>
+            <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:6 }}>
+              <SLabel style={{ marginBottom:0 }}>Grupo {i+1}: {g.nombre}</SLabel>
+              <div style={{ fontSize:11, color:D.textSub }}>{g.players?.length||0} jugadores</div>
+            </div>
+            <div style={{ fontSize:30, fontWeight:900, letterSpacing:4, color:D.gold, textAlign:"center", padding:"10px 0" }}>{g.id}</div>
+            {/* Jugadores del grupo */}
+            {(g.players||[]).length > 0 && (
+              <div style={{ marginBottom:10 }}>
+                {(g.players||[]).map((p,pi) => (
+                  <div key={pi} style={{ display:"flex", alignItems:"center", gap:6, padding:"4px 0", borderBottom:pi<(g.players||[]).length-1?`1px solid ${D.border}`:"none" }}>
+                    <Avatar name={String(p.name||'?')} id={p.id||pi} size={22} />
+                    <span style={{ fontSize:12, fontWeight:600 }}>{p.name}</span>
+                    <span style={{ fontSize:11, color:D.textSub, marginLeft:"auto" }}>HC {p.hc}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div style={{ display:"flex", gap:8 }}>
+              <button onClick={() => {
+                const playersStr = (g.players||[]).map(p=>`• ${p.name} (HC ${p.hc})`).join('\n');
+                const msg = `🏌️ H19 Golf — *${torneoAdmin.nombre}*\n*Tu grupo: ${g.nombre}*\n${playersStr ? `Jugadores:\n${playersStr}\n\n` : ""}*Código para ingresar: ${g.id}*\nAbre la app: ${window.location.origin}\n→ "Entrar con código de grupo"\n\nVer torneo en vivo: ${torneoUrl}`;
+                window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, "_blank");
+              }} style={{ flex:1, padding:"10px", border:"none", borderRadius:10, background:"#25D366", color:"#fff", fontSize:12, fontWeight:700, cursor:"pointer" }}>
+                💬 Reenviar por WhatsApp
+              </button>
+              <button onClick={() => { if (navigator.clipboard) navigator.clipboard.writeText(g.id); }}
+                style={{ flex:1, padding:"10px", border:`1px solid ${D.gold}`, borderRadius:10, background:D.goldDim, color:D.gold, fontSize:12, fontWeight:700, cursor:"pointer" }}>
+                📋 Copiar código
+              </button>
+            </div>
+          </Card>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ─── APP PRINCIPAL ────────────────────────────────
 export default function H19() {
   const [mode, setMode] = useState(null);
@@ -1535,10 +1622,14 @@ export default function H19() {
         {savedTorneoAdmin && (
           <div style={{ width:"100%", background:"#E8F5E9", border:`1px solid ${D.success}`, borderRadius:12, padding:"12px 14px", marginBottom:4 }}>
             <div style={{ fontSize:12, fontWeight:700, color:D.success, marginBottom:6 }}>🏆 Torneo activo: {savedTorneoAdmin.nombre}</div>
-            <div style={{ display:"flex", gap:8 }}>
+            <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
               <button onClick={() => setMode("pin-torneo-ver")}
-                style={{ flex:1, padding:"8px", border:"none", borderRadius:8, background:D.success, color:"#fff", fontSize:12, fontWeight:700, cursor:"pointer" }}>
-                👁️ Ver torneo (PIN)
+                style={{ flex:1, padding:"8px", border:"none", borderRadius:8, background:D.success, color:"#fff", fontSize:12, fontWeight:700, cursor:"pointer", minWidth:80 }}>
+                👁️ Ver torneo
+              </button>
+              <button onClick={() => setMode("pin-torneo-codigos")}
+                style={{ flex:1, padding:"8px", border:`1px solid ${D.success}`, borderRadius:8, background:"transparent", color:D.success, fontSize:12, fontWeight:700, cursor:"pointer", minWidth:80 }}>
+                🔑 Ver códigos
               </button>
               <button onClick={() => { localStorage.removeItem("h19-torneo-admin"); setSavedTorneoAdmin(null); }}
                 style={{ padding:"8px 10px", border:`1px solid ${D.border}`, borderRadius:8, background:"transparent", color:D.textSub, fontSize:11, cursor:"pointer" }}>
@@ -1575,7 +1666,7 @@ export default function H19() {
     return (
       <div style={{ ...appStyle, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:24, gap:14 }}>
         <div style={{ fontSize:40, fontWeight:900, color:D.gold }}>H19</div>
-        <div style={{ fontSize:14, color:D.textSub, marginBottom:4 }}>Panel Admin General</div>
+        <div style={{ fontSize:14, color:D.textSub, marginBottom:4, textAlign:"center", fontWeight:700 }}>Panel Admin General</div>
         <div style={{ fontSize:12, color:D.textSub, marginBottom:8 }}>{savedTorneoAdmin?.nombre}</div>
         <input type="password" value={pinInput} onChange={e => setPinInput(e.target.value)} placeholder="PIN" maxLength={6}
           style={{ width:"100%", padding:14, border:`1px solid ${pinError?D.danger:D.border}`, borderRadius:12, background:D.surface, color:D.text, fontSize:22, textAlign:"center", letterSpacing:8, fontWeight:700 }} />
@@ -1585,6 +1676,23 @@ export default function H19() {
       </div>
     );
   }
+
+  if (mode === "pin-torneo-codigos") {
+    return (
+      <div style={{ ...appStyle, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:24, gap:14 }}>
+        <div style={{ fontSize:40, fontWeight:900, color:D.gold }}>H19</div>
+        <div style={{ fontSize:14, color:D.textSub, marginBottom:4, textAlign:"center", fontWeight:700 }}>Ver códigos del torneo</div>
+        <div style={{ fontSize:12, color:D.textSub, marginBottom:8 }}>{savedTorneoAdmin?.nombre}</div>
+        <input type="password" value={pinInput} onChange={e => setPinInput(e.target.value)} placeholder="PIN" maxLength={6}
+          style={{ width:"100%", padding:14, border:`1px solid ${pinError?D.danger:D.border}`, borderRadius:12, background:D.surface, color:D.text, fontSize:22, textAlign:"center", letterSpacing:8, fontWeight:700 }} />
+        {pinError && <div style={{ color:D.danger, fontSize:13 }}>PIN incorrecto</div>}
+        <Btn onClick={() => { if (pinInput===ADMIN_PIN) { setMode("torneo-codigos"); setPinError(false); setPinInput(""); } else setPinError(true); }}>Ver códigos</Btn>
+        <button onClick={() => { setMode("home"); setPinInput(""); setPinError(false); }} style={{ fontSize:13, color:D.textSub, background:"none", border:"none", cursor:"pointer" }}>← Volver</button>
+      </div>
+    );
+  }
+
+  if (mode === "torneo-codigos" && savedTorneoAdmin) return <TorneoCodigosView torneoAdmin={savedTorneoAdmin} onExit={() => setMode("home")} appStyle={appStyle} />;
 
   if (mode === "torneo-menu") {
     return (
@@ -2067,15 +2175,42 @@ function AdminApp({ onExit, torneoConfig = null }) {
   if (screen === "torneo-resume" && torneoConfig?.rondaActiva) {
     const ra = torneoConfig.rondaActiva;
     const ps = Array.isArray(ra.players) ? ra.players : Object.values(ra.players||{});
-    const sc = Array.isArray(ra.scores) ? ra.scores : Object.values(ra.scores||{}).map(r => Array.isArray(r)?r:Object.values(r||{}));
-    const mc = ra.marcas ? (Array.isArray(ra.marcas) ? ra.marcas : Object.values(ra.marcas)) : [];
-    const tj = ra.tarjetas || emptyTarjetas();
     const h = ra.hole || 0;
-    const basePares = CAMPOS[campo].pares || Array(18).fill(4);
-    const p = basePares.slice(0, nHoles);
 
-    if (players.length === 0 && ps.length > 0) {
-      // Restaurar estado
+    const reanudar = () => {
+      const basePares = CAMPOS[campo].pares || Array(18).fill(4);
+      const p = basePares.slice(0, nHoles);
+
+      // Restaurar scores asegurando que cada jugador tenga exactamente nHoles entradas
+      const sc = ps.map((_, pi) => {
+        const rawRow = Array.isArray(ra.scores)
+          ? ra.scores[pi]
+          : Object.values(ra.scores||{})[pi];
+        const row = Array.isArray(rawRow) ? rawRow : Object.values(rawRow||{});
+        // Pad o trim al tamaño correcto
+        const padded = Array(nHoles).fill(null);
+        for (let i = 0; i < Math.min(row.length, nHoles); i++) {
+          padded[i] = row[i] ?? null;
+        }
+        return padded;
+      });
+
+      // Restaurar marcas
+      const rawMarcas = ra.marcas
+        ? (Array.isArray(ra.marcas) ? ra.marcas : Object.values(ra.marcas))
+        : [];
+      const mc = Array(nHoles).fill(null).map((_, hi) => {
+        const m = rawMarcas[hi];
+        if (!m) return emptyMarca(ps.length);
+        return {
+          multi: Array.isArray(m.multi) ? m.multi : Object.values(m.multi||{}).map(r => typeof r === 'object' ? r : {}),
+          oyes: m.oyes ?? null,
+          regulation: m.regulation ?? null,
+        };
+      });
+
+      const tj = ra.tarjetas || emptyTarjetas();
+
       setPlayers(ps);
       setScores(sc);
       setMarcas(mc);
@@ -2084,7 +2219,8 @@ function AdminApp({ onExit, torneoConfig = null }) {
       setPars(p);
       setTab("score");
       setGrupoNombre(torneoConfig.grupoNombre || "Mi Grupo");
-      // Buscar el rondaId guardado en localStorage
+
+      // Buscar el rondaId en localStorage
       try {
         const saved = localStorage.getItem("h19-ronda-activa");
         if (saved) {
@@ -2092,7 +2228,9 @@ function AdminApp({ onExit, torneoConfig = null }) {
           if (data.rondaId) setRondaId(data.rondaId);
         }
       } catch(e) {}
-    }
+
+      setScreen("score");
+    };
 
     return (
       <div style={appSt}>
@@ -2103,8 +2241,11 @@ function AdminApp({ onExit, torneoConfig = null }) {
           <div style={{ padding:"10px 16px", background:D.greenBg, border:`1px solid ${D.success}`, borderRadius:12, marginTop:8 }}>
             <div style={{ fontSize:13, fontWeight:700, color:D.success, marginBottom:4 }}>⛳ Ronda en curso encontrada</div>
             <div style={{ fontSize:12, color:D.textSub }}>Hoyo {h+1} · {ps.length} jugadores</div>
+            <div style={{ fontSize:11, color:D.textSub, marginTop:2 }}>
+              {ps.map(p => p.name).join(", ")}
+            </div>
           </div>
-          <Btn onClick={() => setScreen("score")}>▶ Continuar ronda del grupo</Btn>
+          <Btn onClick={reanudar}>▶ Continuar desde hoyo {h+1}</Btn>
           <Btn outline onClick={() => setScreen("score-torneo-init")} style={{ marginTop:4 }}>Iniciar nueva ronda</Btn>
         </div>
       </div>
