@@ -2273,23 +2273,26 @@ function AdminApp({ onExit, torneoConfig = null }) {
     const candidatos = peoresEnHoyo.map((sc, i) => sc !== null ? i : -1).filter(i => i >= 0);
 
     if (candidatos.length === 0) {
-      // Nadie hizo doble par en este hoyo — limpiar si el actual era de este hoyo
-      // Solo limpiar si el dueño actual era candidato en este hoyo
       if (newTarjetas["doblepar_hole"] === hole) {
         newTarjetas["doblepar"] = null;
         newTarjetas["doblepar_hole"] = null;
       }
       setDobleparEmpate(null);
-    } else if (candidatos.length === 1) {
-      // Un solo candidato — asignar automáticamente
-      newTarjetas["doblepar"] = candidatos[0];
-      newTarjetas["doblepar_hole"] = hole;
-      setDobleparEmpate(null);
     } else {
-      // Empate — mostrar selector para que admin elija quién tiró al último
-      setDobleparEmpate({ hoyo: hole, candidatos });
-      newTarjetas["doblepar_hole"] = hole;
-      // No asignamos aún hasta que el admin elija
+      // Encontrar el PEOR score entre los candidatos
+      const peorScore = Math.max(...candidatos.map(i => newScores[i][hole]));
+      const peoresIdx = candidatos.filter(i => newScores[i][hole] === peorScore);
+
+      if (peoresIdx.length === 1) {
+        // Solo uno con el peor score — asignar automáticamente
+        newTarjetas["doblepar"] = peoresIdx[0];
+        newTarjetas["doblepar_hole"] = hole;
+        setDobleparEmpate(null);
+      } else {
+        // Empate real en el peor score — mostrar selector
+        setDobleparEmpate({ hoyo: hole, candidatos: peoresIdx });
+        newTarjetas["doblepar_hole"] = hole;
+      }
     }
 
     // Peor Score: asignar al jugador con peor neto acumulado hasta ahora
@@ -2583,7 +2586,6 @@ function AdminApp({ onExit, torneoConfig = null }) {
             </div>
           </div>
           <Btn onClick={reanudar}>▶ Continuar desde hoyo {h+1}</Btn>
-          <Btn outline onClick={() => setScreen("score-torneo-init")} style={{ marginTop:4 }}>Iniciar nueva ronda</Btn>
         </div>
       </div>
     );
@@ -3204,7 +3206,10 @@ function AdminApp({ onExit, torneoConfig = null }) {
             ? <button onClick={nextHole} style={{ padding:"7px 14px", border:`1px solid ${D.gold}`, borderRadius:20, background:D.goldDim, color:D.gold, fontSize:12, fontWeight:700, cursor:"pointer" }}>Siguiente ›</button>
             : <div style={{ width:80 }} />
           }
-          {rondaId && <button onClick={shareRonda} style={{ padding:"4px 10px", border:`1px solid ${D.border}`, borderRadius:12, background:"transparent", color:D.textSub, fontSize:10, cursor:"pointer" }}>📤 Compartir</button>}
+          {torneoConfig
+            ? <button onClick={() => onExit()} style={{ padding:"4px 10px", border:`1px solid ${D.border}`, borderRadius:12, background:"transparent", color:D.textSub, fontSize:10, cursor:"pointer" }}>⏸ Salir</button>
+            : rondaId && <button onClick={shareRonda} style={{ padding:"4px 10px", border:`1px solid ${D.border}`, borderRadius:12, background:"transparent", color:D.textSub, fontSize:10, cursor:"pointer" }}>📤 Compartir</button>
+          }
         </div>
       </div>
       {shareMsg && <div style={{ margin:"0 12px 10px", padding:"8px 12px", background:D.greenBg, border:`1px solid ${D.success}`, borderRadius:10, color:D.success, fontSize:12, textAlign:"center", fontWeight:600 }}>{shareMsg}</div>}
@@ -3835,7 +3840,20 @@ function AdminApp({ onExit, torneoConfig = null }) {
           ) : (
             <Btn onClick={confirmHC}>Confirmar y guardar handicaps</Btn>
           )}
-          <Btn outline onClick={() => { setSel(new Set()); setScreen("sel"); }} style={{ marginTop:8 }}>Nueva ronda sin guardar</Btn>
+          {torneoConfig ? (
+            <div style={{ display:"flex", flexDirection:"column", gap:8, marginTop:8 }}>
+              <button onClick={() => window.open(`${window.location.origin}${window.location.pathname}?torneo=${torneoConfig.torneoId}`, "_blank")}
+                style={{ width:"100%", padding:"12px", border:"none", borderRadius:12, background:`linear-gradient(135deg,#1A5C24,#2E7D32)`, color:"#fff", fontSize:14, fontWeight:700, cursor:"pointer" }}>
+                🏆 Ver torneo global
+              </button>
+              <button onClick={() => onExit()}
+                style={{ width:"100%", padding:"10px", border:`1px solid ${D.border}`, borderRadius:12, background:"transparent", color:D.textSub, fontSize:13, cursor:"pointer" }}>
+                ← Salir al inicio
+              </button>
+            </div>
+          ) : (
+            <Btn outline onClick={() => { setSel(new Set()); setScreen("sel"); }} style={{ marginTop:8 }}>Nueva ronda sin guardar</Btn>
+          )}
         </div>
       </div>
     );
