@@ -1201,7 +1201,7 @@ function TorneoUnirse({ onExit, appStyle }) {
 }
 
 // ─── TORNEO: SPECTATOR ────────────────────────────────
-function TorneoSpectator({ torneoId, appStyle }) {
+function TorneoSpectator({ torneoId, appStyle, isAdmin = false }) {
   const [torneo, setTorneo] = useState(null);
   const [loading, setLoading] = useState(true);
   const [showSplash, setShowSplash] = useState(true);
@@ -1243,13 +1243,17 @@ function TorneoSpectator({ torneoId, appStyle }) {
   const parTotal = pars.reduce((a,b)=>a+b,0);
 
   // Todos los jugadores de todos los grupos con su grupo de origen
-  const allPlayers = grupos.flatMap(([gid, g]) =>
-    (Array.isArray(g.players) ? g.players : Object.values(g.players||{})).map((p, pi) => ({
-      ...p, grupoId:gid, grupoNombre: g.nombre || `Grupo ${gid.slice(-3)}`,
-      scores: Array.isArray(g.scores) ? g.scores[pi]||[] : Object.values(g.scores||{})[pi]||[],
-      marcas: g.marcas, tarjetas: g.tarjetas,
-    }))
-  );
+  const allPlayers = grupos.flatMap(([gid, g]) => {
+    const gPlayers = Array.isArray(g.players) ? g.players : Object.values(g.players||{});
+    const gScoresRaw = Array.isArray(g.scores) ? g.scores : Object.values(g.scores||{});
+    return gPlayers.map((p, pi) => {
+      const rowRaw = gScoresRaw[pi];
+      const row = Array.isArray(rowRaw) ? rowRaw : Object.values(rowRaw||{});
+      // Pad al tamaño correcto
+      const scores = Array(torneo.nHoles).fill(null).map((_, h) => row[h] ?? null);
+      return { ...p, grupoId:gid, grupoNombre: g.nombre || `Grupo ${gid.slice(-3)}`, scores, marcas: g.marcas, tarjetas: g.tarjetas, grupoStatus: g.status };
+    });
+  });
 
   // Calcular netos y clasificación global
   const fmtVs = (v) => v === null ? "—" : v === 0 ? "E" : v > 0 ? `+${v}` : `${v}`;
@@ -1480,6 +1484,47 @@ function TorneoSpectator({ torneoId, appStyle }) {
           );
         })}
 
+        {/* Estado de grupos */}
+        <Card>
+          <SLabel>📊 Estado de grupos</SLabel>
+          {grupos.map(([gid, g]) => {
+            const finalizado = g.status === "finalizada";
+            return (
+              <div key={gid} style={{ display:"flex", alignItems:"center", gap:10, padding:"8px 0", borderBottom:`1px solid ${D.border}` }}>
+                <div style={{ width:10, height:10, borderRadius:"50%", background:finalizado?D.success:D.gold, flexShrink:0 }} />
+                <div style={{ flex:1, fontSize:13, fontWeight:600 }}>{g.nombre || `Grupo ${gid.slice(-3)}`}</div>
+                <div style={{ fontSize:11, color:finalizado?D.success:D.gold, fontWeight:700 }}>
+                  {finalizado ? "✅ Finalizado" : `Hoyo ${(g.hole||0)+1}`}
+                </div>
+              </div>
+            );
+          })}
+        </Card>
+
+        {isAdmin && grupos.length > 0 && grupos.every(([,g]) => g.status === "finalizada") && (
+          <div style={{ background:"#E8F5E9", border:`2px solid ${D.success}`, borderRadius:12, padding:"16px", marginBottom:12, textAlign:"center" }}>
+            <div style={{ fontSize:15, fontWeight:700, color:D.success, marginBottom:8 }}>✅ Todos los grupos han finalizado</div>
+            <div style={{ fontSize:12, color:D.textSub, marginBottom:12 }}>Como admin general puedes cerrar el torneo y guardar los handicaps</div>
+            <button onClick={async () => {
+              if (!confirm("¿Cerrar el torneo y guardar handicaps finales?")) return;
+              // Calcular HC de todos los jugadores combinados
+              const allParsCalc = (CAMPOS[torneo.campo]?.pares||[]).slice(0, torneo.nHoles);
+              try {
+                await set(ref(db, `torneos/${torneoId}/status`), "finalizado");
+                alert("✅ Torneo cerrado. Los handicaps se guardan en cada ronda individual.");
+              } catch(e) { alert("Error al cerrar torneo"); }
+            }} style={{ width:"100%", padding:"12px", border:"none", borderRadius:10, background:D.success, color:"#fff", fontSize:14, fontWeight:700, cursor:"pointer" }}>
+              🏆 Cerrar torneo
+            </button>
+          </div>
+        )}
+
+        {isAdmin && grupos.some(([,g]) => g.status !== "finalizada") && (
+          <div style={{ background:D.goldDim, border:`1px solid ${D.gold}`, borderRadius:12, padding:"12px", marginBottom:12, textAlign:"center", fontSize:12, color:D.gold }}>
+            ⏳ Esperando que todos los grupos finalicen...
+          </div>
+        )}
+
         <div style={{ textAlign:"center", fontSize:11, color:D.textDim, marginTop:8 }}>Vista en vivo · Actualización automática</div>
       </div>
     </div>
@@ -1583,6 +1628,7 @@ export default function H19() {
   const [showSplash, setShowSplash] = useState(true);
   const [splashPhase, setSplashPhase] = useState(0);
   const [activeTorneoConfig, setActiveTorneoConfig] = useState(null);
+  const [torneoIsAdmin, setTorneoIsAdmin] = useState(false);
   const [savedTorneoAdmin, setSavedTorneoAdmin] = useState(null);
 
   useEffect(() => {
@@ -1671,7 +1717,7 @@ export default function H19() {
         <input type="password" value={pinInput} onChange={e => setPinInput(e.target.value)} placeholder="PIN" maxLength={6}
           style={{ width:"100%", padding:14, border:`1px solid ${pinError?D.danger:D.border}`, borderRadius:12, background:D.surface, color:D.text, fontSize:22, textAlign:"center", letterSpacing:8, fontWeight:700 }} />
         {pinError && <div style={{ color:D.danger, fontSize:13 }}>PIN incorrecto</div>}
-        <Btn onClick={() => { if (pinInput===ADMIN_PIN) { setRondaId(savedTorneoAdmin.torneoId); setMode("torneo-spectator"); setPinError(false); setPinInput(""); } else setPinError(true); }}>Ver torneo</Btn>
+        <Btn onClick={() => { if (pinInput===ADMIN_PIN) { setRondaId(savedTorneoAdmin.torneoId); setTorneoIsAdmin(true); setMode("torneo-spectator"); setPinError(false); setPinInput(""); } else setPinError(true); }}>Ver torneo</Btn>
         <button onClick={() => { setMode("home"); setPinInput(""); setPinError(false); }} style={{ fontSize:13, color:D.textSub, background:"none", border:"none", cursor:"pointer" }}>← Volver</button>
       </div>
     );
@@ -1717,13 +1763,13 @@ export default function H19() {
         <div style={{ fontSize:14, color:D.textSub, marginBottom:8, textAlign:"center" }}>Ingresa el código del torneo</div>
         <input value={spectatorInput} onChange={e => setSpectatorInput(e.target.value.toUpperCase())} placeholder="Código torneo" maxLength={10}
           style={{ width:"100%", padding:14, border:`1px solid ${D.border}`, borderRadius:12, background:D.surface, color:D.text, fontSize:20, textAlign:"center", letterSpacing:4, fontWeight:700 }} />
-        <Btn onClick={() => { if (spectatorInput.trim()) { setRondaId(spectatorInput.trim()); setMode("torneo-spectator"); } }}>Ver torneo</Btn>
+        <Btn onClick={() => { if (spectatorInput.trim()) { setRondaId(spectatorInput.trim()); setTorneoIsAdmin(false); setMode("torneo-spectator"); } }}>Ver torneo</Btn>
         <button onClick={() => setMode("home")} style={{ fontSize:13, color:D.textSub, background:"none", border:"none", cursor:"pointer" }}>← Volver</button>
       </div>
     );
   }
 
-  if (mode === "torneo-spectator" && rondaId) return <TorneoSpectator torneoId={rondaId} appStyle={appStyle} />;
+  if (mode === "torneo-spectator" && rondaId) return <TorneoSpectator torneoId={rondaId} appStyle={appStyle} isAdmin={torneoIsAdmin} />;
 
   if (mode === "pin") {
     return (
@@ -2089,7 +2135,24 @@ function AdminApp({ onExit, torneoConfig = null }) {
     });
     const resultData = { ...r, hcUpdates:hc, marcasMoney, marcasPts, tarjetasMoney, tarjetasCount, fullScores, rawScores };
     setResults(resultData);
-    updateGame({ ...getState(), scores:sc, status:"finalizada" });
+    // Guardar estado final en Firebase (scores completos permanentes)
+    const finalState = { ...getState(), scores:sc, status:"finalizada" };
+    updateGame(finalState);
+    // Si estamos en modo torneo, guardar resultados finales del grupo explícitamente
+    if (torneoConfig?.torneoId) {
+      const gid = torneoConfig.grupoId || rondaId;
+      try {
+        set(ref(db, `torneos/${torneoConfig.torneoId}/grupos/${gid}`), {
+          nombre: grupoNombre || torneoConfig.grupoNombre || "Grupo",
+          players, scores: sc, marcas, tarjetas,
+          hole, status: "finalizada", updatedAt: Date.now(),
+          resultados: {
+            ganador: r.fi.map(i=>players[i].name).join(" · "),
+            netGanador: r.nets[r.fi[0]],
+          }
+        });
+      } catch(e) {}
+    }
     // Guardar en historial
     try {
       const jugadoresDetalle = players.map((p, i) => ({
@@ -3316,7 +3379,14 @@ function AdminApp({ onExit, torneoConfig = null }) {
             </div>
           </Card>
 
-          <Btn onClick={confirmHC}>Confirmar y guardar handicaps</Btn>
+          {torneoConfig ? (
+            <div style={{ background:D.goldDim, border:`1px solid ${D.gold}`, borderRadius:12, padding:"14px", marginBottom:8, textAlign:"center" }}>
+              <div style={{ fontSize:14, fontWeight:700, color:D.gold, marginBottom:6 }}>🏆 Grupo finalizado</div>
+              <div style={{ fontSize:12, color:D.textSub }}>El administrador general del torneo confirmará los handicaps y cerrará el torneo cuando todos los grupos terminen.</div>
+            </div>
+          ) : (
+            <Btn onClick={confirmHC}>Confirmar y guardar handicaps</Btn>
+          )}
           <Btn outline onClick={() => { setSel(new Set()); setScreen("sel"); }} style={{ marginTop:8 }}>Nueva ronda sin guardar</Btn>
         </div>
       </div>
