@@ -1232,47 +1232,103 @@ function CerrarTorneoPanel({ torneoId, torneo, grupos, allPlayers, ranked, pars,
   const guardarYCerrar = async (guardarHC) => {
     setGuardando(true);
     try {
-      // Marcar torneo como finalizado
       await set(ref(db, `torneos/${torneoId}/status`), "finalizado");
 
-      // Guardar desglose completo por grupo en el torneo
       const fecha = new Date();
       const fechaStr = `${fecha.getDate().toString().padStart(2,'0')}/${(fecha.getMonth()+1).toString().padStart(2,'0')}`;
+
+      // ── Construir datos globales de todos los jugadores ──
+      const allPlayers = grupos.flatMap(([gid, g]) => {
+        const gPs = (Array.isArray(g.players)?g.players:Object.values(g.players||{}))
+          .map(p=>({...p, opts:{score:true,marcas:true,tarjetas:true}}));
+        const gScRaw = Array.isArray(g.scores)?g.scores:Object.values(g.scores||{});
+        return gPs.map((p,pi) => {
+          const rowRaw = gScRaw[pi];
+          const row = Array.isArray(rowRaw)?rowRaw:Object.values(rowRaw||{});
+          const fullRow = pars.map((par,h)=>{ const v=row[h]; return (v===null||v===undefined)?par:v; });
+          return { ...p, grupoId:gid, grupoNombre:g.nombre||`Grupo ${gid.slice(-3)}`,
+            fullScores:fullRow, marcas:g.marcas, tarjetas:g.tarjetas };
+        });
+      });
+
+      // Score global entre todos
+      const scoresGlobal = allPlayers.map(p => p.fullScores);
+      const rGlobal = calcMoney(allPlayers, scoresGlobal, torneo.apuesta||50);
+
+      // Peor score global
+      const netsGlobal = allPlayers.map((p,i) => scoresGlobal[i].reduce((a,b)=>a+b,0) - p.hc);
+      const peorNeto = Math.max(...netsGlobal);
+      const peoresIdx = netsGlobal.map((n,i)=>n===peorNeto?i:-1).filter(i=>i>=0);
+      const tv = torneo.tarjetaVal||10;
+      const peorMoneyArr = allPlayers.map((_,i) => {
+        if (peoresIdx.includes(i)) return -((allPlayers.length-peoresIdx.length)*tv/peoresIdx.length);
+        return tv;
+      });
+
+      // Marcas y tarjetas por grupo (excluyendo peorscore)
+      const TARJETAS_SIN_PS = TARJETAS.filter(t=>t.key!=="peorscore");
+      const marcasMoneyArr = new Array(allPlayers.length).fill(0);
+      const tarjetasMoneyArr = new Array(allPlayers.length).fill(0);
+      let offset = 0;
+      grupos.forEach(([gid,g]) => {
+        const gPs = (Array.isArray(g.players)?g.players:Object.values(g.players||{}))
+          .map(p=>({...p,opts:{score:true,marcas:true,tarjetas:true}}));
+        const gMarcas = g.marcas?(Array.isArray(g.marcas)?g.marcas:Object.values(g.marcas)):null;
+        const gTarjetas = g.tarjetas||null;
+        if (gMarcas) {
+          const mm = calcMarcasMoney(gPs, gMarcas, torneo.marcaVal||10);
+          gPs.forEach((_,pi)=>{ marcasMoneyArr[offset+pi]=mm[pi]; });
+        }
+        if (gTarjetas) {
+          const tarjetasSinPS = {...gTarjetas, peorscore:null};
+          const count = gPs.map((_,i)=>{
+            let c=0; TARJETAS_SIN_PS.forEach(t=>{ const o=tarjetasSinPS[t.key];
+              c+=Array.isArray(o)?o.includes(i)?1/o.length:0:o===i?1:0; }); return c;
+          });
+          const tm = gPs.map((_,i)=>{
+            let b=0; gPs.forEach((_,j)=>{ if(i!==j){b-=count[i]*tv;b+=count[j]*tv;} }); return Math.round(b);
+          });
+          gPs.forEach((_,pi)=>{ tarjetasMoneyArr[offset+pi]=tm[pi]; });
+        }
+        offset += gPs.length;
+      });
+
+      // Clasificación global final
+      const jugadoresGlobal = allPlayers.map((p,i) => ({
+        name: p.name, hc: p.hc,
+        grupoNombre: p.grupoNombre,
+        bruto: scoresGlobal[i].reduce((a,b)=>a+b,0),
+        neto: rGlobal.nets[i],
+        scoreMoney: rGlobal.money[i],
+        marcasMoney: marcasMoneyArr[i],
+        tarjetasMoney: tarjetasMoneyArr[i]+peorMoneyArr[i],
+        total: rGlobal.money[i]+marcasMoneyArr[i]+tarjetasMoneyArr[i]+peorMoneyArr[i],
+      })).sort((a,b)=>a.neto-b.neto);
+
+      const ganadorGlobal = jugadoresGlobal[0];
+
+      // Guardar resumen global en el torneo
+      await set(ref(db, `torneos/${torneoId}/resumenGlobal`), {
+        jugadores: jugadoresGlobal,
+        ganador: ganadorGlobal?.name,
+        netGanador: ganadorGlobal?.neto,
+        fechaTs: Date.now(), fecha: fechaStr,
+        pars, campo: torneo.campo, nHoles: torneo.nHoles,
+        apuesta: torneo.apuesta, marcaVal: torneo.marcaVal, tarjetaVal: torneo.tarjetaVal,
+      });
+
+      // Guardar desglose por grupo (tarjeta hoyo×hoyo, marcas, tarjetas)
       for (const [gid, g] of grupos) {
         try {
-          const gPlayers = (Array.isArray(g.players) ? g.players : Object.values(g.players||{}))
-            .map(p => ({...p, opts:{score:true,marcas:true,tarjetas:true}}));
-          const gScoresRaw = Array.isArray(g.scores) ? g.scores : Object.values(g.scores||{});
-          const gMarcas = g.marcas ? (Array.isArray(g.marcas) ? g.marcas : Object.values(g.marcas)) : null;
-          const gTarjetas = g.tarjetas || null;
-          const gFullScores = gPlayers.map((_, pi) => {
-            const rowRaw = gScoresRaw[pi];
-            const row = Array.isArray(rowRaw) ? rowRaw : Object.values(rowRaw||{});
-            return pars.map((par,h) => { const v = row[h]; return (v===null||v===undefined)?par:v; });
-          });
-          const r = calcMoney(gPlayers, gFullScores, torneo.apuesta||50);
-          const mMoney = gMarcas ? calcMarcasMoney(gPlayers, gMarcas, torneo.marcaVal||10) : gPlayers.map(()=>0);
-          const mPts = gMarcas ? calcMarcasPts(gPlayers, gMarcas) : gPlayers.map(()=>0);
-          const tMoney = gTarjetas ? calcTarjetasMoney(gPlayers, gTarjetas, torneo.tarjetaVal||10) : gPlayers.map(()=>0);
-          const tCount = gTarjetas ? gPlayers.map((_,i) => {
-            let c=0; TARJETAS.forEach(t=>{ const o=gTarjetas[t.key]; c += Array.isArray(o)?o.includes(i)?1/o.length:0:o===i?1:0; }); return Math.round(c*10)/10;
-          }) : gPlayers.map(()=>0);
-          const jugadoresDetalle = gPlayers.map((p,i) => ({
-            name:p.name, hc:p.hc,
-            bruto:gFullScores[i].reduce((a,b)=>a+b,0),
-            neto:r.nets[i],
-            scoreMoney:r.money[i], marcasMoney:mMoney[i], marcasPts:mPts[i],
-            tarjetasMoney:tMoney[i], tarjetasCount:tCount[i],
-            total:r.money[i]+mMoney[i]+tMoney[i],
-          }));
+          const gPs = (Array.isArray(g.players)?g.players:Object.values(g.players||{}));
+          const gScRaw = Array.isArray(g.scores)?g.scores:Object.values(g.scores||{});
+          const gMarcas = g.marcas?(Array.isArray(g.marcas)?g.marcas:Object.values(g.marcas)):null;
+          const gFullScores = gPs.map((_,pi)=>{ const r=Array.isArray(gScRaw[pi])?gScRaw[pi]:Object.values(gScRaw[pi]||{}); return pars.map((par,h)=>{const v=r[h];return(v===null||v===undefined)?par:v;}); });
           await set(ref(db, `torneos/${torneoId}/grupos/${gid}/resumenFinal`), {
-            jugadores: jugadoresDetalle,
-            ganador: r.fi.map(i=>gPlayers[i].name).join(" · "),
-            netGanador: r.nets[r.fi[0]],
-            fechaTs: Date.now(), fecha: fechaStr,
-            pars, playerNames: gPlayers.map(p=>p.name),
+            ganador: calcMoney(gPs.map(p=>({...p,opts:{score:true,marcas:true,tarjetas:true}})),gFullScores,torneo.apuesta||50).fi.map(i=>gPs[i].name).join(" · "),
+            pars, playerNames: gPs.map(p=>p.name),
             scoresPorHoyo: gFullScores,
-            marcas: gMarcas, tarjetas: gTarjetas,
+            marcas: gMarcas, tarjetas: g.tarjetas||null,
           });
         } catch(e) {}
       }
@@ -1281,12 +1337,11 @@ function CerrarTorneoPanel({ torneoId, torneo, grupos, allPlayers, ranked, pars,
         const dirSnap = await get(ref(db, "directorio"));
         if (dirSnap.exists()) {
           const dirData = dirSnap.val();
-          const players = dirData.players || [];
-          const updatedPlayers = players.map(p => {
-            const upd = hcUpdates.find(u => u.name === p.name);
-            return upd ? { ...p, hc: upd.after } : p;
+          const updatedPlayers = (dirData.players||[]).map(p => {
+            const upd = hcUpdates.find(u=>u.name===p.name);
+            return upd ? {...p,hc:upd.after} : p;
           });
-          await set(ref(db, "directorio"), { ...dirData, players: updatedPlayers });
+          await set(ref(db, "directorio"), {...dirData, players:updatedPlayers});
         }
       }
 
@@ -2879,11 +2934,10 @@ function AdminApp({ onExit, torneoConfig = null }) {
             {historialTorneos.map((t, idx) => {
               const isOpen = expandedTorneoHist === t.id;
               const grupos = t.grupos ? Object.entries(t.grupos) : [];
-              const fecha = t.createdAt ? new Date(t.createdAt).toLocaleDateString('es-MX') : "—";
-              const totalJugadores = grupos.reduce((sum, [,g]) => {
-                const ps = Array.isArray(g.players) ? g.players : Object.values(g.players||{});
-                return sum + ps.length;
-              }, 0);
+              const fecha = t.resumenGlobal?.fecha || (t.createdAt ? new Date(t.createdAt).toLocaleDateString('es-MX') : "—");
+              const rg = t.resumenGlobal; // resumen global con todos los jugadores
+              const totalJugadores = rg?.jugadores?.length || grupos.reduce((sum,[,g])=>sum+(Array.isArray(g.players)?g.players:Object.values(g.players||{})).length,0);
+              const ganadorNombre = rg?.ganador || "—";
               return (
                 <div key={t.id} style={{ padding:"12px 0", borderBottom:idx<historialTorneos.length-1?`1px solid ${D.border}`:"none" }}>
                   <div onClick={() => { setExpandedTorneoHist(isOpen ? null : t.id); setExpandedGrupoHist(null); }} style={{ cursor:"pointer" }}>
@@ -2891,8 +2945,10 @@ function AdminApp({ onExit, torneoConfig = null }) {
                       <div style={{ fontSize:14, fontWeight:700 }}>{t.nombre}</div>
                       <div style={{ fontSize:11, color:D.textSub }}>{fecha}</div>
                     </div>
-                    <div style={{ fontSize:12, color:D.textSub, marginBottom:6 }}>
-                      {CAMPOS[t.campo]?.nombre || t.campo} · {t.nHoles} hoyos · {grupos.length} grupos · {totalJugadores} jugadores
+                    <div style={{ fontSize:12, color:D.textSub, marginBottom:4 }}>
+                      {CAMPOS[t.campo]?.nombre||t.campo} · {t.nHoles} hoyos · {grupos.length} grupos · {totalJugadores} jugadores
+                    </div>
+                    {rg && <div style={{ fontSize:12, background:D.goldDim, color:D.gold, padding:"2px 10px", borderRadius:10, fontWeight:700, display:"inline-block", marginBottom:4 }}>🏆 {ganadorNombre} ({rg.netGanador} neto)</div>}
                     </div>
                     <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between" }}>
                       <div style={{ fontSize:11, color:D.textSub }}>{isOpen ? "▲ Ocultar grupos" : "▼ Ver grupos"}</div>
@@ -2904,39 +2960,48 @@ function AdminApp({ onExit, torneoConfig = null }) {
                   </div>
                   {isOpen && (
                     <div style={{ marginTop:10, background:D.bg, borderRadius:10, padding:10 }}>
+
+                      {/* ── CLASIFICACIÓN GLOBAL ── */}
+                      {rg?.jugadores ? (
+                        <div style={{ marginBottom:12 }}>
+                          <div style={{ fontSize:11, fontWeight:700, color:D.gold, textTransform:"uppercase", letterSpacing:1, marginBottom:8 }}>🏆 Clasificación global</div>
+                          {rg.jugadores.map((j,pos) => (
+                            <div key={j.name} style={{ display:"flex", alignItems:"center", gap:8, padding:"8px 0", borderBottom:`1px solid ${D.border}` }}>
+                              <div style={{ width:18, fontSize:12, fontWeight:900, color:pos===0?D.gold:D.textSub }}>{pos+1}</div>
+                              <Avatar name={String(j.name||'?')} id={j.name} size={26} />
+                              <div style={{ flex:1 }}>
+                                <div style={{ fontSize:13, fontWeight:600 }}>{j.name}</div>
+                                <div style={{ fontSize:10, color:D.textDim }}>{j.grupoNombre} · HC {j.hc} · {j.bruto} bruto · {j.neto} neto</div>
+                              </div>
+                              <div style={{ textAlign:"right" }}>
+                                <div style={{ fontSize:14, fontWeight:900, color:j.total>=0?D.success:D.danger }}>
+                                  {j.total>=0?`+$${j.total}`:`-$${Math.abs(j.total)}`}
+                                </div>
+                                <div style={{ fontSize:9, color:D.textDim }}>Sc ${j.scoreMoney} · Mk ${j.marcasMoney} · Tj ${j.tarjetasMoney}</div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div style={{ textAlign:"center", color:D.textDim, fontSize:12, padding:12 }}>Torneo guardado con versión anterior — sin resumen global</div>
+                      )}
+
+                      {/* ── DESGLOSE POR GRUPO (tarjeta, marcas, tarjetas) ── */}
+                      <div style={{ fontSize:11, fontWeight:700, color:D.textSub, textTransform:"uppercase", letterSpacing:1, marginBottom:8, marginTop:4 }}>Desglose por grupo</div>
                       {grupos.map(([gid, g]) => {
                         const rf = g.resumenFinal;
                         const isGrupoOpen = expandedGrupoHist === gid;
                         return (
                           <div key={gid} style={{ marginBottom:10, paddingBottom:10, borderBottom:`1px solid ${D.border}` }}>
-                            <div onClick={() => setExpandedGrupoHist(isGrupoOpen ? null : gid)} style={{ cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
-                              <div>
-                                <div style={{ fontSize:13, fontWeight:700, color:D.gold }}>🏌️ {g.nombre || `Grupo ${gid.slice(-3)}`}</div>
-                                {rf?.ganador && <div style={{ fontSize:11, color:D.textSub }}>🏆 {rf.ganador} ({rf.netGanador} neto)</div>}
-                                {!rf && <div style={{ fontSize:11, color:D.textDim }}>Sin desglose guardado</div>}
-                              </div>
-                              <div style={{ fontSize:10, color:D.textSub }}>{isGrupoOpen ? "▲" : "▼ Desglose"}</div>
+                            <div onClick={() => setExpandedGrupoHist(isGrupoOpen ? null : gid)} style={{ cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"space-between", padding:"6px 0" }}>
+                              <div style={{ fontSize:13, fontWeight:700, color:D.gold }}>🏌️ {g.nombre || `Grupo ${gid.slice(-3)}`}</div>
+                              <div style={{ fontSize:10, color:D.textSub }}>{isGrupoOpen ? "▲" : "▼ Tarjeta"}</div>
                             </div>
                             {isGrupoOpen && rf && (
                               <div style={{ marginTop:8 }}>
-                                {/* Jugadores con $ */}
-                                {rf.jugadores?.slice().sort((a,b)=>a.neto-b.neto).map((j,pos) => (
-                                  <div key={j.name} style={{ display:"flex", alignItems:"center", gap:8, padding:"7px 0", borderBottom:`1px solid ${D.border}` }}>
-                                    <div style={{ width:18, fontSize:11, fontWeight:900, color:pos===0?D.gold:D.textSub }}>{pos+1}</div>
-                                    <div style={{ flex:1 }}>
-                                      <div style={{ fontSize:12, fontWeight:600 }}>{j.name}</div>
-                                      <div style={{ fontSize:10, color:D.textSub }}>HC {j.hc} · {j.bruto} bruto · {j.neto} neto</div>
-                                    </div>
-                                    <div style={{ textAlign:"right" }}>
-                                      <div style={{ fontSize:13, fontWeight:900, color:j.total>=0?D.success:D.danger }}>{j.total>=0?`+$${j.total}`:`-$${Math.abs(j.total)}`}</div>
-                                      <div style={{ fontSize:9, color:D.textDim }}>Sc ${j.scoreMoney} · Mk ${j.marcasMoney} · Tj ${j.tarjetasMoney}</div>
-                                    </div>
-                                  </div>
-                                ))}
-                                {/* Tarjeta hoyo por hoyo */}
+                                {/* Tarjeta hoyo×hoyo */}
                                 {rf.scoresPorHoyo && rf.pars && (
-                                  <div style={{ marginTop:8, overflowX:"auto" }}>
-                                    <div style={{ fontSize:10, fontWeight:700, color:D.textSub, marginBottom:4, textTransform:"uppercase" }}>🏌️ Tarjeta</div>
+                                  <div style={{ overflowX:"auto" }}>
                                     <table style={{ width:"100%", borderCollapse:"collapse", fontSize:10, minWidth:rf.pars.length*26+80 }}>
                                       <thead>
                                         <tr>
@@ -2962,8 +3027,9 @@ function AdminApp({ onExit, torneoConfig = null }) {
                                   </div>
                                 )}
                                 {/* Marcas */}
-                                {rf.marcas && rf.jugadores && (() => {
-                                  const eventos = calcMarcasResumen(rf.jugadores.map(j=>({name:j.name,opts:{marcas:true}})), rf.marcas);
+                                {rf.marcas && rf.playerNames && (() => {
+                                  const ps = rf.playerNames.map(name=>({name,opts:{marcas:true}}));
+                                  const eventos = calcMarcasResumen(ps, rf.marcas);
                                   return eventos.length > 0 ? (
                                     <div style={{ marginTop:8 }}>
                                       <div style={{ fontSize:10, fontWeight:700, color:D.textSub, marginBottom:4, textTransform:"uppercase" }}>⭐ Marcas</div>
@@ -2979,15 +3045,13 @@ function AdminApp({ onExit, torneoConfig = null }) {
                                 })()}
                                 {/* Tarjetas */}
                                 {rf.tarjetas && (() => {
-                                  const conDueno = TARJETAS.filter(tj => { const o=rf.tarjetas[tj.key]; return Array.isArray(o)?o.length>0:(o!==null&&o!==undefined); });
-                                  return conDueno.length > 0 ? (
+                                  const conDueno = TARJETAS.filter(tj=>{ const o=rf.tarjetas[tj.key]; return Array.isArray(o)?o.length>0:(o!==null&&o!==undefined); });
+                                  return conDueno.length>0 ? (
                                     <div style={{ marginTop:8 }}>
                                       <div style={{ fontSize:10, fontWeight:700, color:D.danger, marginBottom:4, textTransform:"uppercase" }}>🃏 Tarjetas</div>
-                                      {conDueno.map(tj => {
-                                        const owner = rf.tarjetas[tj.key];
-                                        const names = Array.isArray(owner)
-                                          ? owner.map(i => rf.playerNames?.[i]).filter(Boolean).join(" · ")
-                                          : rf.playerNames?.[owner] || "—";
+                                      {conDueno.map(tj=>{
+                                        const owner=rf.tarjetas[tj.key];
+                                        const names=Array.isArray(owner)?owner.map(i=>rf.playerNames?.[i]).filter(Boolean).join(" · "):rf.playerNames?.[owner]||"—";
                                         return <div key={tj.key} style={{ display:"flex", justifyContent:"space-between", fontSize:11, padding:"2px 0" }}><span style={{ color:D.textSub }}>{tj.label}</span><span style={{ fontWeight:700, color:D.danger }}>{names}</span></div>;
                                       })}
                                     </div>
@@ -2995,9 +3059,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
                                 })()}
                               </div>
                             )}
-                            {isGrupoOpen && !rf && (
-                              <div style={{ fontSize:11, color:D.textDim, marginTop:6 }}>Desglose no disponible (torneo cerrado sin guardar detalle)</div>
-                            )}
+                            {isGrupoOpen && !rf && <div style={{ fontSize:11, color:D.textDim, padding:"6px 0" }}>Sin desglose de tarjeta guardado</div>}
                           </div>
                         );
                       })}
