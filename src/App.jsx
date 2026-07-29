@@ -1759,7 +1759,7 @@ function TorneoSpectator({ torneoId, appStyle, isAdmin = false }) {
         {isAdmin && grupos.length > 0 && grupos.every(([,g]) => g.status === "finalizada") && (
           <CerrarTorneoPanel torneoId={torneoId} torneo={torneo} grupos={grupos} allPlayers={allPlayers} ranked={ranked} pars={pars} onCerrado={() => {
             try { localStorage.removeItem("h19-torneo-admin"); } catch(e) {}
-            window.location.href = window.location.pathname; // volver a home limpio
+            window.location.href = window.location.pathname;
           }} />
         )}
 
@@ -1912,18 +1912,14 @@ export default function H19() {
         {savedTorneoAdmin && (
           <div style={{ width:"100%", background:"#E8F5E9", border:`1px solid ${D.success}`, borderRadius:12, padding:"12px 14px", marginBottom:4 }}>
             <div style={{ fontSize:12, fontWeight:700, color:D.success, marginBottom:6 }}>🏆 Torneo activo: {savedTorneoAdmin.nombre}</div>
-            <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
+            <div style={{ display:"flex", gap:6 }}>
               <button onClick={() => setMode("pin-torneo-ver")}
-                style={{ flex:1, padding:"8px", border:"none", borderRadius:8, background:D.success, color:"#fff", fontSize:12, fontWeight:700, cursor:"pointer", minWidth:80 }}>
+                style={{ flex:1, padding:"8px", border:"none", borderRadius:8, background:D.success, color:"#fff", fontSize:12, fontWeight:700, cursor:"pointer" }}>
                 👁️ Ver torneo
               </button>
               <button onClick={() => setMode("pin-torneo-codigos")}
-                style={{ flex:1, padding:"8px", border:`1px solid ${D.success}`, borderRadius:8, background:"transparent", color:D.success, fontSize:12, fontWeight:700, cursor:"pointer", minWidth:80 }}>
+                style={{ flex:1, padding:"8px", border:`1px solid ${D.success}`, borderRadius:8, background:"transparent", color:D.success, fontSize:12, fontWeight:700, cursor:"pointer" }}>
                 🔑 Ver códigos
-              </button>
-              <button onClick={() => { localStorage.removeItem("h19-torneo-admin"); setSavedTorneoAdmin(null); }}
-                style={{ padding:"8px 10px", border:`1px solid ${D.border}`, borderRadius:8, background:"transparent", color:D.textSub, fontSize:11, cursor:"pointer" }}>
-                ✕
               </button>
             </div>
           </div>
@@ -1996,7 +1992,7 @@ export default function H19() {
     );
   }
 
-  if (mode === "torneo-crear") return <TorneoCrear onExit={() => setMode("home")} onIniciarGrupo={(tc) => { setActiveTorneoConfig(tc); setMode("torneo-admin"); }} appStyle={appStyle} />;
+  if (mode === "torneo-crear") return <TorneoCrear onExit={() => setMode("home")} onIniciarGrupo={(tc) => { setActiveTorneoConfig(tc); setSavedTorneoAdmin(tc); setMode("torneo-admin"); }} appStyle={appStyle} />;
   if (mode === "torneo-unirse") return <TorneoUnirse onExit={() => setMode("home")} appStyle={appStyle} />;
   if (mode === "torneo-admin") return <AdminApp onExit={() => setMode("home")} torneoConfig={activeTorneoConfig} />;
 
