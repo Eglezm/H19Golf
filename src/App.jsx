@@ -1122,7 +1122,7 @@ function TorneoCrear({ onExit, onIniciarGrupo, appStyle }) {
           <Btn onClick={() => onIniciarGrupo({ ...torneoData, grupoId: grupos[0].id, grupoNombre: grupos[0].nombre })}>
             🏌️ Iniciar mi grupo ({grupos[0]?.nombre}) →
           </Btn>
-          <Btn outline onClick={onExit} style={{ marginTop:8 }}>← Volver al inicio</Btn>
+          <Btn outline onClick={() => onExit(torneoData)} style={{ marginTop:8 }}>← Volver al inicio</Btn>
         </div>
       </div>
     );
@@ -1992,7 +1992,10 @@ export default function H19() {
     );
   }
 
-  if (mode === "torneo-crear") return <TorneoCrear onExit={() => setMode("home")} onIniciarGrupo={(tc) => { setActiveTorneoConfig(tc); setSavedTorneoAdmin(tc); setMode("torneo-admin"); }} appStyle={appStyle} />;
+  if (mode === "torneo-crear") return <TorneoCrear
+    onExit={(td) => { if (td?.torneoId) setSavedTorneoAdmin(td); setMode("home"); }}
+    onIniciarGrupo={(tc) => { setActiveTorneoConfig(tc); setSavedTorneoAdmin(tc); setMode("torneo-admin"); }}
+    appStyle={appStyle} />;
   if (mode === "torneo-unirse") return <TorneoUnirse onExit={() => setMode("home")} appStyle={appStyle} />;
   if (mode === "torneo-admin") return <AdminApp onExit={() => setMode("home")} torneoConfig={activeTorneoConfig} />;
 
