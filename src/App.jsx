@@ -1687,7 +1687,6 @@ function TorneoSpectator({ torneoId, appStyle, isAdmin = false }) {
           const gPlayers = Array.isArray(g.players) ? g.players : Object.values(g.players||{});
           const gScores = Array.isArray(g.scores) ? g.scores : Object.values(g.scores||{});
           const gMarcas = g.marcas ? (Array.isArray(g.marcas) ? g.marcas : Object.values(g.marcas)) : null;
-          const gTarjetas = g.tarjetas || null;
           return (
             <Card key={gid}>
               <SLabel>🏌️ {g.nombre || `Grupo ${gid.slice(-3)}`} · Hoyo {(g.hole||0)+1}</SLabel>
@@ -1722,22 +1721,27 @@ function TorneoSpectator({ torneoId, appStyle, isAdmin = false }) {
                 ) : null;
               })()}
               {/* Tarjetas del grupo */}
-              {gTarjetas && (() => {
+              {(() => {
+                const gTarjetasNorm = normalizeTarjetas(g.tarjetas);
                 const conDueno = TARJETAS.filter(tj => {
-                  const o = gTarjetas[tj.key];
+                  const o = gTarjetasNorm[tj.key];
                   return Array.isArray(o) ? o.length > 0 : (o !== null && o !== undefined);
                 });
                 return conDueno.length > 0 ? (
                   <div style={{ marginTop:10, paddingTop:10, borderTop:`1px solid ${D.border}` }}>
                     <div style={{ fontSize:10, fontWeight:700, color:D.danger, textTransform:"uppercase", letterSpacing:1, marginBottom:6 }}>🃏 Tarjetas</div>
                     {conDueno.map(tj => {
-                      const owner = gTarjetas[tj.key];
+                      const owner = gTarjetasNorm[tj.key];
                       const names = Array.isArray(owner)
                         ? owner.map(i => gPlayers[i]?.name).filter(Boolean).join(" · ")
                         : gPlayers[owner]?.name || "—";
+                      const esPeorScore = tj.key === "peorscore";
                       return (
-                        <div key={tj.key} style={{ display:"flex", justifyContent:"space-between", fontSize:11, padding:"3px 0" }}>
-                          <span style={{ color:D.textSub }}>{tj.label}</span>
+                        <div key={tj.key} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", fontSize:11, padding:"4px 0", borderBottom:`1px solid ${D.border}44` }}>
+                          <div>
+                            <span style={{ color:D.textSub }}>{tj.label}</span>
+                            {esPeorScore && <span style={{ fontSize:9, color:D.textDim, marginLeft:4 }}>(en este grupo)</span>}
+                          </div>
                           <span style={{ fontWeight:700, color:D.danger }}>{names}</span>
                         </div>
                       );
