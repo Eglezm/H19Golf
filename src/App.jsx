@@ -111,6 +111,17 @@ const emptyMarca = (n) => ({
 });
 const emptyTarjetas = () => { const t = {}; TARJETAS.forEach(tj => { t[tj.key] = null; }); t["threeput_hole"] = null; t["doblepar_hole"] = null; return t; };
 
+// Firebase convierte arrays a objetos — normalizar al leer
+const normalizeTarjetas = (t) => {
+  if (!t) return emptyTarjetas();
+  const result = { ...emptyTarjetas(), ...t };
+  // peorscore puede ser un array serializado como objeto {0:0, 1:1}
+  if (result.peorscore !== null && result.peorscore !== undefined && !Array.isArray(result.peorscore) && typeof result.peorscore === 'object') {
+    result.peorscore = Object.values(result.peorscore);
+  }
+  return result;
+};
+
 function Avatar({ name, id, size = 32 }) {
   const c = col(id);
   const nameStr = String(name || '?');
@@ -1494,13 +1505,12 @@ function TorneoSpectator({ torneoId, appStyle, isAdmin = false }) {
   grupos.forEach(([gid, g]) => {
     const gPlayers = (Array.isArray(g.players) ? g.players : Object.values(g.players||{})).map(p=>({...p,opts:{score:true,marcas:true,tarjetas:true}}));
     const gMarcas = g.marcas ? (Array.isArray(g.marcas) ? g.marcas : Object.values(g.marcas)) : null;
-    const gTarjetas = g.tarjetas || null;
+    const gTarjetas = normalizeTarjetas(g.tarjetas);
     if (gMarcas && gPlayers.length > 0) {
       const mm = calcMarcasMoney(gPlayers, gMarcas, torneo.marcaVal || 10);
       gPlayers.forEach((p, pi) => { marcasMoneyMap[`${gid}-${pi}`] = mm[pi]; });
     }
-    if (gTarjetas && gPlayers.length > 0) {
-      // Calcular tarjetas locales excluyendo peorscore (se calcula globalmente)
+    if (gPlayers.length > 0) {
       const tarjetasSinPeor = { ...gTarjetas, peorscore: null };
       const count = gPlayers.map((_, i) => {
         let c = 0;
@@ -2193,7 +2203,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
   const resumeRonda = () => {
     if (!savedRonda) return;
     setPlayers(savedRonda.players||[]); setScores(savedRonda.scores||[]);
-    setMarcas(savedRonda.marcas||[]); setTarjetas(savedRonda.tarjetas||emptyTarjetas());
+    setMarcas(savedRonda.marcas||[]); setTarjetas(normalizeTarjetas(savedRonda.tarjetas));
     setHole(savedRonda.hole||0); setPars(savedRonda.pars||[]);
     setCampo(savedRonda.campo||"huerta"); setRondaId(savedRonda.rondaId||null);
     setScreen("score"); setSavedRonda(null);
@@ -2542,7 +2552,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
         };
       });
 
-      const tj = ra.tarjetas || emptyTarjetas();
+      const tj = normalizeTarjetas(ra.tarjetas);
 
       setPlayers(ps);
       setScores(sc);
