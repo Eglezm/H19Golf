@@ -334,18 +334,19 @@ function calcMoney(players, scores, apuesta) {
   const totalNonFirst = apuesta * (n - fi.length);
   return { nets, fi, si, pot, money: players.map((_, i) => {
     if (!playsScore[i]) return 0;
-    // Ganancia NETA = lo que cobra de la bolsa total - lo que puso
+    // ≤9 jugadores o empate en 1ro: el ganador cobra lo que pierden los demás (ya es ganancia neta)
     if (n <= 9) {
-      if (fi.includes(i)) return Math.round(totalFromLosers/fi.length) - apuesta;
+      if (fi.includes(i)) return Math.round(totalFromLosers / fi.length);
       return -apuesta;
     }
+    // Empate en 1ro con 10+ jugadores: igual
     if (fi.length > 1) {
-      if (fi.includes(i)) return Math.round(totalFromLosers/fi.length) - apuesta;
+      if (fi.includes(i)) return Math.round(totalFromLosers / fi.length);
       return -apuesta;
     }
-    // Con 1ro y 2do: repartir la bolsa total (pot) en 60/40
-    if (fi.includes(i)) return Math.round(pot*0.6) - apuesta;
-    if (si.includes(i)) return Math.round((pot*0.4)/si.length) - apuesta;
+    // 10+ jugadores con 1ro y 2do distintos: 60/40 sobre la bolsa total, menos su propia apuesta
+    if (fi.includes(i)) return Math.round(pot * 0.6) - apuesta;
+    if (si.includes(i)) return Math.round((pot * 0.4) / si.length) - apuesta;
     return -apuesta;
   })};
 }
