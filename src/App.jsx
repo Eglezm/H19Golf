@@ -78,8 +78,8 @@ const TARJETAS = [
   { key: "sapo",      label: "🐸 Sapo",          auto: false },
   { key: "arbol",     label: "🌳 Árbol",         auto: false },
   { key: "threeput",  label: "🔄 Three putt",    auto: false },
-  { key: "doblepar",  label: "🔻 Peor score en el hoyo", auto: true  },
-  { key: "peorscore", label: "🪣 Peor Score",    auto: true  },
+  { key: "doblepar",  label: "🔻 MP del Hoyo", auto: true  },
+  { key: "peorscore", label: "🪣 MP General",    auto: true  },
 ];
 
 const D = {
@@ -334,10 +334,18 @@ function calcMoney(players, scores, apuesta) {
   const totalNonFirst = apuesta * (n - fi.length);
   return { nets, fi, si, pot, money: players.map((_, i) => {
     if (!playsScore[i]) return 0;
-    if (n <= 9) return fi.includes(i) ? Math.round(totalFromLosers/fi.length) : -apuesta;
-    if (fi.length > 1) return fi.includes(i) ? Math.round(totalFromLosers/fi.length) : -apuesta;
-    if (fi.includes(i)) return Math.round(totalNonFirst*0.6);
-    if (si.includes(i)) return Math.round((totalNonFirst*0.4)/si.length);
+    // Ganancia NETA = lo que cobra de la bolsa total - lo que puso
+    if (n <= 9) {
+      if (fi.includes(i)) return Math.round(totalFromLosers/fi.length) - apuesta;
+      return -apuesta;
+    }
+    if (fi.length > 1) {
+      if (fi.includes(i)) return Math.round(totalFromLosers/fi.length) - apuesta;
+      return -apuesta;
+    }
+    // Con 1ro y 2do: repartir la bolsa total (pot) en 60/40
+    if (fi.includes(i)) return Math.round(pot*0.6) - apuesta;
+    if (si.includes(i)) return Math.round((pot*0.4)/si.length) - apuesta;
     return -apuesta;
   })};
 }
@@ -1640,7 +1648,7 @@ function TorneoSpectator({ torneoId, appStyle, isAdmin = false }) {
         {/* Peor score global */}
         {peoresGlobal.length > 0 && (
           <Card>
-            <SLabel>🪣 Peor score global {peoresGlobal.length > 1 ? `(empate — tarjeta repartida entre ${peoresGlobal.length})` : ""}</SLabel>
+            <SLabel>🪣 MP General global {peoresGlobal.length > 1 ? `(empate — tarjeta repartida entre ${peoresGlobal.length})` : ""}</SLabel>
             {peoresGlobal.map((p, i) => (
               <div key={`${p.grupoId}-${p.id}`} style={{ display:"flex", alignItems:"center", gap:10, padding:"8px 0", borderBottom:i<peoresGlobal.length-1?`1px solid ${D.border}`:"none" }}>
                 <Avatar name={String(p.name||'?')} id={p.id||0} size={32} />
@@ -1679,6 +1687,24 @@ function TorneoSpectator({ torneoId, appStyle, isAdmin = false }) {
               </div>
             ))}
             <div style={{ fontSize:10, color:D.textDim, textAlign:"center", marginTop:6 }}>Score: global entre todos · Marcas y Tarjetas: dentro de cada grupo</div>
+            {(() => {
+              const totales = rankedWithMoney.filter(p=>p.vsParHC!==null).map(p=>p.totalM);
+              const ganancias = totales.filter(t=>t>0).reduce((a,b)=>a+b,0);
+              const perdidas = totales.filter(t=>t<0).reduce((a,b)=>a+b,0);
+              const cuadra = ganancias + perdidas === 0;
+              return (
+                <div style={{ marginTop:10, paddingTop:10, borderTop:`1px solid ${D.border}`, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                  <div style={{ fontSize:11, color:D.textSub }}>
+                    <span style={{ color:D.success, fontWeight:700 }}>+${ganancias}</span>
+                    <span style={{ color:D.textDim, margin:"0 6px" }}>vs</span>
+                    <span style={{ color:D.danger, fontWeight:700 }}>-${Math.abs(perdidas)}</span>
+                  </div>
+                  <div style={{ fontSize:11, fontWeight:700, color:cuadra?D.success:D.danger }}>
+                    {cuadra ? "✓ Cuadra" : `⚠️ Dif $${ganancias+perdidas}`}
+                  </div>
+                </div>
+              );
+            })()}
           </Card>
         )}
 
@@ -3401,7 +3427,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
                   </div>
                   {tj.auto ? (
                     <div style={{ fontSize:11, color:D.textSub, fontStyle:"italic" }}>
-                      {tj.key === "peorscore" ? "Se asigna automáticamente · Peor score neto (bruto − HC) acumulado" : "Se asigna automáticamente · Doble par o peor en el hoyo. En empate el admin elige quién tiró al último."}
+                      {tj.key === "peorscore" ? "Se asigna automáticamente · Peor score neto acumulado (bruto − HC)" : "Se asigna automáticamente · Doble par o peor en el hoyo · En empate el admin elige quién tiró al último."}
                     </div>
                   ) : (
                     <div style={{ display:"flex", flexWrap:"wrap", gap:8 }}>
@@ -3799,6 +3825,33 @@ function AdminApp({ onExit, torneoConfig = null }) {
               </div>
             ))}
           </Card>
+
+          {/* Comprobación de cuentas */}
+          {(() => {
+            const totales = ranked.map(p => p.total);
+            const ganancias = totales.filter(t => t > 0).reduce((a,b)=>a+b,0);
+            const perdidas = totales.filter(t => t < 0).reduce((a,b)=>a+b,0);
+            const cuadra = ganancias + perdidas === 0;
+            return (
+              <Card style={{ border:`1px solid ${cuadra?D.success:D.danger}` }}>
+                <SLabel>✅ Comprobación de cuentas</SLabel>
+                <div style={{ display:"flex", justifyContent:"space-between", padding:"8px 0", borderBottom:`1px solid ${D.border}` }}>
+                  <span style={{ fontSize:13, color:D.textSub }}>Total ganancias</span>
+                  <span style={{ fontSize:14, fontWeight:700, color:D.success }}>+${ganancias}</span>
+                </div>
+                <div style={{ display:"flex", justifyContent:"space-between", padding:"8px 0", borderBottom:`1px solid ${D.border}` }}>
+                  <span style={{ fontSize:13, color:D.textSub }}>Total pérdidas</span>
+                  <span style={{ fontSize:14, fontWeight:700, color:D.danger }}>-${Math.abs(perdidas)}</span>
+                </div>
+                <div style={{ display:"flex", justifyContent:"space-between", padding:"8px 0" }}>
+                  <span style={{ fontSize:13, fontWeight:700 }}>Diferencia</span>
+                  <span style={{ fontSize:14, fontWeight:900, color:cuadra?D.success:D.danger }}>
+                    {cuadra ? "✓ Cuadra perfectamente" : `⚠️ $${ganancias+perdidas}`}
+                  </span>
+                </div>
+              </Card>
+            );
+          })()}
 
           {/* Compartir resultados */}
           <Card>
