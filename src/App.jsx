@@ -1167,7 +1167,13 @@ function TorneoUnirse({ onExit, appStyle }) {
         setError("Código no encontrado. Verifica con el organizador.");
         return;
       }
-      const { torneoId, grupoId, grupoNombre, players } = grupoSnap.val();
+      const { torneoId, grupoId, grupoNombre, players, status: grupoStatus } = grupoSnap.val();
+      // Bloquear acceso si el grupo ya finalizó
+      if (grupoStatus === "finalizado") {
+        setBuscando(false);
+        setError("Este grupo ya terminó su ronda. El acceso está bloqueado. Contacta al administrador general del torneo.");
+        return;
+      }
       const torneoSnap = await get(ref(db, `torneos/${torneoId}`));
       if (!torneoSnap.exists()) { setBuscando(false); setError("Error al cargar el torneo."); return; }
       const t = torneoSnap.val();
@@ -1786,12 +1792,35 @@ function TorneoSpectator({ torneoId, appStyle, isAdmin = false }) {
           {grupos.map(([gid, g]) => {
             const finalizado = g.status === "finalizada";
             return (
-              <div key={gid} style={{ display:"flex", alignItems:"center", gap:10, padding:"8px 0", borderBottom:`1px solid ${D.border}` }}>
-                <div style={{ width:10, height:10, borderRadius:"50%", background:finalizado?D.success:D.gold, flexShrink:0 }} />
-                <div style={{ flex:1, fontSize:13, fontWeight:600 }}>{g.nombre || `Grupo ${gid.slice(-3)}`}</div>
-                <div style={{ fontSize:11, color:finalizado?D.success:D.gold, fontWeight:700 }}>
-                  {finalizado ? "✅ Finalizado" : `Hoyo ${(g.hole||0)+1}`}
+              <div key={gid} style={{ padding:"10px 0", borderBottom:`1px solid ${D.border}` }}>
+                <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+                  <div style={{ width:10, height:10, borderRadius:"50%", background:finalizado?D.success:D.gold, flexShrink:0 }} />
+                  <div style={{ flex:1, fontSize:13, fontWeight:600 }}>{g.nombre || `Grupo ${gid.slice(-3)}`}</div>
+                  <div style={{ fontSize:11, color:finalizado?D.success:D.gold, fontWeight:700 }}>
+                    {finalizado ? "✅ Finalizado" : `Hoyo ${(g.hole||0)+1}`}
+                  </div>
                 </div>
+                {isAdmin && finalizado && (
+                  <div style={{ marginTop:8, paddingLeft:20 }}>
+                    <button onClick={() => {
+                      // Admin general puede entrar al grupo finalizado para revisar/editar
+                      const tc = {
+                        torneoId: torneoId,
+                        grupoId: gid,
+                        grupoNombre: g.nombre || `Grupo ${gid.slice(-3)}`,
+                        campo: torneo.campo, nHoles: torneo.nHoles,
+                        apuesta: torneo.apuesta, marcaVal: torneo.marcaVal, tarjetaVal: torneo.tarjetaVal,
+                        nombre: torneo.nombre,
+                        rondaActiva: { ...g, status: "en_juego" }, // admin puede editar aunque esté finalizado
+                      };
+                      // Guardar config y redirigir
+                      try { localStorage.setItem("h19-admin-grupo-override", JSON.stringify(tc)); } catch(e) {}
+                      window.location.href = `${window.location.pathname}?admingrupo=${gid}`;
+                    }} style={{ fontSize:11, padding:"5px 12px", border:`1px solid ${D.gold}`, borderRadius:8, background:D.goldDim, color:D.gold, fontWeight:700, cursor:"pointer" }}>
+                      🔑 Entrar como Admin General
+                    </button>
+                  </div>
+                )}
               </div>
             );
           })}
@@ -1927,8 +1956,21 @@ export default function H19() {
     const params = new URLSearchParams(window.location.search);
     const rid = params.get("ronda");
     const tid = params.get("torneo");
+    const agid = params.get("admingrupo");
     if (rid) { setRondaId(rid); setMode("spectator"); setShowSplash(false); return; }
     if (tid) { setRondaId(tid); setMode("torneo-spectator"); setShowSplash(false); return; }
+    if (agid) {
+      // Admin general entrando a un grupo específico
+      try {
+        const tc = JSON.parse(localStorage.getItem("h19-admin-grupo-override") || "null");
+        if (tc && tc.grupoId === agid) {
+          setActiveTorneoConfig(tc);
+          setMode("torneo-admin");
+          setShowSplash(false);
+          return;
+        }
+      } catch(e) {}
+    }
     else setMode("home");
     // Splash animation sequence
     setTimeout(() => setSplashPhase(1), 600);
@@ -2419,7 +2461,10 @@ function AdminApp({ onExit, torneoConfig = null }) {
 
   const finish = () => {
     try { localStorage.removeItem("h19-ronda-activa"); } catch(e) {}
-    // Auto-nombre si no se puso uno
+    // Bloquear código del grupo para evitar reingreso
+    if (torneoConfig?.grupoId) {
+      try { set(ref(db, `codigosGrupo/${torneoConfig.grupoId}/status`), "finalizado"); } catch(e) {}
+    }
     const fecha = new Date();
     const fechaStr = `${fecha.getDate().toString().padStart(2,'0')}/${(fecha.getMonth()+1).toString().padStart(2,'0')}`;
     const autoNombre = nombreRonda.trim() || `Ronda ${fechaStr}`;
