@@ -19,6 +19,10 @@ const DEFAULT_MARCA_VAL = 10;
 const DEFAULT_TARJETA_VAL = 10;
 const ADMIN_PIN = "1919";
 
+// Campos personalizados guardados en localStorage
+const getCamposCustom = () => { try { return JSON.parse(localStorage.getItem("h19-campos-custom")||"{}"); } catch(e) { return {}; } };
+const saveCamposCustom = (c) => { try { localStorage.setItem("h19-campos-custom", JSON.stringify(c)); } catch(e) {} };
+
 const CAMPOS = {
   huerta:    { nombre: "Club de Golf La Huerta",   pares: [4,3,3,3,3,4,3,3,3,4,3,3,3,3,4,3,3,3],
     greens: [
@@ -26,13 +30,16 @@ const CAMPOS = {
       {lat:19.058652, lng:-98.3307404}, {lat:19.0596076, lng:-98.3300105}, {lat:19.0585069, lng:-98.3313680},
       {lat:19.059541, lng:-98.3316322}, {lat:19.0597324, lng:-98.3309748}, {lat:19.0588899, lng:-98.3317317},
     ],
-    // Puntos intermedios obligatorios (doglegs) por hoyo, antes de llegar al green
     waypoints: {
-      5: { label:"La Vista", lat:19.0583248, lng:-98.33006978 }, // hoyo 6 (índice 5)
+      5: { label:"La Vista", lat:19.0583248, lng:-98.33006978 },
     } },
-  lavista:   { nombre: "La Vista Country Club",    pares: [4,3,4,5,4,4,3,4,5,5,4,3,4,4,5,4,3,4] },
-  campestre: { nombre: "Club Campestre de Puebla", pares: [4,3,5,4,4,4,4,3,5,4,4,5,3,4,5,4,3,4] },
-  otro:      { nombre: "Otro campo",               pares: null },
+  lavista:   { nombre: "La Vista Country Club",              pares: [4,3,4,5,4,4,3,4,5,5,4,3,4,4,5,4,3,4] },
+  campestre: { nombre: "Club Campestre de Puebla",           pares: [4,3,5,4,4,4,4,3,5,4,4,5,3,4,5,4,3,4] },
+  soltepec:  { nombre: "Club de Golf Hacienda Soltepec",     pares: [4,4,5,3,5,3,4,4,3,4,4,5,3,5,3,4,4,3] },
+  elcristo:  { nombre: "El Cristo Golf & Country Club",      pares: [5,3,4,4,4,4,3,4,5,5,3,4,4,4,5,4,3,4] },
+  cuernavaca:{ nombre: "Club de Golf de Cuernavaca",         pares: [4,4,5,4,3,4,3,4,4,4,4,5,4,3,4,3,4,4] },
+  xalapa:    { nombre: "Club de Golf Xalapa",                pares: [4,4,5,4,5,3,4,4,3,4,3,4,5,3,4,5,3,4] },
+  otro:      { nombre: "Otro campo",                         pares: null },
 };
 
 // Distancia en yardas entre 2 coordenadas GPS (fórmula de Haversine)
@@ -128,6 +135,100 @@ function Avatar({ name, id, size = 32 }) {
   return (
     <div style={{ width:size, height:size, borderRadius:"50%", background:c.bg, color:c.fg, display:"flex", alignItems:"center", justifyContent:"center", fontSize:size*0.34, fontWeight:700, flexShrink:0, border:`1px solid ${c.fg}33` }}>
       {nameStr.substring(0,2).toUpperCase()}
+    </div>
+  );
+}
+
+// ─── SELECTOR DE CAMPO ────────────────────────────────
+function CampoSelector({ campo, setCampo, nHoles, setNHoles }) {
+  const [camposCustom, setCamposCustom] = useState(getCamposCustom);
+  const [addingCampo, setAddingCampo] = useState(false);
+  const [newNombre, setNewNombre] = useState("");
+  const [newPares, setNewPares] = useState(Array(18).fill(4));
+  const [newHoles, setNewHoles] = useState(18);
+
+  const todosLosCampos = { ...CAMPOS };
+  Object.entries(camposCustom).forEach(([k,v]) => { todosLosCampos[k] = v; });
+
+  const guardarCampo = () => {
+    if (!newNombre.trim()) return;
+    const key = "custom_" + newNombre.trim().toLowerCase().replace(/\s+/g,"_").replace(/[^a-z0-9_]/g,"");
+    const pares = newPares.slice(0, newHoles);
+    const nuevo = { ...camposCustom, [key]: { nombre: newNombre.trim(), pares, custom: true } };
+    saveCamposCustom(nuevo);
+    setCamposCustom(nuevo);
+    setCampo(key);
+    if (setNHoles) setNHoles(newHoles);
+    setAddingCampo(false);
+    setNewNombre("");
+    setNewPares(Array(18).fill(4));
+  };
+
+  const eliminarCampo = (key, e) => {
+    e.stopPropagation();
+    const nuevo = { ...camposCustom };
+    delete nuevo[key];
+    saveCamposCustom(nuevo);
+    setCamposCustom(nuevo);
+    if (campo === key) setCampo("otro");
+  };
+
+  if (addingCampo) {
+    const parTotal = newPares.slice(0, newHoles).reduce((a,b)=>a+b,0);
+    return (
+      <div>
+        <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:12 }}>
+          <button onClick={() => setAddingCampo(false)} style={{ fontSize:12, color:D.textSub, background:"none", border:`1px solid ${D.border}`, borderRadius:8, padding:"5px 10px", cursor:"pointer" }}>← Volver</button>
+          <div style={{ fontSize:14, fontWeight:700, color:D.gold }}>Nuevo campo</div>
+        </div>
+        <input value={newNombre} onChange={e=>setNewNombre(e.target.value)} placeholder="Nombre del club"
+          style={{ width:"100%", padding:"10px 12px", border:`1px solid ${D.border}`, borderRadius:10, background:D.surface, color:D.text, fontSize:14, marginBottom:12, boxSizing:"border-box" }} />
+        <div style={{ display:"flex", gap:8, marginBottom:12 }}>
+          {[9,18].map(h => (
+            <button key={h} onClick={() => setNewHoles(h)} style={{ flex:1, padding:9, border:`1px solid ${newHoles===h?D.gold:D.border}`, borderRadius:10, background:newHoles===h?D.goldDim:"transparent", color:newHoles===h?D.gold:D.textSub, fontSize:13, fontWeight:700, cursor:"pointer" }}>
+              {h} hoyos
+            </button>
+          ))}
+        </div>
+        <div style={{ marginBottom:8, fontSize:12, color:D.textSub }}>Par por hoyo: <span style={{ color:D.gold, fontWeight:700 }}>Total: {parTotal}</span></div>
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(9, 1fr)", gap:4, marginBottom:16 }}>
+          {Array(newHoles).fill(0).map((_, h) => (
+            <div key={h} style={{ textAlign:"center" }}>
+              <div style={{ fontSize:10, color:D.textDim, marginBottom:2 }}>{h+1}</div>
+              <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:2 }}>
+                <button onClick={() => setNewPares(p => p.map((v,i)=>i===h?Math.min(6,v+1):v))}
+                  style={{ width:28, height:20, border:`1px solid ${D.border}`, borderRadius:4, background:D.surface, color:D.gold, fontSize:12, cursor:"pointer", padding:0 }}>+</button>
+                <div style={{ fontSize:14, fontWeight:700, color:D.text }}>{newPares[h]}</div>
+                <button onClick={() => setNewPares(p => p.map((v,i)=>i===h?Math.max(3,v-1):v))}
+                  style={{ width:28, height:20, border:`1px solid ${D.border}`, borderRadius:4, background:D.surface, color:D.textSub, fontSize:12, cursor:"pointer", padding:0 }}>−</button>
+              </div>
+            </div>
+          ))}
+        </div>
+        <button onClick={guardarCampo} disabled={!newNombre.trim()}
+          style={{ width:"100%", padding:"12px", border:"none", borderRadius:10, background:newNombre.trim()?D.gold:"#555", color:"#000", fontSize:14, fontWeight:700, cursor:newNombre.trim()?"pointer":"default" }}>
+          ✓ Guardar campo
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+      {Object.entries(todosLosCampos).map(([key, c]) => (
+        <div key={key} style={{ display:"flex", alignItems:"center", gap:6 }}>
+          <button onClick={() => setCampo(key)} style={{ flex:1, padding:"10px 14px", border:`1px solid ${campo===key?D.gold:D.border}`, borderRadius:10, background:campo===key?D.goldDim:"transparent", color:campo===key?D.gold:D.textSub, fontSize:13, fontWeight:700, cursor:"pointer", textAlign:"left" }}>
+            {campo===key?"✓ ":""}{c.nombre}
+            {c.custom && <span style={{ fontSize:10, color:D.textDim, marginLeft:6 }}>personalizado</span>}
+          </button>
+          {c.custom && (
+            <button onClick={(e) => eliminarCampo(key, e)} style={{ padding:"8px 10px", border:`1px solid ${D.danger}44`, borderRadius:8, background:"transparent", color:D.danger, fontSize:11, cursor:"pointer", flexShrink:0 }}>🗑️</button>
+          )}
+        </div>
+      ))}
+      <button onClick={() => setAddingCampo(true)} style={{ width:"100%", padding:"10px 14px", border:`1px dashed ${D.gold}`, borderRadius:10, background:"transparent", color:D.gold, fontSize:13, fontWeight:600, cursor:"pointer", textAlign:"left" }}>
+        ➕ Agregar campo personalizado
+      </button>
     </div>
   );
 }
@@ -982,13 +1083,7 @@ function TorneoCrear({ onExit, onIniciarGrupo, appStyle }) {
           </Card>
           <Card>
             <SLabel>Campo</SLabel>
-            <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
-              {Object.entries(CAMPOS).map(([key,c]) => (
-                <button key={key} onClick={() => setCampo(key)} style={{ width:"100%", padding:"10px 14px", border:`1px solid ${campo===key?D.gold:D.border}`, borderRadius:10, background:campo===key?D.goldDim:"transparent", color:campo===key?D.gold:D.textSub, fontSize:13, fontWeight:700, cursor:"pointer", textAlign:"left" }}>
-                  {campo===key?"✓ ":""}{c.nombre}
-                </button>
-              ))}
-            </div>
+            <CampoSelector campo={campo} setCampo={setCampo} nHoles={nHoles} setNHoles={setNHoles} />
           </Card>
           <Card>
             <SLabel>Hoyos</SLabel>
@@ -3174,13 +3269,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
         <TabBar tabs={[{key:"dir",label:"👥 Jugadores"},{key:"sel",label:"⛳ Nueva ronda"}]} active="sel" onChange={k => k==="dir" && setScreen("dir")} />
         <Card>
           <SLabel>Campo</SLabel>
-          <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
-            {Object.entries(CAMPOS).map(([key,c]) => (
-              <button key={key} onClick={() => setCampo(key)} style={{ width:"100%", padding:"10px 14px", border:`1px solid ${campo===key?D.gold:D.border}`, borderRadius:10, background:campo===key?D.goldDim:"transparent", color:campo===key?D.gold:D.textSub, fontSize:13, fontWeight:700, cursor:"pointer", textAlign:"left" }}>
-                {campo===key?"✓ ":""}{c.nombre}
-              </button>
-            ))}
-          </div>
+          <CampoSelector campo={campo} setCampo={setCampo} nHoles={nHoles} setNHoles={setNHoles} />
         </Card>
         <Card>
           <SLabel>Hoyos</SLabel>
