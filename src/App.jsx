@@ -449,12 +449,6 @@ function calcMoney(players, scores, apuesta, extraPot = 0) {
     return -apuesta;
   })};
 }
-    // 10+ jugadores con 1ro y 2do distintos: 60/40 sobre la bolsa total, menos su propia apuesta
-    if (fi.includes(i)) return Math.round(pot * 0.6) - apuesta;
-    if (si.includes(i)) return Math.round((pot * 0.4) / si.length) - apuesta;
-    return -apuesta;
-  })};
-}
 
 function calcHC(players, scores, si = []) {
   const nets = players.map((p, i) => scores[i].reduce((a, b) => a+b, 0) - p.hc);
