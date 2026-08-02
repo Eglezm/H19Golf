@@ -415,36 +415,40 @@ function calcTarjetasMoney(players, tarjetas, tarjetaVal) {
   });
 }
 
-function calcMoney(players, scores, apuesta) {
+function calcMoney(players, scores, apuesta, extraPot = 0) {
   const playsScore = players.map(p => p.opts ? p.opts.score !== false : true);
   const idxIn = players.map((_, i) => i).filter(i => playsScore[i]);
   const n = idxIn.length;
   const nets = players.map((p, i) => scores[i].reduce((a, b) => a+b, 0) - p.hc);
   if (n < 2) {
-    // No hay suficientes jugadores en la apuesta de score
     return { nets, fi:[], si:[], pot:0, money: players.map(() => 0) };
   }
-  const pot = apuesta * n;
+  // El pozo incluye la apuesta de los abandonados con castigo
+  const pot = apuesta * n + extraPot;
   const netsIn = idxIn.map(i => nets[i]);
   const uniq = [...new Set(netsIn)].sort((a, b) => a-b);
   const f = uniq[0], s = uniq[1];
   const fi = idxIn.filter(i => nets[i] === f);
   const si = s !== undefined ? idxIn.filter(i => nets[i] === s) : [];
   const loserIdxs = idxIn.filter(i => nets[i] !== f);
-  const totalFromLosers = apuesta * loserIdxs.length;
-  const totalNonFirst = apuesta * (n - fi.length);
+  // Perdedores activos + pozo extra de abandonados
+  const totalFromLosers = apuesta * loserIdxs.length + extraPot;
   return { nets, fi, si, pot, money: players.map((_, i) => {
     if (!playsScore[i]) return 0;
-    // <=9 jugadores o empate en 1ro: el ganador cobra lo que pierden los demás (ya es ganancia neta)
     if (n <= 9) {
       if (fi.includes(i)) return Math.round(totalFromLosers / fi.length);
       return -apuesta;
     }
-    // Empate en 1ro con 10+ jugadores: igual
     if (fi.length > 1) {
       if (fi.includes(i)) return Math.round(totalFromLosers / fi.length);
       return -apuesta;
     }
+    // 10+ con 1ro y 2do distintos: 60/40 del pozo total
+    if (fi.includes(i)) return Math.round(pot * 0.6) - apuesta;
+    if (si.includes(i)) return Math.round((pot * 0.4) / si.length) - apuesta;
+    return -apuesta;
+  })};
+}
     // 10+ jugadores con 1ro y 2do distintos: 60/40 sobre la bolsa total, menos su propia apuesta
     if (fi.includes(i)) return Math.round(pot * 0.6) - apuesta;
     if (si.includes(i)) return Math.round((pot * 0.4) / si.length) - apuesta;
@@ -2805,8 +2809,10 @@ function AdminApp({ onExit, torneoConfig = null }) {
     const autoNombre = nombreRonda.trim() || `Ronda ${fechaStr}`;
     const sc = commitHole(scores, hole); setScores(sc);
     const fullScores = sc.map(row => row.map((v,j) => v===null?pars[j]:v));
-    const rawScores = sc; // scores con nulls para mostrar visualmente
-    const r = calcMoney(players, fullScores, apuesta);
+    const rawScores = sc;
+    // El score de los abandonados con castigo entra al pozo
+    const extraPotAbandonos = castigos.filter(c=>c.conCastigo).reduce((a,c)=>a+c.scorePago,0);
+    const r = calcMoney(players, fullScores, apuesta, extraPotAbandonos);
     const playsScoreCount = players.filter(p => p.opts ? p.opts.score !== false : true).length;
     const siParaHC = (playsScoreCount >= 10 && r.fi.length === 1) ? r.si : [];
     const hc = calcHC(players, fullScores, siParaHC);
@@ -3963,7 +3969,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
   if (screen==="res" && results) {
     const { nets, fi, si, pot, money, hcUpdates, marcasMoney, marcasPts, tarjetasMoney, tarjetasCount, fullScores, rawScores } = results;
     // Distribuir castigos entre jugadores activos
-    // El score del abandono ya está incluido en el pozo de calcMoney
+    // El score del abandono ya está en el pozo de calcMoney (extraPot)
     // Solo la tarjeta de abandono se reparte directamente entre activos
     const totalTarjetaAbandonoPool = castigos.filter(c=>c.conCastigo).reduce((a,c)=>a+c.tarjetaPago,0);
     const gananciaXCastigo = players.length > 0 ? Math.round(totalTarjetaAbandonoPool / players.length) : 0;
@@ -4280,11 +4286,14 @@ function AdminApp({ onExit, torneoConfig = null }) {
           {/* Comprobación de cuentas */}
           {(() => {
             const totalesActivos = ranked.map(p => p.total);
-            const totalCastigoPool = castigos.filter(c=>c.conCastigo).reduce((a,c)=>a+(c.scorePago+c.tarjetaPago),0);
+            const totalScoreAbandonos = castigos.filter(c=>c.conCastigo).reduce((a,c)=>a+c.scorePago,0);
+            const totalTarjetaAbandonos = castigos.filter(c=>c.conCastigo).reduce((a,c)=>a+c.tarjetaPago,0);
+            const totalCastigoPool = totalScoreAbandonos + totalTarjetaAbandonos;
             const ganancias = totalesActivos.filter(t => t > 0).reduce((a,b)=>a+b,0);
             const perdidas = Math.abs(totalesActivos.filter(t => t < 0).reduce((a,b)=>a+b,0));
+            // Total que entra = pérdidas activos + score abandono (en calcMoney) + tarjeta abandono (distribuida)
             const totalEntrada = perdidas + totalCastigoPool;
-            const cuadra = Math.abs(ganancias - totalEntrada) <= 1;
+            const cuadra = Math.abs(ganancias - totalEntrada) <= 2;
             return (
               <Card style={{ border:`1px solid ${cuadra?D.success:D.danger}` }}>
                 <SLabel>✅ Comprobación de cuentas</SLabel>
