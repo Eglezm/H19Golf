@@ -2250,7 +2250,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
   const [scores, setScores] = useState([]);
   const [marcas, setMarcas] = useState([]);
   const [tarjetas, setTarjetas] = useState(emptyTarjetas());
-  const [dobleparEmpate, setDobleparEmpate] = useState(null); // array de índices empatados
+  const [dobleparEmpate, setDobleparEmpate] = useState(null);
   const [hole, setHole] = useState(0);
   const [pars, setPars] = useState([]);
   const [results, setResults] = useState(null);
@@ -2258,6 +2258,9 @@ function AdminApp({ onExit, torneoConfig = null }) {
   const [showTabla, setShowTabla] = useState(false);
   const [rondaId, setRondaId] = useState(null);
   const [shareMsg, setShareMsg] = useState("");
+  const [abandonoModal, setAbandonoModal] = useState(null); // {pi, player}
+  const [agregarModal, setAgregarModal] = useState(false);
+  const [castigos, setCastigos] = useState([]); // [{name, scorePago, tarjetaPago}]
   const [distGreen, setDistGreen] = useState(null);
   const [gpsError, setGpsError] = useState("");
   const [gpsLoading, setGpsLoading] = useState(false);
@@ -3448,7 +3451,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
             </div>
           </div>
         )}
-        <TabBar tabs={[{key:"score",label:"📊 Score"},{key:"marcas",label:"⭐ Marcas"},{key:"tarjetas",label:"🃏 Tarjetas"},{key:"tabla",label:"📋 Tabla"}]} active={tab} onChange={setTab} />
+        <TabBar tabs={[{key:"score",label:"📊 Score"},{key:"marcas",label:"⭐ Marcas"},{key:"tarjetas",label:"🃏 Tarjetas"},{key:"tabla",label:"📋 Tabla"},{key:"jugadores",label:"👥 Jugadores"}]} active={tab} onChange={setTab} />
 
         {tab==="score" && (
           <Card>
@@ -3663,6 +3666,155 @@ function AdminApp({ onExit, torneoConfig = null }) {
           </div>
           );
         })()}
+
+        {/* ── TAB JUGADORES ── */}
+        {tab==="jugadores" && (
+          <div>
+            <Card>
+              <SLabel>👥 Jugadores en la ronda</SLabel>
+              {players.map((p, pi) => (
+                <div key={p.id} style={{ display:"flex", alignItems:"center", gap:8, padding:"10px 0", borderBottom:pi<players.length-1?`1px solid ${D.border}`:"none" }}>
+                  <Avatar name={p.name} id={p.id} size={30} />
+                  <div style={{ flex:1 }}>
+                    <div style={{ fontSize:13, fontWeight:600 }}>{p.name}</div>
+                    <div style={{ fontSize:11, color:D.textSub }}>HC {p.hc} · {scores[pi].filter(s=>s!==null&&s!==undefined).length} hoyos jugados</div>
+                  </div>
+                  <button onClick={() => setAbandonoModal({pi, player:p})}
+                    style={{ padding:"6px 12px", border:`1px solid ${D.danger}44`, borderRadius:8, background:D.redBg, color:D.danger, fontSize:11, fontWeight:700, cursor:"pointer" }}>
+                    Eliminar
+                  </button>
+                </div>
+              ))}
+              {castigos.length > 0 && (
+                <div style={{ marginTop:10, paddingTop:10, borderTop:`1px solid ${D.border}` }}>
+                  <div style={{ fontSize:11, fontWeight:700, color:D.danger, marginBottom:6 }}>🚪 Jugadores que abandonaron</div>
+                  {castigos.map((c, i) => (
+                    <div key={i} style={{ display:"flex", justifyContent:"space-between", fontSize:12, padding:"4px 0" }}>
+                      <span style={{ color:D.textSub }}>{c.name}</span>
+                      <span style={{ color:D.danger, fontWeight:700 }}>
+                        {c.conCastigo ? `-$${c.scorePago + c.tarjetaPago} (castigo)` : "Sin castigo"}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </Card>
+            <button onClick={() => setAgregarModal(true)}
+              style={{ width:"100%", padding:"12px", border:`1px dashed ${D.gold}`, borderRadius:12, background:"transparent", color:D.gold, fontSize:13, fontWeight:700, cursor:"pointer", marginBottom:8 }}>
+              ➕ Agregar jugador
+            </button>
+          </div>
+        )}
+
+        {/* ── MODAL ABANDONO ── */}
+        {abandonoModal && (() => {
+          const {pi, player} = abandonoModal;
+          const restantes = players.length - 1;
+          const castScore = apuesta;
+          const castTarjeta = tarjetaVal * restantes;
+          const castTotal = castScore + castTarjeta;
+          return (
+            <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.7)", zIndex:200, display:"flex", alignItems:"center", justifyContent:"center", padding:20 }}>
+              <div style={{ background:D.card, borderRadius:16, padding:24, width:"100%", maxWidth:360 }}>
+                <div style={{ fontSize:16, fontWeight:700, marginBottom:4 }}>🚪 {player.name} abandona</div>
+                <div style={{ fontSize:12, color:D.textSub, marginBottom:16 }}>Elige si el jugador se va con o sin castigo</div>
+                <div style={{ background:D.redBg, border:`1px solid ${D.danger}44`, borderRadius:10, padding:12, marginBottom:12 }}>
+                  <div style={{ fontSize:13, fontWeight:700, color:D.danger, marginBottom:6 }}>Con castigo</div>
+                  <div style={{ fontSize:12, color:D.textSub }}>Score: <strong style={{color:D.text}}>${castScore}</strong> · Tarjeta abandono: <strong style={{color:D.text}}>${tarjetaVal} × {restantes} = ${castTarjeta}</strong></div>
+                  <div style={{ fontSize:13, fontWeight:900, color:D.danger, marginTop:4 }}>Total que paga: ${castTotal}</div>
+                  <div style={{ fontSize:10, color:D.textDim, marginTop:4 }}>Repartido entre los {restantes} jugadores restantes</div>
+                </div>
+                <div style={{ display:"flex", gap:8, marginBottom:12 }}>
+                  <button onClick={() => {
+                    // Con castigo — registrar y eliminar
+                    const ganancia = (castScore / restantes) + tarjetaVal;
+                    const nuevoCastigos = [...castigos, { name:player.name, conCastigo:true, scorePago:castScore, tarjetaPago:castTarjeta }];
+                    setCastigos(nuevoCastigos);
+                    // Eliminar jugador
+                    const newPlayers = players.filter((_,i)=>i!==pi);
+                    const newScores = scores.filter((_,i)=>i!==pi);
+                    const newMarcas = marcas.map(m => {
+                      if (!m) return m;
+                      const newMulti = (Array.isArray(m.multi)?m.multi:Object.values(m.multi||{})).filter((_,i)=>i!==pi);
+                      const newOyes = m.oyes===pi?null:(m.oyes>pi?m.oyes-1:m.oyes);
+                      const newReg = m.regulation===pi?null:(m.regulation>pi?m.regulation-1:m.regulation);
+                      return {...m, multi:newMulti, oyes:newOyes, regulation:newReg};
+                    });
+                    setPlayers(newPlayers); setScores(newScores); setMarcas(newMarcas);
+                    // Guardar castigo en el estado de la ronda como "abandonos"
+                    const state = { players:newPlayers, pars, scores:newScores, marcas:newMarcas, tarjetas, hole, campo, status:"en_juego", rondaId, grupoNombre, abandonos:nuevoCastigos };
+                    updateGame(state);
+                    setAbandonoModal(null);
+                  }} style={{ flex:1, padding:"10px", border:"none", borderRadius:10, background:D.danger, color:"#fff", fontSize:13, fontWeight:700, cursor:"pointer" }}>
+                    Con castigo
+                  </button>
+                  <button onClick={() => {
+                    // Sin castigo — solo eliminar
+                    const nuevoCastigos = [...castigos, { name:player.name, conCastigo:false, scorePago:0, tarjetaPago:0 }];
+                    setCastigos(nuevoCastigos);
+                    const newPlayers = players.filter((_,i)=>i!==pi);
+                    const newScores = scores.filter((_,i)=>i!==pi);
+                    const newMarcas = marcas.map(m => {
+                      if (!m) return m;
+                      const newMulti = (Array.isArray(m.multi)?m.multi:Object.values(m.multi||{})).filter((_,i)=>i!==pi);
+                      const newOyes = m.oyes===pi?null:(m.oyes>pi?m.oyes-1:m.oyes);
+                      const newReg = m.regulation===pi?null:(m.regulation>pi?m.regulation-1:m.regulation);
+                      return {...m, multi:newMulti, oyes:newOyes, regulation:newReg};
+                    });
+                    setPlayers(newPlayers); setScores(newScores); setMarcas(newMarcas);
+                    const state = { players:newPlayers, pars, scores:newScores, marcas:newMarcas, tarjetas, hole, campo, status:"en_juego", rondaId, grupoNombre, abandonos:nuevoCastigos };
+                    updateGame(state);
+                    setAbandonoModal(null);
+                  }} style={{ flex:1, padding:"10px", border:`1px solid ${D.border}`, borderRadius:10, background:"transparent", color:D.textSub, fontSize:13, fontWeight:600, cursor:"pointer" }}>
+                    Sin castigo
+                  </button>
+                </div>
+                <button onClick={() => setAbandonoModal(null)} style={{ width:"100%", padding:"8px", border:"none", background:"transparent", color:D.textDim, fontSize:12, cursor:"pointer" }}>
+                  Cancelar
+                </button>
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* ── MODAL AGREGAR JUGADOR ── */}
+        {agregarModal && (
+          <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.7)", zIndex:200, display:"flex", alignItems:"center", justifyContent:"center", padding:20 }}>
+            <div style={{ background:D.card, borderRadius:16, padding:24, width:"100%", maxWidth:360, maxHeight:"80vh", overflowY:"auto" }}>
+              <div style={{ fontSize:16, fontWeight:700, marginBottom:12 }}>➕ Agregar jugador</div>
+              <div style={{ fontSize:12, color:D.textSub, marginBottom:12 }}>Selecciona del directorio:</div>
+              {dir.filter(p => !players.find(pl=>pl.id===p.id)).map(p => (
+                <div key={p.id} onClick={() => {
+                  const newPlayer = { ...p, opts:{score:true,marcas:true,tarjetas:true} };
+                  const newPlayers = [...players, newPlayer];
+                  const newScores = [...scores, Array(nHoles).fill(null)];
+                  const newMarcas = marcas.map(m => {
+                    if (!m) return m;
+                    const newMulti = [...(Array.isArray(m.multi)?m.multi:Object.values(m.multi||{})), Object.fromEntries(MARCAS_MULTI.map(mk=>[mk.key,false]))];
+                    return {...m, multi:newMulti};
+                  });
+                  setPlayers(newPlayers); setScores(newScores); setMarcas(newMarcas);
+                  const state = { players:newPlayers, pars, scores:newScores, marcas:newMarcas, tarjetas, hole, campo, status:"en_juego", rondaId, grupoNombre };
+                  updateGame(state);
+                  setAgregarModal(false);
+                }} style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 0", borderBottom:`1px solid ${D.border}`, cursor:"pointer" }}>
+                  <Avatar name={p.name} id={p.id} size={30} />
+                  <div style={{ flex:1 }}>
+                    <div style={{ fontSize:13, fontWeight:600 }}>{p.name}</div>
+                    <div style={{ fontSize:11, color:D.textSub }}>HC {p.hc}</div>
+                  </div>
+                  <div style={{ fontSize:12, color:D.gold, fontWeight:700 }}>+ Agregar</div>
+                </div>
+              ))}
+              {dir.filter(p => !players.find(pl=>pl.id===p.id)).length === 0 && (
+                <div style={{ textAlign:"center", color:D.textSub, padding:20, fontSize:13 }}>Todos los jugadores del directorio ya están en la ronda</div>
+              )}
+              <button onClick={() => setAgregarModal(false)} style={{ width:"100%", marginTop:12, padding:"10px", border:`1px solid ${D.border}`, borderRadius:10, background:"transparent", color:D.textSub, fontSize:13, cursor:"pointer" }}>
+                Cancelar
+              </button>
+            </div>
+          </div>
+        )}
 
         <Card>
           <SLabel>Marcador en vivo</SLabel>
@@ -3960,6 +4112,27 @@ function AdminApp({ onExit, torneoConfig = null }) {
               </div>
             ))}
           </Card>
+
+          {/* Castigos por abandono */}
+          {castigos.filter(c=>c.conCastigo).length > 0 && (
+            <Card>
+              <SLabel>🚪 Castigos por abandono</SLabel>
+              {castigos.map((c, i) => (
+                <div key={i} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"8px 0", borderBottom:i<castigos.length-1?`1px solid ${D.border}`:"none" }}>
+                  <div>
+                    <div style={{ fontSize:13, fontWeight:600 }}>{c.name}</div>
+                    <div style={{ fontSize:11, color:D.textSub }}>
+                      {c.conCastigo ? `Score $${c.scorePago} + Tarjeta $${c.tarjetaPago}` : "Sin castigo"}
+                    </div>
+                  </div>
+                  <div style={{ fontSize:14, fontWeight:900, color:c.conCastigo?D.danger:D.textSub }}>
+                    {c.conCastigo ? `-$${c.scorePago+c.tarjetaPago}` : "—"}
+                  </div>
+                </div>
+              ))}
+              <div style={{ fontSize:11, color:D.textDim, marginTop:8, textAlign:"center" }}>El castigo se reparte entre los jugadores que terminaron la ronda</div>
+            </Card>
+          )}
 
           {/* Comprobación de cuentas */}
           {(() => {
