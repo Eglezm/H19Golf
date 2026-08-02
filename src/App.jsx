@@ -178,7 +178,7 @@ function CampoSelector({ campo, setCampo, nHoles, setNHoles }) {
     return (
       <div>
         <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:12 }}>
-          <button onClick={() => setAddingCampo(false)} style={{ fontSize:12, color:D.textSub, background:"none", border:`1px solid ${D.border}`, borderRadius:8, padding:"5px 10px", cursor:"pointer" }}>< Volver</button>
+          <button onClick={() => setAddingCampo(false)} style={{ fontSize:12, color:D.textSub, background:"none", border:`1px solid ${D.border}`, borderRadius:8, padding:"5px 10px", cursor:"pointer" }}>Volver</button>
           <div style={{ fontSize:14, fontWeight:700, color:D.gold }}>Nuevo campo</div>
         </div>
         <input value={newNombre} onChange={e=>setNewNombre(e.target.value)} placeholder="Nombre del club"
@@ -1105,7 +1105,7 @@ function TorneoCrear({ onExit, onIniciarGrupo, appStyle }) {
               </div>
             ))}
           </Card>
-          <Btn onClick={() => setPaso(2)}>Siguiente -> Definir grupos</Btn>
+          <Btn onClick={() => setPaso(2)}>Siguiente: Definir grupos</Btn>
         </div>
       </div>
     );
@@ -1118,7 +1118,7 @@ function TorneoCrear({ onExit, onIniciarGrupo, appStyle }) {
       <div style={appStyle}>
         <div style={{ background:D.surface, borderBottom:`1px solid ${D.border}`, padding:"14px 16px 12px", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
           <div style={{ fontSize:20, fontWeight:900, color:D.gold }}>Grupos y jugadores</div>
-          <button onClick={() => setPaso(1)} style={{ fontSize:12, color:D.textSub, background:"none", border:`1px solid ${D.border}`, borderRadius:8, padding:"5px 10px", cursor:"pointer" }}>< Atrás</button>
+          <button onClick={() => setPaso(1)} style={{ fontSize:12, color:D.textSub, background:"none", border:`1px solid ${D.border}`, borderRadius:8, padding:"5px 10px", cursor:"pointer" }}>Atrás</button>
         </div>
         <div style={{ padding:"12px" }}>
           {/* Tabs de grupos */}
@@ -1237,7 +1237,7 @@ function TorneoCrear({ onExit, onIniciarGrupo, appStyle }) {
           <Btn onClick={() => onIniciarGrupo({ ...torneoData, grupoId: grupos[0].id, grupoNombre: grupos[0].nombre })}>
             🏌️ Iniciar mi grupo ({grupos[0]?.nombre}) ->
           </Btn>
-          <Btn outline onClick={() => onExit(torneoData)} style={{ marginTop:8 }}>< Volver al inicio</Btn>
+          <Btn outline onClick={() => onExit(torneoData)} style={{ marginTop:8 }}>Volver al inicio</Btn>
         </div>
       </div>
     );
@@ -1316,7 +1316,7 @@ function TorneoUnirse({ onExit, appStyle }) {
         style={{ width:"100%", padding:14, border:`1px solid ${error?D.danger:D.border}`, borderRadius:12, background:D.surface, color:D.text, fontSize:20, textAlign:"center", letterSpacing:4, fontWeight:700 }} />
       {error && <div style={{ color:D.danger, fontSize:13, textAlign:"center" }}>{error}</div>}
       <Btn onClick={buscar} disabled={buscando}>{buscando?"Buscando...":"🔗 Entrar a mi grupo"}</Btn>
-      <button onClick={onExit} style={{ fontSize:13, color:D.textSub, background:"none", border:"none", cursor:"pointer" }}>< Volver</button>
+      <button onClick={onExit} style={{ fontSize:13, color:D.textSub, background:"none", border:"none", cursor:"pointer" }}>Volver</button>
     </div>
   );
 }
@@ -1965,7 +1965,7 @@ function TorneoCodigosView({ torneoAdmin, onExit, appStyle }) {
           <div style={{ fontSize:18, fontWeight:900, color:D.gold }}>Códigos del torneo</div>
           <div style={{ fontSize:12, color:D.textSub }}>{torneoAdmin.nombre}</div>
         </div>
-        <button onClick={onExit} style={{ fontSize:12, color:D.textSub, background:"none", border:`1px solid ${D.border}`, borderRadius:8, padding:"5px 10px", cursor:"pointer" }}>< Volver</button>
+        <button onClick={onExit} style={{ fontSize:12, color:D.textSub, background:"none", border:`1px solid ${D.border}`, borderRadius:8, padding:"5px 10px", cursor:"pointer" }}>Volver</button>
       </div>
       <div style={{ padding:"12px" }}>
         {/* Link del torneo */}
@@ -2354,7 +2354,7 @@ export default function H19() {
           style={{ width:"100%", padding:14, border:`1px solid ${pinError?D.danger:D.border}`, borderRadius:12, background:D.surface, color:D.text, fontSize:22, textAlign:"center", letterSpacing:8, fontWeight:700 }} />
         {pinError && <div style={{ color:D.danger, fontSize:13 }}>PIN incorrecto</div>}
         <Btn onClick={() => { if (pinInput===ADMIN_PIN) { setMode("torneo-menu"); setPinError(false); } else setPinError(true); }}>Entrar</Btn>
-        <button onClick={() => { setMode("home"); setPinInput(""); setPinError(false); }} style={{ fontSize:13, color:D.textSub, background:"none", border:"none", cursor:"pointer" }}>< Volver</button>
+        <button onClick={() => { setMode("home"); setPinInput(""); setPinError(false); }} style={{ fontSize:13, color:D.textSub, background:"none", border:"none", cursor:"pointer" }}>Volver</button>
       </div>
     );
   }
@@ -2369,7 +2369,7 @@ export default function H19() {
           style={{ width:"100%", padding:14, border:`1px solid ${pinError?D.danger:D.border}`, borderRadius:12, background:D.surface, color:D.text, fontSize:22, textAlign:"center", letterSpacing:8, fontWeight:700 }} />
         {pinError && <div style={{ color:D.danger, fontSize:13 }}>PIN incorrecto</div>}
         <Btn onClick={() => { if (pinInput===ADMIN_PIN) { setRondaId(savedTorneoAdmin.torneoId); setTorneoIsAdmin(true); setMode("torneo-spectator"); setPinError(false); setPinInput(""); } else setPinError(true); }}>Ver torneo</Btn>
-        <button onClick={() => { setMode("home"); setPinInput(""); setPinError(false); }} style={{ fontSize:13, color:D.textSub, background:"none", border:"none", cursor:"pointer" }}>< Volver</button>
+        <button onClick={() => { setMode("home"); setPinInput(""); setPinError(false); }} style={{ fontSize:13, color:D.textSub, background:"none", border:"none", cursor:"pointer" }}>Volver</button>
       </div>
     );
   }
@@ -2384,7 +2384,7 @@ export default function H19() {
           style={{ width:"100%", padding:14, border:`1px solid ${pinError?D.danger:D.border}`, borderRadius:12, background:D.surface, color:D.text, fontSize:22, textAlign:"center", letterSpacing:8, fontWeight:700 }} />
         {pinError && <div style={{ color:D.danger, fontSize:13 }}>PIN incorrecto</div>}
         <Btn onClick={() => { if (pinInput===ADMIN_PIN) { setMode("torneo-codigos"); setPinError(false); setPinInput(""); } else setPinError(true); }}>Ver códigos</Btn>
-        <button onClick={() => { setMode("home"); setPinInput(""); setPinError(false); }} style={{ fontSize:13, color:D.textSub, background:"none", border:"none", cursor:"pointer" }}>< Volver</button>
+        <button onClick={() => { setMode("home"); setPinInput(""); setPinError(false); }} style={{ fontSize:13, color:D.textSub, background:"none", border:"none", cursor:"pointer" }}>Volver</button>
       </div>
     );
   }
@@ -2398,7 +2398,7 @@ export default function H19() {
         <div style={{ fontSize:14, color:D.textSub, marginBottom:8, textAlign:"center" }}>Modo Varias Salidas</div>
         <Btn onClick={() => setMode("torneo-crear")} style={{ background:`linear-gradient(135deg,#1A5C24,#2E7D32)` }}>🆕 Crear nuevo torneo</Btn>
         <Btn outline onClick={() => setMode("torneo-unirse")}>🔗 Unirse a torneo existente</Btn>
-        <button onClick={() => setMode("home")} style={{ fontSize:13, color:D.textSub, background:"none", border:"none", cursor:"pointer" }}>< Volver</button>
+        <button onClick={() => setMode("home")} style={{ fontSize:13, color:D.textSub, background:"none", border:"none", cursor:"pointer" }}>Volver</button>
       </div>
     );
   }
@@ -2418,7 +2418,7 @@ export default function H19() {
         <input value={spectatorInput} onChange={e => setSpectatorInput(e.target.value.toUpperCase())} placeholder="Código torneo" maxLength={10}
           style={{ width:"100%", padding:14, border:`1px solid ${D.border}`, borderRadius:12, background:D.surface, color:D.text, fontSize:20, textAlign:"center", letterSpacing:4, fontWeight:700 }} />
         <Btn onClick={() => { if (spectatorInput.trim()) { setRondaId(spectatorInput.trim()); setTorneoIsAdmin(false); setMode("torneo-spectator"); } }}>Ver torneo</Btn>
-        <button onClick={() => setMode("home")} style={{ fontSize:13, color:D.textSub, background:"none", border:"none", cursor:"pointer" }}>< Volver</button>
+        <button onClick={() => setMode("home")} style={{ fontSize:13, color:D.textSub, background:"none", border:"none", cursor:"pointer" }}>Volver</button>
       </div>
     );
   }
@@ -2434,7 +2434,7 @@ export default function H19() {
           style={{ width:"100%", padding:14, border:`1px solid ${pinError?D.danger:D.border}`, borderRadius:12, background:D.surface, color:D.text, fontSize:22, textAlign:"center", letterSpacing:8, fontWeight:700 }} />
         {pinError && <div style={{ color:D.danger, fontSize:13 }}>PIN incorrecto</div>}
         <Btn onClick={() => { if (pinInput===ADMIN_PIN) { setMode("admin"); setPinError(false); } else setPinError(true); }}>Entrar</Btn>
-        <button onClick={() => { setMode("home"); setPinInput(""); setPinError(false); }} style={{ fontSize:13, color:D.textSub, background:"none", border:"none", cursor:"pointer" }}>< Volver</button>
+        <button onClick={() => { setMode("home"); setPinInput(""); setPinError(false); }} style={{ fontSize:13, color:D.textSub, background:"none", border:"none", cursor:"pointer" }}>Volver</button>
       </div>
     );
   }
@@ -2447,7 +2447,7 @@ export default function H19() {
         <input value={spectatorInput} onChange={e => setSpectatorInput(e.target.value.toUpperCase())} placeholder="Código" maxLength={8}
           style={{ width:"100%", padding:14, border:`1px solid ${D.border}`, borderRadius:12, background:D.surface, color:D.text, fontSize:20, textAlign:"center", letterSpacing:4, fontWeight:700 }} />
         <Btn onClick={() => { if (spectatorInput.trim()) { setRondaId(spectatorInput.trim()); setMode("spectator"); } }}>Ver ronda</Btn>
-        <button onClick={() => setMode("home")} style={{ fontSize:13, color:D.textSub, background:"none", border:"none", cursor:"pointer" }}>< Volver</button>
+        <button onClick={() => setMode("home")} style={{ fontSize:13, color:D.textSub, background:"none", border:"none", cursor:"pointer" }}>Volver</button>
       </div>
     );
   }
@@ -3051,7 +3051,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
               </div>
             ))}
           </div>
-          <Btn onClick={() => setScreen("score")}>🏌️ Iniciar ronda del grupo -></Btn>
+          <Btn onClick={() => setScreen("score")}>🏌️ Iniciar ronda del grupo</Btn>
         </div>
       </div>
     );
@@ -3080,7 +3080,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
         <Btn onClick={() => { if (grupoNombre.trim()) setScreen("dir"); }} disabled={!grupoNombre.trim()}>
           Continuar ->
         </Btn>
-        <button onClick={onExit} style={{ fontSize:13, color:D.textSub, background:"none", border:"none", cursor:"pointer" }}>< Volver</button>
+        <button onClick={onExit} style={{ fontSize:13, color:D.textSub, background:"none", border:"none", cursor:"pointer" }}>Volver</button>
       </div>
     </div>
   );
@@ -3597,7 +3597,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
         </Card>
 
         <Btn onClick={startGame} disabled={n<2}>Comenzar ronda</Btn>
-        <Btn outline onClick={() => setScreen("dir")} style={{ marginTop:8 }}>< Volver</Btn>
+        <Btn outline onClick={() => setScreen("dir")} style={{ marginTop:8 }}>Volver</Btn>
       </div>
     </div>
   );
@@ -3617,7 +3617,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
         </div>
         <div style={{ display:"flex", flexDirection:"column", alignItems:"flex-end", gap:4 }}>
           {hole < nHoles-1
-            ? <button onClick={nextHole} style={{ padding:"7px 14px", border:`1px solid ${D.gold}`, borderRadius:20, background:D.goldDim, color:D.gold, fontSize:12, fontWeight:700, cursor:"pointer" }}>Siguiente ></button>
+            ? <button onClick={nextHole} style={{ padding:"7px 14px", border:`1px solid ${D.gold}`, borderRadius:20, background:D.goldDim, color:D.gold, fontSize:12, fontWeight:700, cursor:"pointer" }}>Siguiente</button>
             : <div style={{ width:80 }} />
           }
           {torneoConfig
@@ -4373,7 +4373,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
               </button>
               <button onClick={() => onExit()}
                 style={{ width:"100%", padding:"10px", border:`1px solid ${D.border}`, borderRadius:12, background:"transparent", color:D.textSub, fontSize:13, cursor:"pointer" }}>
-                < Salir al inicio
+                Salir al inicio
               </button>
             </div>
           ) : (
