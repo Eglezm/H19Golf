@@ -2120,7 +2120,7 @@ function GestionJugadores({ players, scores, marcas, tarjetas, pars, hole, campo
         )}
         <div style={{ background:D.redBg, border:`1px solid ${D.danger}44`, borderRadius:10, padding:12, marginBottom:12 }}>
           <div style={{ fontSize:13, fontWeight:700, color:D.danger, marginBottom:4 }}>Con castigo</div>
-          <div style={{ fontSize:12, color:D.textSub }}>Score: ${cs}</div>
+          <div style={{ fontSize:12, color:D.textSub }}>{"Score: $"+cs}</div>
           <div style={{ fontSize:12, color:D.textSub }}>
             Tarjeta: ${tarjetaVal} x {restantesPago} jugadores{torneoConfig ? " (total torneo)" : ""} = ${ct}
           </div>
@@ -2247,9 +2247,9 @@ function JugadoresPanel({ players, castigos, dir, torneoConfig, jugadoresPinOk, 
         )}
         <div style={{ background:D.redBg, border:`1px solid ${D.danger}44`, borderRadius:10, padding:12, marginBottom:12 }}>
           <div style={{ fontSize:13, fontWeight:700, color:D.danger, marginBottom:4 }}>Con castigo</div>
-          <div style={{ fontSize:12, color:D.textSub }}>Score: ${cs}</div>
-          <div style={{ fontSize:12, color:D.textSub }}>Tarjeta: ${tarjetaVal} x {totalJ-1} = ${ct}</div>
-          <div style={{ fontSize:14, fontWeight:900, color:D.danger, marginTop:6 }}>Total: ${cs+ct}</div>
+          <div style={{ fontSize:12, color:D.textSub }}>{"Score: $"+cs}</div>
+          <div style={{ fontSize:12, color:D.textSub }}>{"Tarjeta: $"+tarjetaVal+" x "+(totalJ-1)+" = $"+ct}</div>
+          <div style={{ fontSize:14, fontWeight:900, color:D.danger, marginTop:6 }}>{"Total: $"+(cs+ct)}</div>
         </div>
         <div style={{ display:"flex", gap:8, marginBottom:8 }}>
           <button onClick={() => { onEliminar(idx, true); }}
@@ -2372,9 +2372,9 @@ function JugadoresPanel({ players, castigos, dir, torneoConfig, jugadoresPinOk, 
         )}
         <div style={{ background:D.redBg, border:`1px solid ${D.danger}44`, borderRadius:10, padding:12, marginBottom:12 }}>
           <div style={{ fontSize:13, fontWeight:700, color:D.danger, marginBottom:4 }}>Con castigo</div>
-          <div style={{ fontSize:12, color:D.textSub }}>Score: ${cs}</div>
+          <div style={{ fontSize:12, color:D.textSub }}>{"Score: $"+cs}</div>
           <div style={{ fontSize:12, color:D.textSub }}>Tarjeta: ${tarjetaVal} x {totalJ-1} jugadores = ${ct}</div>
-          <div style={{ fontSize:14, fontWeight:900, color:D.danger, marginTop:6 }}>Total: ${cs+ct}</div>
+          <div style={{ fontSize:14, fontWeight:900, color:D.danger, marginTop:6 }}>{"Total: $"+(cs+ct)}</div>
         </div>
         <div style={{ display:"flex", gap:8, marginBottom:8 }}>
           <button onClick={() => onEliminar(abandonandoIdx, true)}
