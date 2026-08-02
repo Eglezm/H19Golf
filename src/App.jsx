@@ -2610,7 +2610,9 @@ function AdminApp({ onExit, torneoConfig = null }) {
   const [shareMsg, setShareMsg] = useState("");
   const [abandonoModal, setAbandonoModal] = useState(null);
   const [agregarModal, setAgregarModal] = useState(false);
-  const [castigos, setCastigos] = useState([]);
+  const [castigos, setCastigos] = useState(() => {
+    try { const s = localStorage.getItem("h19-castigos"); return s ? JSON.parse(s) : []; } catch(e) { return []; }
+  });
   const [jugadoresPinOk, setJugadoresPinOk] = useState(!torneoConfig);
   const [jugadoresPinInput, setJugadoresPinInput] = useState("");
   const [jugadoresPinError, setJugadoresPinError] = useState(false);
@@ -2629,6 +2631,8 @@ function AdminApp({ onExit, torneoConfig = null }) {
       totalJugadores: totalJ,
     }];
     setCastigos(nuevoCastigos);
+    // Guardar en localStorage como respaldo
+    try { localStorage.setItem("h19-castigos", JSON.stringify(nuevoCastigos)); } catch(e) {}
     const newPlayers = players.filter((_,i) => i !== pi);
     const newScores = scores.filter((_,i) => i !== pi);
     const newMarcas = marcas.map(m => {
@@ -2797,7 +2801,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
     const gid = torneoConfig?.grupoId || rid; // usar grupoId del torneo si existe
     setRondaId(rid); setPlayers(ps); setPars(p);
     setScores(initScores); setMarcas(initMarcas); setTarjetas(initTarjetas);
-    setHole(0); setTab("score"); setResults(null);
+    setCastigos([]); try{localStorage.removeItem("h19-castigos");}catch(e){} setHole(0); setTab("score"); setResults(null);
     const state = { players:ps, pars:p, scores:initScores, marcas:initMarcas, tarjetas:initTarjetas, hole:0, campo, status:"en_juego", rondaId:rid, grupoNombre };
     saveToLocal(state);
     try { set(ref(db, `rondas/${rid}`), { ...state, createdAt:Date.now(), updatedAt:Date.now() }); } catch(e) {}
@@ -3184,7 +3188,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
       const rid = Math.random().toString(36).substring(2,8).toUpperCase();
       setRondaId(rid); setPlayers(ps); setPars(p);
       setScores(initScores); setMarcas(initMarcas); setTarjetas(initTarjetas);
-      setHole(0); setTab("score"); setResults(null);
+      setCastigos([]); try{localStorage.removeItem("h19-castigos");}catch(e){} setHole(0); setTab("score"); setResults(null);
       setGrupoNombre(torneoConfig.grupoNombre || "Mi Grupo");
       const state = { players:ps, pars:p, scores:initScores, marcas:initMarcas, tarjetas:initTarjetas, hole:0, campo, status:"en_juego", rondaId:rid, grupoNombre:torneoConfig.grupoNombre };
       saveToLocal(state);
@@ -4126,8 +4130,9 @@ function AdminApp({ onExit, torneoConfig = null }) {
   // ── RESULTADOS ──
   if (screen==="res" && results) {
     const { nets, fi, si, pot, money, hcUpdates, marcasMoney, marcasPts, tarjetasMoney, tarjetasCount, fullScores, rawScores } = results;
-    // Leer castigosRes de results (persisten aunque se salga y vuelva)
-    const castigosRes = results.castigos || castigos || [];
+    // Leer castigos: del results > del state > del localStorage
+    const castigosLS = (() => { try { const s = localStorage.getItem("h19-castigos"); return s ? JSON.parse(s) : []; } catch(e) { return []; } })();
+    const castigosRes = (results.castigos && results.castigos.length > 0) ? results.castigos : (castigos.length > 0 ? castigos : castigosLS);
     const totalTarjetaAbandonoPool = castigosRes.filter(c=>c.conCastigo).reduce((a,c)=>a+c.tarjetaPago,0);
     const gananciaXCastigo = players.length > 0 ? Math.round(totalTarjetaAbandonoPool / players.length) : 0;
     const totalCastigoPool = castigosRes.filter(c=>c.conCastigo).reduce((a,c)=>a+(c.scorePago+c.tarjetaPago),0);
