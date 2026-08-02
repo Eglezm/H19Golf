@@ -2592,7 +2592,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
     setMarcas(savedRonda.marcas||[]); setTarjetas(normalizeTarjetas(savedRonda.tarjetas));
     setHole(savedRonda.hole||0); setPars(savedRonda.pars||[]);
     setCampo(savedRonda.campo||"huerta"); setRondaId(savedRonda.rondaId||null);
-    setScreen("score"); setSavedRonda(null);
+    setTab("score"); setScreen("score"); setSavedRonda(null);
   };
 
   const toggleSel = (id) => { const s = new Set(sel); s.has(id) ? s.delete(id) : s.add(id); setSel(s); };
@@ -4310,4 +4310,3 @@ function AdminApp({ onExit, torneoConfig = null }) {
   }
 
   return null;
-}
