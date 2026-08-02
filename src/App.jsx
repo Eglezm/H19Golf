@@ -3938,6 +3938,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
               tarjetaPago: conCastigo ? tarjetaVal * restantesPago : 0,
               totalJugadores: totalJ,
             }];
+            alert("DEBUG: Registrando abandono de " + players[pi].name + " conCastigo=" + conCastigo + " castigos ahora=" + nuevoCastigos.length);
             setCastigos(nuevoCastigos);
             const newPlayers = players.filter((_,i) => i !== pi);
             const newScores = scores.filter((_,i) => i !== pi);
