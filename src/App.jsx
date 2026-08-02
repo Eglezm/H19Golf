@@ -3508,7 +3508,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
             </div>
           </div>
         )}
-        <TabBar tabs={[{key:"score",label:"📊 Score"},{key:"marcas",label:"⭐ Marcas"},{key:"tarjetas",label:"🃏 Tarjetas"},{key:"tabla",label:"📋 Tabla"},{key:"jugadores",label:"👥 Jugadores"}]} active={tab} onChange={setTab} />
+        <TabBar tabs={[{key:"score",label:"📊 Score"},{key:"marcas",label:"⭐ Marcas"},{key:"tarjetas",label:"🃏 Tarjetas"},{key:"tabla",label:"📋 Tabla"}]} active={tab} onChange={setTab} />
 
         {tab==="score" && (
           <Card>
@@ -3530,7 +3530,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
                   <div style={{ display:"flex", alignItems:"center", gap:10 }}>
                     <button onClick={() => changeScore(i,-1)} style={{ width:36,height:36,borderRadius:"50%",border:`1px solid ${D.border}`,background:D.surface,color:D.text,cursor:"pointer",fontSize:22,display:"flex",alignItems:"center",justifyContent:"center" }}>-</button>
                     <div style={{ width:34, textAlign:"center", fontSize:20, fontWeight:900, color:hasScore?D.text:D.textDim }}>
-                      {hasScore ? disp : "—"}
+                      {hasScore ? disp : "--"}
                     </div>
                     <button onClick={() => changeScore(i,1)} style={{ width:36,height:36,borderRadius:"50%",border:`1px solid ${D.gold}`,background:D.goldDim,color:D.gold,cursor:"pointer",fontSize:22,display:"flex",alignItems:"center",justifyContent:"center" }}>+</button>
                   </div>
@@ -3584,7 +3584,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
               <SLabel>Marcas exclusivas</SLabel>
               {pars[hole]===3 && (
                 <div style={{ marginBottom:16 }}>
-                  <div style={{ fontSize:13, fontWeight:700, marginBottom:8 }}>📍 O'Yes <span style={{ fontSize:11, color:D.textSub, fontWeight:400 }}>— más cerca 1er tiro · 1pt</span></div>
+                  <div style={{ fontSize:13, fontWeight:700, marginBottom:8 }}>📍 O'Yes <span style={{ fontSize:11, color:D.textSub, fontWeight:400 }}>-- más cerca 1er tiro · 1pt</span></div>
                   <div style={{ display:"flex", flexWrap:"wrap", gap:8 }}>
                     {players.filter(pl=>pl.opts?.marcas!==false).map((pl) => { const pi=players.indexOf(pl); return <Pill key={pl.id} active={marcas[hole].oyes===pi} onClick={() => setExclusive("oyes",pi)}>{pl.name}</Pill>; })}
                     <Pill active={marcas[hole].oyes===null} onClick={() => setExclusive("oyes",null)}>Ninguno</Pill>
@@ -3593,7 +3593,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
               )}
               {pars[hole]>=4 && (
                 <div>
-                  <div style={{ fontSize:13, fontWeight:700, marginBottom:8 }}>🎯 Regulation <span style={{ fontSize:11, color:D.textSub, fontWeight:400 }}>— más cerca {pars[hole]===4?"2do":"3er"} tiro · 1pt</span></div>
+                  <div style={{ fontSize:13, fontWeight:700, marginBottom:8 }}>🎯 Regulation <span style={{ fontSize:11, color:D.textSub, fontWeight:400 }}>-- más cerca {pars[hole]===4?"2do":"3er"} tiro · 1pt</span></div>
                   <div style={{ display:"flex", flexWrap:"wrap", gap:8 }}>
                     {players.filter(pl=>pl.opts?.marcas!==false).map((pl) => { const pi=players.indexOf(pl); return <Pill key={pl.id} active={marcas[hole].regulation===pi} onClick={() => setExclusive("regulation",pi)}>{pl.name}</Pill>; })}
                     <Pill active={marcas[hole].regulation===null} onClick={() => setExclusive("regulation",null)}>Ninguno</Pill>
@@ -3606,7 +3606,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
 
         {tab==="tarjetas" && (
           <Card>
-            <SLabel>Tarjetas — papa caliente 🃏</SLabel>
+            <SLabel>Tarjetas -- papa caliente 🃏</SLabel>
             <div style={{ fontSize:12, color:D.textSub, marginBottom:14 }}>Toca el nombre del jugador que cometió la falla.</div>
             {TARJETAS.map((tj, idx) => {
               const owner = tarjetas[tj.key];
@@ -3649,7 +3649,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
                   <div key={pl.id} style={{ display:"flex", alignItems:"center", gap:8, padding:"5px 0", borderBottom:`1px solid ${D.border}` }}>
                     <Avatar name={pl.name} id={pl.id} size={22} />
                     <div style={{ flex:1, fontSize:13, fontWeight:600 }}>{pl.name}</div>
-                    {mc.length>0 ? <div style={{ fontSize:12, color:D.danger, fontWeight:700 }}>{mc.length} tarjeta{mc.length>1?"s":""}</div> : <div style={{ fontSize:12, color:D.textDim }}>—</div>}
+                    {mc.length>0 ? <div style={{ fontSize:12, color:D.danger, fontWeight:700 }}>{mc.length} tarjeta{mc.length>1?"s":""}</div> : <div style={{ fontSize:12, color:D.textDim }}>--</div>}
                   </div>
                 );
               })}
@@ -3709,7 +3709,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
                       const s = rowScores[hi];
                       return <td key={hi} style={{ textAlign:"center", padding:"3px 2px" }}><ScoreCell s={s??null} par={par} size={22} /></td>;
                     })}
-                    <td style={{ textAlign:"center", padding:"5px 5px", fontWeight:700, fontSize:12, borderLeft:`1px solid ${D.border}` }}>{total??'—'}</td>
+                    <td style={{ textAlign:"center", padding:"5px 5px", fontWeight:700, fontSize:12, borderLeft:`1px solid ${D.border}` }}>{total??'--'}</td>
                     <td style={{ textAlign:"center", padding:"5px 4px", fontSize:11, color:D.textSub }}>{pl.hc}</td>
                     <td style={{ textAlign:"center", padding:"5px 5px", fontWeight:700, fontSize:12, color:vsColor(vsPar), borderLeft:`1px solid ${D.border}` }}>{fmtVs(vsPar)}</td>
                     <td style={{ textAlign:"center", padding:"5px 5px", fontWeight:900, fontSize:12, color:vsColor(vsParHC), borderLeft:`1px solid ${D.border}` }}>{fmtVs(vsParHC)}</td>
@@ -3721,131 +3721,6 @@ function AdminApp({ onExit, torneoConfig = null }) {
           </div>
           );
         })()}
-
-        {/* ── TAB JUGADORES ── */}
-        {tab==="jugadores" && (
-          <div>
-            {!jugadoresPinOk ? (
-              <Card>
-                <SLabel>🔒 Acceso restringido</SLabel>
-                <div style={{ fontSize:12, color:D.textSub, marginBottom:12, textAlign:"center" }}>
-                  Solo el administrador general puede modificar jugadores en un torneo
-                </div>
-                <input type="password" value={jugadoresPinInput} onChange={e=>setJugadoresPinInput(e.target.value)}
-                  placeholder="PIN admin general" maxLength={6}
-                  style={{ width:"100%", padding:"12px", border:`1px solid ${jugadoresPinError?D.danger:D.border}`, borderRadius:10, background:D.surface, color:D.text, fontSize:20, textAlign:"center", letterSpacing:6, fontWeight:700, boxSizing:"border-box", marginBottom:8 }} />
-                {jugadoresPinError && <div style={{ color:D.danger, fontSize:12, textAlign:"center", marginBottom:8 }}>PIN incorrecto</div>}
-                <Btn onClick={() => {
-                  if (jugadoresPinInput === ADMIN_PIN) { setJugadoresPinOk(true); setJugadoresPinError(false); setJugadoresPinInput(""); }
-                  else setJugadoresPinError(true);
-                }}>Entrar</Btn>
-              </Card>
-            ) : (
-              <>
-                <Card>
-                  <SLabel>👥 Jugadores en la ronda</SLabel>
-                  {players.map((p, pi) => (
-                    <div key={p.id} style={{ display:"flex", alignItems:"center", gap:8, padding:"10px 0", borderBottom:pi<players.length-1?`1px solid ${D.border}`:"none" }}>
-                      <Avatar name={p.name} id={p.id} size={30} />
-                      <div style={{ flex:1 }}>
-                        <div style={{ fontSize:13, fontWeight:600 }}>{p.name}</div>
-                        <div style={{ fontSize:11, color:D.textSub }}>HC {p.hc} · {scores[pi].filter(s=>s!==null&&s!==undefined).length} hoyos jugados</div>
-                      </div>
-                      <button onClick={() => setAbandonoModal({pi, player:p})}
-                        style={{ padding:"6px 12px", border:`1px solid ${D.danger}44`, borderRadius:8, background:D.redBg, color:D.danger, fontSize:11, fontWeight:700, cursor:"pointer" }}>
-                        Eliminar
-                      </button>
-                    </div>
-                  ))}
-                  {castigos.length > 0 && (
-                    <div style={{ marginTop:10, paddingTop:10, borderTop:`1px solid ${D.border}` }}>
-                      <div style={{ fontSize:11, fontWeight:700, color:D.danger, marginBottom:6 }}>🚪 Jugadores que abandonaron</div>
-                      {castigos.map((c, i) => (
-                        <div key={i} style={{ display:"flex", justifyContent:"space-between", fontSize:12, padding:"4px 0" }}>
-                          <span style={{ color:D.textSub }}>{c.name}</span>
-                          <span style={{ color:D.danger, fontWeight:700 }}>
-                            {c.conCastigo ? `-$${String(c.scorePago + c.tarjetaPago)} (castigo)` : "Sin castigo"}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </Card>
-                <button onClick={() => setAgregarModal(true)}
-                  style={{ width:"100%", padding:"12px", border:`1px dashed ${D.gold}`, borderRadius:12, background:"transparent", color:D.gold, fontSize:13, fontWeight:700, cursor:"pointer", marginBottom:8 }}>
-                  ➕ Agregar jugador
-                </button>
-              </>
-            )}
-          </div>
-        )}
-
-        {/* ── MODAL ABANDONO ── */}
-        {abandonoModal && (
-          <AbandonoModal
-            player={abandonoModal.player}
-            pi={abandonoModal.pi}
-            players={players}
-            apuesta={apuesta}
-            tarjetaVal={tarjetaVal}
-            castigos={castigos}
-            setCastigos={setCastigos}
-            scores={scores}
-            setScores={setScores}
-            marcas={marcas}
-            setMarcas={setMarcas}
-            setPlayers={setPlayers}
-            pars={pars}
-            hole={hole}
-            campo={campo}
-            rondaId={rondaId}
-            grupoNombre={grupoNombre}
-            tarjetas={tarjetas}
-            updateGame={updateGame}
-            onClose={() => setAbandonoModal(null)}
-          />
-        )}
-
-        {/* ── MODAL AGREGAR JUGADOR ── */}
-        {agregarModal && (
-          <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.7)", zIndex:200, display:"flex", alignItems:"center", justifyContent:"center", padding:20 }}>
-            <div style={{ background:D.card, borderRadius:16, padding:24, width:"100%", maxWidth:360, maxHeight:"80vh", overflowY:"auto" }}>
-              <div style={{ fontSize:16, fontWeight:700, marginBottom:12 }}>➕ Agregar jugador</div>
-              <div style={{ fontSize:12, color:D.textSub, marginBottom:12 }}>Selecciona del directorio:</div>
-              {dir.filter(p => !players.find(pl=>pl.id===p.id)).map(p => (
-                <div key={p.id} onClick={() => {
-                  const newPlayer = { ...p, opts:{score:true,marcas:true,tarjetas:true} };
-                  const newPlayers = [...players, newPlayer];
-                  const newScores = [...scores, Array(nHoles).fill(null)];
-                  const newMarcas = marcas.map(m => {
-                    if (!m) return m;
-                    const newMulti = [...(Array.isArray(m.multi)?m.multi:Object.values(m.multi||{})), Object.fromEntries(MARCAS_MULTI.map(mk=>[mk.key,false]))];
-                    return {...m, multi:newMulti};
-                  });
-                  setPlayers(newPlayers); setScores(newScores); setMarcas(newMarcas);
-                  const state = { players:newPlayers, pars, scores:newScores, marcas:newMarcas, tarjetas, hole, campo, status:"en_juego", rondaId, grupoNombre };
-                  updateGame(state);
-                  setAgregarModal(false);
-                }} style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 0", borderBottom:`1px solid ${D.border}`, cursor:"pointer" }}>
-                  <Avatar name={p.name} id={p.id} size={30} />
-                  <div style={{ flex:1 }}>
-                    <div style={{ fontSize:13, fontWeight:600 }}>{p.name}</div>
-                    <div style={{ fontSize:11, color:D.textSub }}>HC {p.hc}</div>
-                  </div>
-                  <div style={{ fontSize:12, color:D.gold, fontWeight:700 }}>+ Agregar</div>
-                </div>
-              ))}
-              {dir.filter(p => !players.find(pl=>pl.id===p.id)).length === 0 && (
-                <div style={{ textAlign:"center", color:D.textSub, padding:20, fontSize:13 }}>Todos los jugadores del directorio ya están en la ronda</div>
-              )}
-              <button onClick={() => setAgregarModal(false)} style={{ width:"100%", marginTop:12, padding:"10px", border:`1px solid ${D.border}`, borderRadius:10, background:"transparent", color:D.textSub, fontSize:13, cursor:"pointer" }}>
-                Cancelar
-              </button>
-            </div>
-          </div>
-            )} {/* end jugadoresPinOk */}
-          </div>
-        )}
 
         <Card>
           <SLabel>Marcador en vivo</SLabel>
@@ -3872,9 +3747,9 @@ function AdminApp({ onExit, torneoConfig = null }) {
               <div style={{ width:20, fontSize:12, color:pos===0&&p.neto!==null?D.gold:D.textSub, fontWeight:700 }}>{pos+1}</div>
               <Avatar name={p.id} id={p.id} size={26} />
               <div style={{ flex:1, fontSize:13, fontWeight:600 }}>{p.name}</div>
-              <div style={{ width:36, textAlign:"center", fontSize:13, fontWeight:700, color:D.text }}>{p.bruto??'—'}</div>
+              <div style={{ width:36, textAlign:"center", fontSize:13, fontWeight:700, color:D.text }}>{p.bruto??'--'}</div>
               <div style={{ width:28, textAlign:"center", fontSize:12, color:D.textSub }}>{p.hc}</div>
-              <div style={{ width:40, textAlign:"center", fontSize:14, fontWeight:900, color:pos===0&&p.neto!==null?D.gold:D.text }}>{p.neto??'—'}</div>
+              <div style={{ width:40, textAlign:"center", fontSize:14, fontWeight:900, color:pos===0&&p.neto!==null?D.gold:D.text }}>{p.neto??'--'}</div>
             </div>
           ))}
         </Card>
