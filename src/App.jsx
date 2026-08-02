@@ -3712,7 +3712,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
                         <div key={i} style={{ display:"flex", justifyContent:"space-between", fontSize:12, padding:"4px 0" }}>
                           <span style={{ color:D.textSub }}>{c.name}</span>
                           <span style={{ color:D.danger, fontWeight:700 }}>
-                            {c.conCastigo ? `-$${c.scorePago + c.tarjetaPago} (castigo)` : "Sin castigo"}
+                            {c.conCastigo ? `-$${String(c.scorePago + c.tarjetaPago)} (castigo)` : "Sin castigo"}
                           </span>
                         </div>
                       ))}
@@ -3742,14 +3742,13 @@ function AdminApp({ onExit, torneoConfig = null }) {
                 <div style={{ fontSize:12, color:D.textSub, marginBottom:16 }}>Elige si el jugador se va con o sin castigo</div>
                 <div style={{ background:D.redBg, border:`1px solid ${D.danger}44`, borderRadius:10, padding:12, marginBottom:12 }}>
                   <div style={{ fontSize:13, fontWeight:700, color:D.danger, marginBottom:6 }}>Con castigo</div>
-                  <div style={{ fontSize:12, color:D.textSub }}>Score: <strong style={{color:D.text}}>${castScore}</strong> · Tarjeta abandono: <strong style={{color:D.text}}>${tarjetaVal} × {restantes} = ${castTarjeta}</strong></div>
+                  <div style={{ fontSize:12, color:D.textSub }}>Score: <strong style={{color:D.text}}>${castScore}</strong> · Tarjeta abandono: <strong style={{color:D.text}}>${tarjetaVal} x {restantes} = ${castTarjeta}</strong></div>
                   <div style={{ fontSize:13, fontWeight:900, color:D.danger, marginTop:4 }}>Total que paga: ${castTotal}</div>
                   <div style={{ fontSize:10, color:D.textDim, marginTop:4 }}>Repartido entre los {restantes} jugadores restantes</div>
                 </div>
                 <div style={{ display:"flex", gap:8, marginBottom:12 }}>
                   <button onClick={() => {
                     // Con castigo — registrar y eliminar
-                    const ganancia = (castScore / restantes) + tarjetaVal;
                     const nuevoCastigos = [...castigos, { name:player.name, conCastigo:true, scorePago:castScore, tarjetaPago:castTarjeta }];
                     setCastigos(nuevoCastigos);
                     // Eliminar jugador
