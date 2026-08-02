@@ -4012,9 +4012,9 @@ function AdminApp({ onExit, torneoConfig = null }) {
   // ── RESULTADOS ──
   if (screen==="res" && results) {
     const { nets, fi, si, pot, money, hcUpdates, marcasMoney, marcasPts, tarjetasMoney, tarjetasCount, fullScores, rawScores } = results;
-    // Leer castigos: del results > del state > del localStorage
+    // Leer castigos de todas las fuentes posibles
     const castigosLS = (() => { try { const s = localStorage.getItem("h19-castigos"); return s ? JSON.parse(s) : []; } catch(e) { return []; } })();
-    const castigosRes = (results.castigos && results.castigos.length > 0) ? results.castigos : (castigos.length > 0 ? castigos : castigosLS);
+    const castigosRes = castigosLS.length > 0 ? castigosLS : ((results.castigos||[]).length > 0 ? results.castigos : castigos);
     const totalTarjetaAbandonoPool = castigosRes.filter(c=>c.conCastigo).reduce((a,c)=>a+c.tarjetaPago,0);
     const gananciaXCastigo = players.length > 0 ? Math.round(totalTarjetaAbandonoPool / players.length) : 0;
     const totalCastigoPool = castigosRes.filter(c=>c.conCastigo).reduce((a,c)=>a+(c.scorePago+c.tarjetaPago),0);
@@ -4034,8 +4034,8 @@ function AdminApp({ onExit, torneoConfig = null }) {
       <div style={appSt}>
         {/* DEBUG TEMPORAL */}
         <div style={{ background:"#111", color:"#0f0", padding:8, fontSize:10, wordBreak:"break-all", zIndex:999 }}>
-          castigos state len: {castigos.length} | castigosRes len: {castigosRes.length} | results.castigos len: {(results.castigos||[]).length}
-          {castigosRes.map((c,i) => <div key={i}>{c.name} - conCastigo:{String(c.conCastigo)} - score:${c.scorePago} - tarjeta:${c.tarjetaPago}</div>)}
+          state:{castigos.length} | results:{(results.castigos||[]).length} | LS:{castigosLS.length} | usando:{castigosRes.length}
+          {castigosRes.map((c,i) => <div key={i} style={{color:"#ff0"}}>{c.name}|castigo:{String(c.conCastigo)}|score:{c.scorePago}|tarjeta:{c.tarjetaPago}</div>)}
         </div>
         {torneoConfig && (
           <div style={{ background:`linear-gradient(135deg,#1A5C24,#2E7D32)`, padding:"12px 16px", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
