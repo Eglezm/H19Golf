@@ -2027,6 +2027,164 @@ function TorneoCodigosView({ torneoAdmin, onExit, appStyle }) {
   );
 }
 
+// ─── GESTION DE JUGADORES ────────────────────────────────
+function GestionJugadores({ players, scores, marcas, tarjetas, pars, hole, campo, rondaId, grupoNombre, apuesta, tarjetaVal, nHoles, dir, torneoConfig, castigos, setCastigos, setPlayers, setScores, setMarcas, updateGame }) {
+  const [pinOk, setPinOk] = useState(!torneoConfig);
+  const [pinInput, setPinInput] = useState("");
+  const [pinError, setPinError] = useState(false);
+  const [abandonando, setAbandonando] = useState(null);
+  const [agregando, setAgregando] = useState(false);
+
+  if (!pinOk) return (
+    <Card>
+      <SLabel>Acceso restringido</SLabel>
+      <div style={{ fontSize:12, color:D.textSub, marginBottom:12, textAlign:"center" }}>
+        Solo el administrador general puede modificar jugadores en un torneo
+      </div>
+      <input type="password" value={pinInput} onChange={e => setPinInput(e.target.value)}
+        placeholder="PIN admin general" maxLength={6}
+        style={{ width:"100%", padding:"12px", border:`1px solid ${pinError?D.danger:D.border}`, borderRadius:10, background:D.surface, color:D.text, fontSize:20, textAlign:"center", letterSpacing:6, fontWeight:700, boxSizing:"border-box", marginBottom:8 }} />
+      {pinError && <div style={{ color:D.danger, fontSize:12, textAlign:"center", marginBottom:8 }}>PIN incorrecto</div>}
+      <Btn onClick={() => {
+        if (pinInput === ADMIN_PIN) { setPinOk(true); setPinError(false); setPinInput(""); }
+        else setPinError(true);
+      }}>Entrar</Btn>
+    </Card>
+  );
+
+  const eliminarJugador = (pi, conCastigo) => {
+    const restantes = players.length - 1;
+    const nuevoCastigos = [...castigos, {
+      name: players[pi].name,
+      conCastigo,
+      scorePago: conCastigo ? apuesta : 0,
+      tarjetaPago: conCastigo ? tarjetaVal * restantes : 0,
+    }];
+    setCastigos(nuevoCastigos);
+    const newPlayers = players.filter((_,i) => i !== pi);
+    const newScores = scores.filter((_,i) => i !== pi);
+    const newMarcas = marcas.map(m => {
+      if (!m) return m;
+      const multi = Array.isArray(m.multi) ? m.multi : Object.values(m.multi||{});
+      return {
+        ...m,
+        multi: multi.filter((_,i) => i !== pi),
+        oyes: m.oyes === pi ? null : (m.oyes > pi ? m.oyes - 1 : m.oyes),
+        regulation: m.regulation === pi ? null : (m.regulation > pi ? m.regulation - 1 : m.regulation),
+      };
+    });
+    setPlayers(newPlayers); setScores(newScores); setMarcas(newMarcas);
+    updateGame({ players:newPlayers, pars, scores:newScores, marcas:newMarcas, tarjetas, hole, campo, status:"en_juego", rondaId, grupoNombre, abandonos:nuevoCastigos });
+    setAbandonando(null);
+  };
+
+  const agregarJugador = (p) => {
+    const newPlayer = { ...p, opts:{score:true,marcas:true,tarjetas:true} };
+    const newPlayers = [...players, newPlayer];
+    const newScores = [...scores, Array(nHoles).fill(null)];
+    const newMarcas = marcas.map(m => {
+      if (!m) return m;
+      const multi = Array.isArray(m.multi) ? m.multi : Object.values(m.multi||{});
+      const emptyRow = Object.fromEntries(MARCAS_MULTI.map(mk => [mk.key, false]));
+      return { ...m, multi: [...multi, emptyRow] };
+    });
+    setPlayers(newPlayers); setScores(newScores); setMarcas(newMarcas);
+    updateGame({ players:newPlayers, pars, scores:newScores, marcas:newMarcas, tarjetas, hole, campo, status:"en_juego", rondaId, grupoNombre });
+    setAgregando(false);
+  };
+
+  if (abandonando !== null) {
+    const p = players[abandonando];
+    const restantes = players.length - 1;
+    const cs = apuesta;
+    const ct = tarjetaVal * restantes;
+    return (
+      <Card>
+        <SLabel>Eliminar jugador</SLabel>
+        <div style={{ fontSize:14, fontWeight:700, marginBottom:8 }}>{p.name} abandona</div>
+        <div style={{ background:D.redBg, border:`1px solid ${D.danger}44`, borderRadius:10, padding:12, marginBottom:12 }}>
+          <div style={{ fontSize:13, fontWeight:700, color:D.danger, marginBottom:4 }}>Con castigo</div>
+          <div style={{ fontSize:12, color:D.textSub }}>Score: ${cs} + Tarjeta: ${tarjetaVal} x {restantes} = ${ct}</div>
+          <div style={{ fontSize:13, fontWeight:900, color:D.danger }}>Total: ${cs + ct}</div>
+        </div>
+        <div style={{ display:"flex", gap:8, marginBottom:8 }}>
+          <button onClick={() => eliminarJugador(abandonando, true)}
+            style={{ flex:1, padding:"10px", border:"none", borderRadius:10, background:D.danger, color:"#fff", fontSize:13, fontWeight:700, cursor:"pointer" }}>
+            Con castigo
+          </button>
+          <button onClick={() => eliminarJugador(abandonando, false)}
+            style={{ flex:1, padding:"10px", border:`1px solid ${D.border}`, borderRadius:10, background:"transparent", color:D.textSub, fontSize:13, cursor:"pointer" }}>
+            Sin castigo
+          </button>
+        </div>
+        <button onClick={() => setAbandonando(null)}
+          style={{ width:"100%", padding:"8px", border:"none", background:"transparent", color:D.textDim, fontSize:12, cursor:"pointer" }}>
+          Cancelar
+        </button>
+      </Card>
+    );
+  }
+
+  if (agregando) {
+    const disponibles = dir.filter(p => !players.find(pl => pl.id === p.id));
+    return (
+      <Card>
+        <SLabel>Agregar jugador</SLabel>
+        {disponibles.length === 0 && <div style={{ textAlign:"center", color:D.textSub, padding:16, fontSize:13 }}>Todos los jugadores del directorio ya estan en la ronda</div>}
+        {disponibles.map(p => (
+          <div key={p.id} onClick={() => agregarJugador(p)} style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 0", borderBottom:`1px solid ${D.border}`, cursor:"pointer" }}>
+            <Avatar name={p.name} id={p.id} size={30} />
+            <div style={{ flex:1 }}>
+              <div style={{ fontSize:13, fontWeight:600 }}>{p.name}</div>
+              <div style={{ fontSize:11, color:D.textSub }}>HC {p.hc}</div>
+            </div>
+            <div style={{ fontSize:12, color:D.gold, fontWeight:700 }}>+ Agregar</div>
+          </div>
+        ))}
+        <button onClick={() => setAgregando(false)} style={{ width:"100%", marginTop:10, padding:"10px", border:`1px solid ${D.border}`, borderRadius:10, background:"transparent", color:D.textSub, fontSize:13, cursor:"pointer" }}>
+          Cancelar
+        </button>
+      </Card>
+    );
+  }
+
+  return (
+    <div>
+      <Card>
+        <SLabel>Jugadores en la ronda</SLabel>
+        {players.map((p, pi) => (
+          <div key={p.id} style={{ display:"flex", alignItems:"center", gap:8, padding:"10px 0", borderBottom:pi<players.length-1?`1px solid ${D.border}`:"none" }}>
+            <Avatar name={p.name} id={p.id} size={30} />
+            <div style={{ flex:1 }}>
+              <div style={{ fontSize:13, fontWeight:600 }}>{p.name}</div>
+              <div style={{ fontSize:11, color:D.textSub }}>HC {p.hc} - {scores[pi].filter(s=>s!==null&&s!==undefined).length} hoyos jugados</div>
+            </div>
+            <button onClick={() => setAbandonando(pi)}
+              style={{ padding:"6px 12px", border:`1px solid ${D.danger}44`, borderRadius:8, background:D.redBg, color:D.danger, fontSize:11, fontWeight:700, cursor:"pointer" }}>
+              Eliminar
+            </button>
+          </div>
+        ))}
+        {castigos.length > 0 && (
+          <div style={{ marginTop:10, paddingTop:10, borderTop:`1px solid ${D.border}` }}>
+            <div style={{ fontSize:11, fontWeight:700, color:D.danger, marginBottom:6 }}>Jugadores que abandonaron</div>
+            {castigos.map((c, i) => (
+              <div key={i} style={{ display:"flex", justifyContent:"space-between", fontSize:12, padding:"4px 0" }}>
+                <span style={{ color:D.textSub }}>{c.name}</span>
+                <span style={{ color:D.danger, fontWeight:700 }}>{c.conCastigo ? `-$${c.scorePago + c.tarjetaPago} (castigo)` : "Sin castigo"}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
+      <button onClick={() => setAgregando(true)}
+        style={{ width:"100%", padding:"12px", border:`1px dashed ${D.gold}`, borderRadius:12, background:"transparent", color:D.gold, fontSize:13, fontWeight:700, cursor:"pointer", marginBottom:8 }}>
+        Agregar jugador
+      </button>
+    </div>
+  );
+}
+
 // ─── MODAL ABANDONO ────────────────────────────────
 function AbandonoModal({ player, pi, players, apuesta, tarjetaVal, castigos, setCastigos, scores, setScores, marcas, setMarcas, setPlayers, pars, hole, campo, rondaId, grupoNombre, tarjetas, updateGame, onClose }) {
   const restantes = players.length - 1;
@@ -3508,7 +3666,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
             </div>
           </div>
         )}
-        <TabBar tabs={[{key:"score",label:"📊 Score"},{key:"marcas",label:"⭐ Marcas"},{key:"tarjetas",label:"🃏 Tarjetas"},{key:"tabla",label:"📋 Tabla"}]} active={tab} onChange={setTab} />
+        <TabBar tabs={[{key:"score",label:"📊 Score"},{key:"marcas",label:"⭐ Marcas"},{key:"tarjetas",label:"🃏 Tarjetas"},{key:"tabla",label:"📋 Tabla"},{key:"jugadores",label:"👥 Jugadores"}]} active={tab} onChange={setTab} />
 
         {tab==="score" && (
           <Card>
@@ -3721,6 +3879,18 @@ function AdminApp({ onExit, torneoConfig = null }) {
           </div>
           );
         })()}
+
+        {tab==="jugadores" && (
+          <GestionJugadores
+            players={players} scores={scores} marcas={marcas} tarjetas={tarjetas}
+            pars={pars} hole={hole} campo={campo} rondaId={rondaId}
+            grupoNombre={grupoNombre} apuesta={apuesta} tarjetaVal={tarjetaVal}
+            nHoles={nHoles} dir={dir} torneoConfig={torneoConfig}
+            castigos={castigos} setCastigos={setCastigos}
+            setPlayers={setPlayers} setScores={setScores} setMarcas={setMarcas}
+            updateGame={updateGame}
+          />
+        )}
 
         <Card>
           <SLabel>Marcador en vivo</SLabel>
