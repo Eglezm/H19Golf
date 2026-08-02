@@ -2825,7 +2825,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
       });
       return Math.round(c * 10) / 10;
     });
-    const resultData = { ...r, hcUpdates:hc, marcasMoney, marcasPts, tarjetasMoney, tarjetasCount, fullScores, rawScores };
+    const resultData = { ...r, hcUpdates:hc, marcasMoney, marcasPts, tarjetasMoney, tarjetasCount, fullScores, rawScores, castigos };
     setResults(resultData);
     // Guardar estado final en Firebase (scores completos permanentes)
     const finalState = { ...getState(), scores:sc, status:"finalizada" };
@@ -3966,12 +3966,11 @@ function AdminApp({ onExit, torneoConfig = null }) {
   // ── RESULTADOS ──
   if (screen==="res" && results) {
     const { nets, fi, si, pot, money, hcUpdates, marcasMoney, marcasPts, tarjetasMoney, tarjetasCount, fullScores, rawScores } = results;
-    // Distribuir castigos entre jugadores activos
-    // El score del abandono ya está en el pozo de calcMoney (extraPot)
-    // Solo la tarjeta de abandono se reparte directamente entre activos
-    const totalTarjetaAbandonoPool = castigos.filter(c=>c.conCastigo).reduce((a,c)=>a+c.tarjetaPago,0);
+    // Leer castigosRes de results (persisten aunque se salga y vuelva)
+    const castigosRes = results.castigos || castigos || [];
+    const totalTarjetaAbandonoPool = castigosRes.filter(c=>c.conCastigo).reduce((a,c)=>a+c.tarjetaPago,0);
     const gananciaXCastigo = players.length > 0 ? Math.round(totalTarjetaAbandonoPool / players.length) : 0;
-    const totalCastigoPool = castigos.filter(c=>c.conCastigo).reduce((a,c)=>a+(c.scorePago+c.tarjetaPago),0);
+    const totalCastigoPool = castigosRes.filter(c=>c.conCastigo).reduce((a,c)=>a+(c.scorePago+c.tarjetaPago),0);
 
     const ranked = players.map((p,i) => ({
       ...p, net:nets[i], scoreMoney:money[i], marcasMoney:marcasMoney[i],
@@ -4131,7 +4130,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
           ))}
 
           {/* Jugadores que abandonaron */}
-          {castigos.length > 0 && castigos.map((c, i) => (
+          {castigosRes.length > 0 && castigosRes.map((c, i) => (
             <Card key={"abandono-"+i} style={{ borderColor:`${D.danger}66`, border:`1px solid ${D.danger}44` }}>
               <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:8, paddingBottom:8, borderBottom:`1px solid ${D.border}` }}>
                 <div style={{ width:26,height:26,borderRadius:"50%",background:D.redBg,border:`1px solid ${D.danger}44`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:900,color:D.danger }}>🚪</div>
@@ -4257,11 +4256,11 @@ function AdminApp({ onExit, torneoConfig = null }) {
           </Card>
 
           {/* Castigos por abandono */}
-          {castigos.length > 0 && (
+          {castigosRes.length > 0 && (
             <Card>
               <SLabel>🚪 Abandonos</SLabel>
-              {castigos.map((c, i) => (
-                <div key={i} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"8px 0", borderBottom:i<castigos.length-1?`1px solid ${D.border}`:"none" }}>
+              {castigosRes.map((c, i) => (
+                <div key={i} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"8px 0", borderBottom:i<castigosRes.length-1?`1px solid ${D.border}`:"none" }}>
                   <div>
                     <div style={{ fontSize:13, fontWeight:600 }}>{c.name}</div>
                     <div style={{ fontSize:11, color:D.textSub }}>
@@ -4273,9 +4272,9 @@ function AdminApp({ onExit, torneoConfig = null }) {
                   </div>
                 </div>
               ))}
-              {castigos.some(c=>c.conCastigo) && (
+              {castigosRes.some(c=>c.conCastigo) && (
                 <div style={{ fontSize:11, color:D.textSub, marginTop:8, textAlign:"center", paddingTop:8, borderTop:`1px solid ${D.border}` }}>
-                  {"Cada jugador activo recibe $" + castigos.filter(c=>c.conCastigo).reduce((a,c)=>a+c.scorePago/players.length + c.tarjetaVal,0).toFixed(0) + " del fondo de abandonos"}
+                  {"Cada jugador activo recibe $" + castigosRes.filter(c=>c.conCastigo).reduce((a,c)=>a+c.scorePago/players.length + c.tarjetaVal,0).toFixed(0) + " del fondo de abandonos"}
                 </div>
               )}
             </Card>
@@ -4284,8 +4283,8 @@ function AdminApp({ onExit, torneoConfig = null }) {
           {/* Comprobación de cuentas */}
           {(() => {
             const totalesActivos = ranked.map(p => p.total);
-            const totalScoreAbandonos = castigos.filter(c=>c.conCastigo).reduce((a,c)=>a+c.scorePago,0);
-            const totalTarjetaAbandonos = castigos.filter(c=>c.conCastigo).reduce((a,c)=>a+c.tarjetaPago,0);
+            const totalScoreAbandonos = castigosRes.filter(c=>c.conCastigo).reduce((a,c)=>a+c.scorePago,0);
+            const totalTarjetaAbandonos = castigosRes.filter(c=>c.conCastigo).reduce((a,c)=>a+c.tarjetaPago,0);
             const totalCastigoPool = totalScoreAbandonos + totalTarjetaAbandonos;
             const ganancias = totalesActivos.filter(t => t > 0).reduce((a,b)=>a+b,0);
             const perdidas = Math.abs(totalesActivos.filter(t => t < 0).reduce((a,b)=>a+b,0));
