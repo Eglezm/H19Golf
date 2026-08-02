@@ -3985,14 +3985,11 @@ function AdminApp({ onExit, torneoConfig = null }) {
 
     return (
       <div style={appSt}>
-    return (
-      <div style={appSt}>
         {/* DEBUG TEMPORAL */}
         <div style={{ background:"#111", color:"#0f0", padding:8, fontSize:10, wordBreak:"break-all", zIndex:999 }}>
           castigos state len: {castigos.length} | castigosRes len: {castigosRes.length} | results.castigos len: {(results.castigos||[]).length}
           {castigosRes.map((c,i) => <div key={i}>{c.name} - conCastigo:{String(c.conCastigo)} - score:${c.scorePago} - tarjeta:${c.tarjetaPago}</div>)}
         </div>
-        {/* Banner de torneo para admins de grupo */}
         {torneoConfig && (
           <div style={{ background:`linear-gradient(135deg,#1A5C24,#2E7D32)`, padding:"12px 16px", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
             <div>
