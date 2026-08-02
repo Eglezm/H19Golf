@@ -2584,7 +2584,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
   };
 
   const updateGame = (state) => { saveToLocal(state); syncFirebase(state); };
-  const getState = () => ({ players, pars, scores, marcas, tarjetas, hole, campo, status:"en_juego", rondaId, apuesta, marcaVal, tarjetaVal, grupoNombre });
+  const getState = () => ({ players, pars, scores, marcas, tarjetas, hole, campo, status:"en_juego", rondaId, apuesta, marcaVal, tarjetaVal, grupoNombre, abandonos:castigos });
 
   const resumeRonda = () => {
     if (!savedRonda) return;
@@ -2592,6 +2592,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
     setMarcas(savedRonda.marcas||[]); setTarjetas(normalizeTarjetas(savedRonda.tarjetas));
     setHole(savedRonda.hole||0); setPars(savedRonda.pars||[]);
     setCampo(savedRonda.campo||"huerta"); setRondaId(savedRonda.rondaId||null);
+    setCastigos(savedRonda.abandonos||[]);
     setTab("score"); setScreen("score"); setSavedRonda(null);
   };
 
@@ -3940,9 +3941,15 @@ function AdminApp({ onExit, torneoConfig = null }) {
   // ── RESULTADOS ──
   if (screen==="res" && results) {
     const { nets, fi, si, pot, money, hcUpdates, marcasMoney, marcasPts, tarjetasMoney, tarjetasCount, fullScores, rawScores } = results;
+    // Distribuir castigos entre jugadores activos
+    const totalCastigoPool = castigos.filter(c=>c.conCastigo).reduce((a,c)=>a+(c.scorePago+c.tarjetaPago),0);
+    const gananciaXCastigo = players.length > 0 ? Math.round(totalCastigoPool / players.length) : 0;
+
     const ranked = players.map((p,i) => ({
       ...p, net:nets[i], scoreMoney:money[i], marcasMoney:marcasMoney[i],
-      tarjetasMoney:tarjetasMoney[i], total:money[i]+marcasMoney[i]+tarjetasMoney[i],
+      tarjetasMoney:tarjetasMoney[i],
+      castigoMoney: gananciaXCastigo,
+      total:money[i]+marcasMoney[i]+tarjetasMoney[i]+gananciaXCastigo,
       pts:marcasPts[i], cards:tarjetasCount[i], bruto:fullScores[i].reduce((a,b)=>a+b,0)
     })).sort((a,b)=>a.net-b.net);
     const fn = fi.map(i=>players[i].name).join(" · ");
@@ -4082,6 +4089,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
                 {icon:"📊",label:"Score",sub:`${p.bruto} bruto · HC ${p.hc} · ${p.net} neto`,val:p.scoreMoney},
                 {icon:"⭐",label:"Marcas",sub:`${p.pts} puntos · $${marcaVal} por punto`,val:p.marcasMoney},
                 {icon:"🃏",label:"Tarjetas",sub:`${p.cards} tarjeta${p.cards!==1?"s":""} · $${tarjetaVal} por tarjeta`,val:p.tarjetasMoney},
+                ...(p.castigoMoney > 0 ? [{icon:"🚪",label:"Castigo abandono",sub:"Reparto del fondo de abandonos",val:p.castigoMoney}] : []),
               ].map((row, i, arr) => (
                 <div key={row.label} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"8px 0", borderBottom:i<arr.length-1?`1px solid ${D.border}`:"none" }}>
                   <div>
@@ -4190,47 +4198,59 @@ function AdminApp({ onExit, torneoConfig = null }) {
           </Card>
 
           {/* Castigos por abandono */}
-          {castigos.filter(c=>c.conCastigo).length > 0 && (
+          {castigos.length > 0 && (
             <Card>
-              <SLabel>🚪 Castigos por abandono</SLabel>
+              <SLabel>🚪 Abandonos</SLabel>
               {castigos.map((c, i) => (
                 <div key={i} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"8px 0", borderBottom:i<castigos.length-1?`1px solid ${D.border}`:"none" }}>
                   <div>
                     <div style={{ fontSize:13, fontWeight:600 }}>{c.name}</div>
                     <div style={{ fontSize:11, color:D.textSub }}>
-                      {c.conCastigo ? "Score $" + c.scorePago + " + Tarjeta $" + c.tarjetaPago : "Sin castigo"}
+                      {c.conCastigo ? "Score $" + c.scorePago + " + Tarjeta $" + c.tarjetaPago + " a cada uno" : "Sin castigo"}
                     </div>
                   </div>
                   <div style={{ fontSize:14, fontWeight:900, color:c.conCastigo?D.danger:D.textSub }}>
-                    {c.conCastigo ? "-$" + (c.scorePago+c.tarjetaPago) : "--"}
+                    {c.conCastigo ? "-$" + (c.scorePago + c.tarjetaPago) : "Sin cargo"}
                   </div>
                 </div>
               ))}
-              <div style={{ fontSize:11, color:D.textDim, marginTop:8, textAlign:"center" }}>El castigo se reparte entre los jugadores que terminaron la ronda</div>
+              {castigos.some(c=>c.conCastigo) && (
+                <div style={{ fontSize:11, color:D.textSub, marginTop:8, textAlign:"center", paddingTop:8, borderTop:`1px solid ${D.border}` }}>
+                  {"Cada jugador activo recibe $" + castigos.filter(c=>c.conCastigo).reduce((a,c)=>a+c.scorePago/players.length + c.tarjetaVal,0).toFixed(0) + " del fondo de abandonos"}
+                </div>
+              )}
             </Card>
           )}
 
           {/* Comprobación de cuentas */}
           {(() => {
             const totales = ranked.map(p => p.total);
+            const totalCastigoPool = castigos.filter(c=>c.conCastigo).reduce((a,c)=>a+(c.scorePago+c.tarjetaPago),0);
             const ganancias = totales.filter(t => t > 0).reduce((a,b)=>a+b,0);
-            const perdidas = totales.filter(t => t < 0).reduce((a,b)=>a+b,0);
-            const cuadra = ganancias + perdidas === 0;
+            const perdidas = Math.abs(totales.filter(t => t < 0).reduce((a,b)=>a+b,0));
+            const totalGeneral = ganancias + totalCastigoPool;
+            const cuadra = Math.abs(ganancias - perdidas + totalCastigoPool) <= 1;
             return (
               <Card style={{ border:`1px solid ${cuadra?D.success:D.danger}` }}>
                 <SLabel>✅ Comprobación de cuentas</SLabel>
                 <div style={{ display:"flex", justifyContent:"space-between", padding:"8px 0", borderBottom:`1px solid ${D.border}` }}>
-                  <span style={{ fontSize:13, color:D.textSub }}>Total ganancias</span>
+                  <span style={{ fontSize:13, color:D.textSub }}>Total ganancias (jugadores activos)</span>
                   <span style={{ fontSize:14, fontWeight:700, color:D.success }}>+${ganancias}</span>
                 </div>
+                {totalCastigoPool > 0 && (
+                  <div style={{ display:"flex", justifyContent:"space-between", padding:"8px 0", borderBottom:`1px solid ${D.border}` }}>
+                    <span style={{ fontSize:13, color:D.textSub }}>Castigos por abandono</span>
+                    <span style={{ fontSize:14, fontWeight:700, color:D.success }}>+${totalCastigoPool}</span>
+                  </div>
+                )}
                 <div style={{ display:"flex", justifyContent:"space-between", padding:"8px 0", borderBottom:`1px solid ${D.border}` }}>
-                  <span style={{ fontSize:13, color:D.textSub }}>Total pérdidas</span>
-                  <span style={{ fontSize:14, fontWeight:700, color:D.danger }}>-${Math.abs(perdidas)}</span>
+                  <span style={{ fontSize:13, color:D.textSub }}>Total pérdidas (jugadores activos)</span>
+                  <span style={{ fontSize:14, fontWeight:700, color:D.danger }}>-${perdidas}</span>
                 </div>
                 <div style={{ display:"flex", justifyContent:"space-between", padding:"8px 0" }}>
                   <span style={{ fontSize:13, fontWeight:700 }}>Diferencia</span>
                   <span style={{ fontSize:14, fontWeight:900, color:cuadra?D.success:D.danger }}>
-                    {cuadra ? "✓ Cuadra perfectamente" : `⚠️ $${ganancias+perdidas}`}
+                    {cuadra ? "✓ Cuadra" : "⚠️ Revisar calculos"}
                   </span>
                 </div>
               </Card>
