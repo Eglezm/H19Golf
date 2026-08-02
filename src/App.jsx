@@ -3689,39 +3689,42 @@ function AdminApp({ onExit, torneoConfig = null }) {
                 }}>Entrar</Btn>
               </Card>
             ) : (
-            <Card>
-              <SLabel>👥 Jugadores en la ronda</SLabel>
-              {players.map((p, pi) => (
-                <div key={p.id} style={{ display:"flex", alignItems:"center", gap:8, padding:"10px 0", borderBottom:pi<players.length-1?`1px solid ${D.border}`:"none" }}>
-                  <Avatar name={p.name} id={p.id} size={30} />
-                  <div style={{ flex:1 }}>
-                    <div style={{ fontSize:13, fontWeight:600 }}>{p.name}</div>
-                    <div style={{ fontSize:11, color:D.textSub }}>HC {p.hc} · {scores[pi].filter(s=>s!==null&&s!==undefined).length} hoyos jugados</div>
-                  </div>
-                  <button onClick={() => setAbandonoModal({pi, player:p})}
-                    style={{ padding:"6px 12px", border:`1px solid ${D.danger}44`, borderRadius:8, background:D.redBg, color:D.danger, fontSize:11, fontWeight:700, cursor:"pointer" }}>
-                    Eliminar
-                  </button>
-                </div>
-              ))}
-              {castigos.length > 0 && (
-                <div style={{ marginTop:10, paddingTop:10, borderTop:`1px solid ${D.border}` }}>
-                  <div style={{ fontSize:11, fontWeight:700, color:D.danger, marginBottom:6 }}>🚪 Jugadores que abandonaron</div>
-                  {castigos.map((c, i) => (
-                    <div key={i} style={{ display:"flex", justifyContent:"space-between", fontSize:12, padding:"4px 0" }}>
-                      <span style={{ color:D.textSub }}>{c.name}</span>
-                      <span style={{ color:D.danger, fontWeight:700 }}>
-                        {c.conCastigo ? `-$${c.scorePago + c.tarjetaPago} (castigo)` : "Sin castigo"}
-                      </span>
+              <>
+                <Card>
+                  <SLabel>👥 Jugadores en la ronda</SLabel>
+                  {players.map((p, pi) => (
+                    <div key={p.id} style={{ display:"flex", alignItems:"center", gap:8, padding:"10px 0", borderBottom:pi<players.length-1?`1px solid ${D.border}`:"none" }}>
+                      <Avatar name={p.name} id={p.id} size={30} />
+                      <div style={{ flex:1 }}>
+                        <div style={{ fontSize:13, fontWeight:600 }}>{p.name}</div>
+                        <div style={{ fontSize:11, color:D.textSub }}>HC {p.hc} · {scores[pi].filter(s=>s!==null&&s!==undefined).length} hoyos jugados</div>
+                      </div>
+                      <button onClick={() => setAbandonoModal({pi, player:p})}
+                        style={{ padding:"6px 12px", border:`1px solid ${D.danger}44`, borderRadius:8, background:D.redBg, color:D.danger, fontSize:11, fontWeight:700, cursor:"pointer" }}>
+                        Eliminar
+                      </button>
                     </div>
                   ))}
-                </div>
-              )}
-            </Card>
-            <button onClick={() => setAgregarModal(true)}
-              style={{ width:"100%", padding:"12px", border:`1px dashed ${D.gold}`, borderRadius:12, background:"transparent", color:D.gold, fontSize:13, fontWeight:700, cursor:"pointer", marginBottom:8 }}>
-              ➕ Agregar jugador
-            </button>
+                  {castigos.length > 0 && (
+                    <div style={{ marginTop:10, paddingTop:10, borderTop:`1px solid ${D.border}` }}>
+                      <div style={{ fontSize:11, fontWeight:700, color:D.danger, marginBottom:6 }}>🚪 Jugadores que abandonaron</div>
+                      {castigos.map((c, i) => (
+                        <div key={i} style={{ display:"flex", justifyContent:"space-between", fontSize:12, padding:"4px 0" }}>
+                          <span style={{ color:D.textSub }}>{c.name}</span>
+                          <span style={{ color:D.danger, fontWeight:700 }}>
+                            {c.conCastigo ? `-$${c.scorePago + c.tarjetaPago} (castigo)` : "Sin castigo"}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </Card>
+                <button onClick={() => setAgregarModal(true)}
+                  style={{ width:"100%", padding:"12px", border:`1px dashed ${D.gold}`, borderRadius:12, background:"transparent", color:D.gold, fontSize:13, fontWeight:700, cursor:"pointer", marginBottom:8 }}>
+                  ➕ Agregar jugador
+                </button>
+              </>
+            )}
           </div>
         )}
 
