@@ -109,7 +109,7 @@ const col = (id) => {
   let n = typeof id === "number" ? id : String(id).split("").reduce((a,c) => a + c.charCodeAt(0), 0);
   return COLORS[Math.abs(n) % COLORS.length];
 };
-const fmt = (n) => n >= 0 ? `+$${n}` : `−$${Math.abs(n)}`;
+const fmt = (n) => n >= 0 ? `+$${n}` : `-$${Math.abs(n)}`;
 const fmtC = (n) => n >= 0 ? D.success : D.danger;
 
 const emptyMarca = (n) => ({
@@ -200,7 +200,7 @@ function CampoSelector({ campo, setCampo, nHoles, setNHoles }) {
                   style={{ width:28, height:20, border:`1px solid ${D.border}`, borderRadius:4, background:D.surface, color:D.gold, fontSize:12, cursor:"pointer", padding:0 }}>+</button>
                 <div style={{ fontSize:14, fontWeight:700, color:D.text }}>{newPares[h]}</div>
                 <button onClick={() => setNewPares(p => p.map((v,i)=>i===h?Math.max(3,v-1):v))}
-                  style={{ width:28, height:20, border:`1px solid ${D.border}`, borderRadius:4, background:D.surface, color:D.textSub, fontSize:12, cursor:"pointer", padding:0 }}>−</button>
+                  style={{ width:28, height:20, border:`1px solid ${D.border}`, borderRadius:4, background:D.surface, color:D.textSub, fontSize:12, cursor:"pointer", padding:0 }}>-</button>
               </div>
             </div>
           ))}
@@ -867,7 +867,7 @@ function SpectatorView({ rondaId }) {
           <SLabel>📋 Marcador en vivo</SLabel>
           {pars && pars.length > 0 && players && players.length > 0 && (() => {
             const parTotal = (pars||[]).reduce((a,b)=>a+b,0);
-            const fmtVs = (v) => v === null ? "—" : v === 0 ? "E" : v > 0 ? `+${v}` : `${v}`;
+            const fmtVs = (v) => v === null ? "-" : v === 0 ? "E" : v > 0 ? `+${v}` : `${v}`;
             const vsColor = (v) => v === null ? D.textDim : v < 0 ? D.success : v > 0 ? D.danger : D.text;
             const tablaData = players.map((pl, pi) => {
               const rowScores = scores[pi] || [];
@@ -1099,7 +1099,7 @@ function TorneoCrear({ onExit, onIniciarGrupo, appStyle }) {
             {[{label:"Score — por jugador",val:apuesta,set:setApuesta},{label:"Marcas — por punto",val:marcaVal,set:setMarcaVal},{label:"Tarjetas — por tarjeta",val:tarjetaVal,set:setTarjetaVal}].map(({label,val,set:setVal}) => (
               <div key={label} style={{ display:"flex", alignItems:"center", gap:10, padding:"8px 0", borderBottom:`1px solid ${D.border}` }}>
                 <div style={{ flex:1, fontSize:13, color:D.textSub }}>{label}</div>
-                <button onClick={() => setVal(Math.max(0,val-10))} style={{ width:30,height:30,borderRadius:"50%",border:`1px solid ${D.border}`,background:"transparent",color:D.text,cursor:"pointer",fontSize:18 }}>−</button>
+                <button onClick={() => setVal(Math.max(0,val-10))} style={{ width:30,height:30,borderRadius:"50%",border:`1px solid ${D.border}`,background:"transparent",color:D.text,cursor:"pointer",fontSize:18 }}>-</button>
                 <div style={{ width:50, textAlign:"center", fontSize:15, fontWeight:700, color:D.gold }}>${val}</div>
                 <button onClick={() => setVal(val+10)} style={{ width:30,height:30,borderRadius:"50%",border:`1px solid ${D.gold}`,background:D.goldDim,color:D.gold,cursor:"pointer",fontSize:18 }}>+</button>
               </div>
@@ -1578,7 +1578,7 @@ function TorneoSpectator({ torneoId, appStyle, isAdmin = false }) {
   });
 
   // Calcular netos y clasificación global
-  const fmtVs = (v) => v === null ? "—" : v === 0 ? "E" : v > 0 ? `+${v}` : `${v}`;
+  const fmtVs = (v) => v === null ? "-" : v === 0 ? "E" : v > 0 ? `+${v}` : `${v}`;
   const vsColor = (v) => v === null ? D.textDim : v < 0 ? D.success : v > 0 ? D.danger : D.text;
   const fmtMoney = (n) => n >= 0 ? `+$${n}` : `-$${Math.abs(n)}`;
   const moneyColor = (n) => n > 0 ? D.success : n < 0 ? D.danger : D.textSub;
@@ -3350,7 +3350,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
           ].map(({label,val,set}) => (
             <div key={label} style={{ display:"flex", alignItems:"center", gap:10, padding:"8px 0", borderBottom:`1px solid ${D.border}` }}>
               <div style={{ flex:1, fontSize:13, color:D.textSub }}>{label}</div>
-              <button onClick={() => set(Math.max(0,val-10))} style={{ width:30,height:30,borderRadius:"50%",border:`1px solid ${D.border}`,background:"transparent",color:D.text,cursor:"pointer",fontSize:18,display:"flex",alignItems:"center",justifyContent:"center" }}>−</button>
+              <button onClick={() => set(Math.max(0,val-10))} style={{ width:30,height:30,borderRadius:"50%",border:`1px solid ${D.border}`,background:"transparent",color:D.text,cursor:"pointer",fontSize:18,display:"flex",alignItems:"center",justifyContent:"center" }}>-</button>
               <div style={{ width:50, textAlign:"center", fontSize:15, fontWeight:700, color:D.gold }}>${val}</div>
               <button onClick={() => set(val+10)} style={{ width:30,height:30,borderRadius:"50%",border:`1px solid ${D.gold}`,background:D.goldDim,color:D.gold,cursor:"pointer",fontSize:18,display:"flex",alignItems:"center",justifyContent:"center" }}>+</button>
             </div>
@@ -3426,7 +3426,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
   if (screen==="score") return (
     <div style={appSt}>
       <div style={{ height:3, background:D.border }}>
-        <div style={{ height:"100%", width:`${(hole/nHoles)*100}%`, background:`linear-gradient(90deg,${D.gold},${D.goldLight})`, transition:"width 0.3s" }} />
+        <div style={{ height:"100%", width:`${Math.round((hole/nHoles)*100)}%`, background:`linear-gradient(90deg,${D.gold},${D.goldLight})`, transition:"width 0.3s" }} />
       </div>
       <div style={{ background:D.surface, borderBottom:`1px solid ${D.border}`, padding:"12px 16px", display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:12 }}>
         <button onClick={prevHole} disabled={hole===0} style={{ width:36,height:36,borderRadius:"50%",border:`1px solid ${D.border}`,background:"transparent",color:D.text,cursor:"pointer",fontSize:20,opacity:hole===0?0.3:1 }}>‹</button>
@@ -3528,7 +3528,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
                   </div>
                   {hasScore && b && <span style={{ fontSize:10, padding:"3px 8px", borderRadius:8, fontWeight:700, background:b.bg, color:b.fg, marginRight:4 }}>{b.label}</span>}
                   <div style={{ display:"flex", alignItems:"center", gap:10 }}>
-                    <button onClick={() => changeScore(i,-1)} style={{ width:36,height:36,borderRadius:"50%",border:`1px solid ${D.border}`,background:D.surface,color:D.text,cursor:"pointer",fontSize:22,display:"flex",alignItems:"center",justifyContent:"center" }}>−</button>
+                    <button onClick={() => changeScore(i,-1)} style={{ width:36,height:36,borderRadius:"50%",border:`1px solid ${D.border}`,background:D.surface,color:D.text,cursor:"pointer",fontSize:22,display:"flex",alignItems:"center",justifyContent:"center" }}>-</button>
                     <div style={{ width:34, textAlign:"center", fontSize:20, fontWeight:900, color:hasScore?D.text:D.textDim }}>
                       {hasScore ? disp : "—"}
                     </div>
@@ -3622,7 +3622,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
                   </div>
                   {tj.auto ? (
                     <div style={{ fontSize:11, color:D.textSub, fontStyle:"italic" }}>
-                      {tj.key === "peorscore" ? "Se asigna automáticamente · Peor score neto acumulado (bruto − HC)" : "Se asigna automáticamente · Doble par o peor en el hoyo · En empate el admin elige quién tiró al último."}
+                      {tj.key === "peorscore" ? "Se asigna automáticamente · Peor score neto acumulado (bruto - HC)" : "Se asigna automáticamente · Doble par o peor en el hoyo · En empate el admin elige quién tiró al último."}
                     </div>
                   ) : (
                     <div style={{ display:"flex", flexWrap:"wrap", gap:8 }}>
@@ -3674,8 +3674,6 @@ function AdminApp({ onExit, torneoConfig = null }) {
             if (b.vsParHC === null) return -1;
             return a.vsParHC - b.vsParHC;
           });
-          const fmtVs = (v) => v === null ? "—" : v === 0 ? "E" : v > 0 ? `+${v}` : `${v}`;
-          const vsColor = (v) => v === null ? D.textDim : v < 0 ? D.success : v > 0 ? D.danger : D.text;
           return (
           <div style={{ overflowX:"auto", marginBottom:12 }}>
             <table style={{ borderCollapse:"collapse", width:"100%", fontSize:11, color:D.text }}>
