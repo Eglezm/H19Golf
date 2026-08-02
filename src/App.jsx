@@ -2029,6 +2029,7 @@ function TorneoCodigosView({ torneoAdmin, onExit, appStyle }) {
 
 // ─── GESTION DE JUGADORES ────────────────────────────────
 function GestionJugadores({ players, scores, marcas, tarjetas, pars, hole, campo, rondaId, grupoNombre, apuesta, tarjetaVal, nHoles, dir, torneoConfig, castigos, setCastigos, setPlayers, setScores, setMarcas, updateGame }) {
+  const [totalJugadoresTorneo, setTotalJugadoresTorneo] = useState(players.length);
   const [pinOk, setPinOk] = useState(!torneoConfig);
   const [pinInput, setPinInput] = useState("");
   const [pinError, setPinError] = useState(false);
@@ -2053,12 +2054,15 @@ function GestionJugadores({ players, scores, marcas, tarjetas, pars, hole, campo
   );
 
   const eliminarJugador = (pi, conCastigo) => {
-    const restantes = players.length - 1;
+    // En torneo paga a todos los jugadores del torneo, en única salida solo al grupo
+    const totalJ = torneoConfig ? totalJugadoresTorneo : players.length;
+    const restantesPago = totalJ - 1;
     const nuevoCastigos = [...castigos, {
       name: players[pi].name,
       conCastigo,
       scorePago: conCastigo ? apuesta : 0,
-      tarjetaPago: conCastigo ? tarjetaVal * restantes : 0,
+      tarjetaPago: conCastigo ? tarjetaVal * restantesPago : 0,
+      totalJugadores: totalJ,
     }];
     setCastigos(nuevoCastigos);
     const newPlayers = players.filter((_,i) => i !== pi);
@@ -2095,17 +2099,34 @@ function GestionJugadores({ players, scores, marcas, tarjetas, pars, hole, campo
 
   if (abandonando !== null) {
     const p = players[abandonando];
-    const restantes = players.length - 1;
+    const totalJ = torneoConfig ? totalJugadoresTorneo : players.length;
+    const restantesPago = totalJ - 1;
     const cs = apuesta;
-    const ct = tarjetaVal * restantes;
+    const ct = tarjetaVal * restantesPago;
     return (
       <Card>
         <SLabel>Eliminar jugador</SLabel>
         <div style={{ fontSize:14, fontWeight:700, marginBottom:8 }}>{p.name} abandona</div>
+        {torneoConfig && (
+          <div style={{ marginBottom:12, padding:10, background:D.goldDim, borderRadius:10 }}>
+            <div style={{ fontSize:12, color:D.gold, fontWeight:700, marginBottom:4 }}>Total jugadores en el torneo</div>
+            <div style={{ fontSize:11, color:D.textSub, marginBottom:6 }}>Cuenta todos los jugadores de todos los grupos</div>
+            <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+              <button onClick={() => setTotalJugadoresTorneo(t => Math.max(players.length, t-1))}
+                style={{ width:32, height:32, borderRadius:"50%", border:`1px solid ${D.border}`, background:D.surface, color:D.text, fontSize:18, cursor:"pointer" }}>-</button>
+              <div style={{ fontSize:22, fontWeight:900, color:D.gold, minWidth:30, textAlign:"center" }}>{totalJugadoresTorneo}</div>
+              <button onClick={() => setTotalJugadoresTorneo(t => t+1)}
+                style={{ width:32, height:32, borderRadius:"50%", border:`1px solid ${D.gold}`, background:D.goldDim, color:D.gold, fontSize:18, cursor:"pointer" }}>+</button>
+            </div>
+          </div>
+        )}
         <div style={{ background:D.redBg, border:`1px solid ${D.danger}44`, borderRadius:10, padding:12, marginBottom:12 }}>
           <div style={{ fontSize:13, fontWeight:700, color:D.danger, marginBottom:4 }}>Con castigo</div>
-          <div style={{ fontSize:12, color:D.textSub }}>Score: ${cs} + Tarjeta: ${tarjetaVal} x {restantes} = ${ct}</div>
-          <div style={{ fontSize:13, fontWeight:900, color:D.danger }}>Total: ${cs + ct}</div>
+          <div style={{ fontSize:12, color:D.textSub }}>Score: ${cs}</div>
+          <div style={{ fontSize:12, color:D.textSub }}>
+            Tarjeta: ${tarjetaVal} x {restantesPago} jugadores{torneoConfig ? " (total torneo)" : ""} = ${ct}
+          </div>
+          <div style={{ fontSize:14, fontWeight:900, color:D.danger, marginTop:6 }}>Total que paga: ${cs + ct}</div>
         </div>
         <div style={{ display:"flex", gap:8, marginBottom:8 }}>
           <button onClick={() => eliminarJugador(abandonando, true)}
@@ -3417,7 +3438,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
                                             <tr key={name} style={{ borderTop:`1px solid ${D.border}` }}>
                                               <td style={{ padding:"4px 4px", fontWeight:600, position:"sticky", left:0, background:D.bg, whiteSpace:"nowrap" }}>{name}</td>
                                               {rf.pars.map((par,h) => <td key={h} style={{ textAlign:"center", padding:"2px 1px" }}><ScoreCell s={row[h]??null} par={par} size={18} /></td>)}
-                                              <td style={{ textAlign:"center", padding:"4px 4px", fontWeight:900, color:D.gold }}>{row.filter(s=>s!=null).reduce((a,b)=>a+b,0)||'—'}</td>
+                                              <td style={{ textAlign:"center", padding:"4px 4px", fontWeight:900, color:D.gold }}>{row.filter(s=>s!=null).reduce((a,b)=>a+b,0)||'-'}</td>
                                             </tr>
                                           );
                                         })}
@@ -3451,7 +3472,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
                                       <div style={{ fontSize:10, fontWeight:700, color:D.danger, marginBottom:4, textTransform:"uppercase" }}>🃏 Tarjetas</div>
                                       {conDueno.map(tj=>{
                                         const owner=rf.tarjetas[tj.key];
-                                        const names=Array.isArray(owner)?owner.map(i=>rf.playerNames?.[i]).filter(Boolean).join(" · "):rf.playerNames?.[owner]||"—";
+                                        const names=Array.isArray(owner)?owner.map(i=>rf.playerNames?.[i]).filter(Boolean).join(" · "):rf.playerNames?.[owner]||"-";
                                         return <div key={tj.key} style={{ display:"flex", justifyContent:"space-between", fontSize:11, padding:"2px 0" }}><span style={{ color:D.textSub }}>{tj.label}</span><span style={{ fontWeight:700, color:D.danger }}>{names}</span></div>;
                                       })}
                                     </div>
@@ -3503,9 +3524,9 @@ function AdminApp({ onExit, torneoConfig = null }) {
         <Card>
           <SLabel>💰 Apuestas</SLabel>
           {[
-            {label:"Score — por jugador", val:apuesta, set:setApuesta},
-            {label:"Marcas — por punto",  val:marcaVal, set:setMarcaVal},
-            {label:"Tarjetas — por tarjeta", val:tarjetaVal, set:setTarjetaVal},
+            {label:"Score - por jugador", val:apuesta, set:setApuesta},
+            {label:"Marcas - por punto",  val:marcaVal, set:setMarcaVal},
+            {label:"Tarjetas - por tarjeta", val:tarjetaVal, set:setTarjetaVal},
           ].map(({label,val,set}) => (
             <div key={label} style={{ display:"flex", alignItems:"center", gap:10, padding:"8px 0", borderBottom:`1px solid ${D.border}` }}>
               <div style={{ flex:1, fontSize:13, color:D.textSub }}>{label}</div>
@@ -3518,7 +3539,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
         <Card>
           <SLabel>¿Quién juega hoy?</SLabel>
           <div style={{ fontSize:12, color:n<2?D.textSub:D.gold, marginBottom:10, fontWeight:600 }}>
-            {n===0?"Selecciona los jugadores":n===1?"1 seleccionado — necesitas al menos 2":`${n} jugadores seleccionados ✓`}
+            {n===0?"Selecciona los jugadores":n===1?"1 seleccionado - necesitas al menos 2":`${n} jugadores seleccionados ✓`}
           </div>
           {n>=2 && (
             <div style={{ fontSize:12, color:D.textSub, padding:"8px 12px", background:D.surface, borderRadius:10, marginBottom:12, border:`1px solid ${D.border}` }}>
@@ -3942,8 +3963,11 @@ function AdminApp({ onExit, torneoConfig = null }) {
   if (screen==="res" && results) {
     const { nets, fi, si, pot, money, hcUpdates, marcasMoney, marcasPts, tarjetasMoney, tarjetasCount, fullScores, rawScores } = results;
     // Distribuir castigos entre jugadores activos
+    // El score del abandono ya está incluido en el pozo de calcMoney
+    // Solo la tarjeta de abandono se reparte directamente entre activos
+    const totalTarjetaAbandonoPool = castigos.filter(c=>c.conCastigo).reduce((a,c)=>a+c.tarjetaPago,0);
+    const gananciaXCastigo = players.length > 0 ? Math.round(totalTarjetaAbandonoPool / players.length) : 0;
     const totalCastigoPool = castigos.filter(c=>c.conCastigo).reduce((a,c)=>a+(c.scorePago+c.tarjetaPago),0);
-    const gananciaXCastigo = players.length > 0 ? Math.round(totalCastigoPool / players.length) : 0;
 
     const ranked = players.map((p,i) => ({
       ...p, net:nets[i], scoreMoney:money[i], marcasMoney:marcasMoney[i],
@@ -4102,8 +4126,36 @@ function AdminApp({ onExit, torneoConfig = null }) {
             </Card>
           ))}
 
-          <Card>
-            <SLabel>Resumen de marcas</SLabel>
+          {/* Jugadores que abandonaron */}
+          {castigos.length > 0 && castigos.map((c, i) => (
+            <Card key={"abandono-"+i} style={{ borderColor:`${D.danger}66`, border:`1px solid ${D.danger}44` }}>
+              <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:8, paddingBottom:8, borderBottom:`1px solid ${D.border}` }}>
+                <div style={{ width:26,height:26,borderRadius:"50%",background:D.redBg,border:`1px solid ${D.danger}44`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:900,color:D.danger }}>🚪</div>
+                <div style={{ flex:1 }}>
+                  <div style={{ fontSize:15, fontWeight:700 }}>{c.name}</div>
+                  <div style={{ fontSize:11, color:D.danger }}>Abandono{c.conCastigo ? " con castigo" : " sin castigo"}</div>
+                </div>
+                <div style={{ textAlign:"right" }}>
+                  <div style={{ fontSize:20, fontWeight:900, color:c.conCastigo?D.danger:D.textSub }}>
+                    {c.conCastigo ? "-$"+(c.scorePago+c.tarjetaPago) : "$0"}
+                  </div>
+                  <div style={{ fontSize:11, color:D.textSub }}>TOTAL</div>
+                </div>
+              </div>
+              {c.conCastigo && (
+                <div>
+                  <div style={{ display:"flex", justifyContent:"space-between", padding:"6px 0", borderBottom:`1px solid ${D.border}` }}>
+                    <div><div style={{ fontSize:12, fontWeight:700 }}>📊 Score</div><div style={{ fontSize:11, color:D.textSub }}>Apuesta de la ronda</div></div>
+                    <div style={{ fontSize:15, fontWeight:700, color:D.danger }}>-${c.scorePago}</div>
+                  </div>
+                  <div style={{ display:"flex", justifyContent:"space-between", padding:"6px 0" }}>
+                    <div><div style={{ fontSize:12, fontWeight:700 }}>🃏 Tarjeta abandono</div><div style={{ fontSize:11, color:D.textSub }}>${tarjetaVal} a cada uno de los {players.length} jugadores activos</div></div>
+                    <div style={{ fontSize:15, fontWeight:700, color:D.danger }}>-${c.tarjetaPago}</div>
+                  </div>
+                </div>
+              )}
+            </Card>
+          ))}
             {players.map((pl, pi) => {
               const myMarcas = [];
               marcas.forEach((hd, hi) => {
@@ -4224,33 +4276,33 @@ function AdminApp({ onExit, torneoConfig = null }) {
 
           {/* Comprobación de cuentas */}
           {(() => {
-            const totales = ranked.map(p => p.total);
+            const totalesActivos = ranked.map(p => p.total);
             const totalCastigoPool = castigos.filter(c=>c.conCastigo).reduce((a,c)=>a+(c.scorePago+c.tarjetaPago),0);
-            const ganancias = totales.filter(t => t > 0).reduce((a,b)=>a+b,0);
-            const perdidas = Math.abs(totales.filter(t => t < 0).reduce((a,b)=>a+b,0));
-            const totalGeneral = ganancias + totalCastigoPool;
-            const cuadra = Math.abs(ganancias - perdidas + totalCastigoPool) <= 1;
+            const ganancias = totalesActivos.filter(t => t > 0).reduce((a,b)=>a+b,0);
+            const perdidas = Math.abs(totalesActivos.filter(t => t < 0).reduce((a,b)=>a+b,0));
+            const totalEntrada = perdidas + totalCastigoPool;
+            const cuadra = Math.abs(ganancias - totalEntrada) <= 1;
             return (
               <Card style={{ border:`1px solid ${cuadra?D.success:D.danger}` }}>
                 <SLabel>✅ Comprobación de cuentas</SLabel>
                 <div style={{ display:"flex", justifyContent:"space-between", padding:"8px 0", borderBottom:`1px solid ${D.border}` }}>
-                  <span style={{ fontSize:13, color:D.textSub }}>Total ganancias (jugadores activos)</span>
+                  <span style={{ fontSize:13, color:D.textSub }}>Ganancias jugadores activos</span>
                   <span style={{ fontSize:14, fontWeight:700, color:D.success }}>+${ganancias}</span>
+                </div>
+                <div style={{ display:"flex", justifyContent:"space-between", padding:"8px 0", borderBottom:`1px solid ${D.border}` }}>
+                  <span style={{ fontSize:13, color:D.textSub }}>Pérdidas jugadores activos</span>
+                  <span style={{ fontSize:14, fontWeight:700, color:D.danger }}>-${perdidas}</span>
                 </div>
                 {totalCastigoPool > 0 && (
                   <div style={{ display:"flex", justifyContent:"space-between", padding:"8px 0", borderBottom:`1px solid ${D.border}` }}>
-                    <span style={{ fontSize:13, color:D.textSub }}>Castigos por abandono</span>
-                    <span style={{ fontSize:14, fontWeight:700, color:D.success }}>+${totalCastigoPool}</span>
+                    <span style={{ fontSize:13, color:D.textSub }}>Pago por abandono</span>
+                    <span style={{ fontSize:14, fontWeight:700, color:D.danger }}>-${totalCastigoPool}</span>
                   </div>
                 )}
-                <div style={{ display:"flex", justifyContent:"space-between", padding:"8px 0", borderBottom:`1px solid ${D.border}` }}>
-                  <span style={{ fontSize:13, color:D.textSub }}>Total pérdidas (jugadores activos)</span>
-                  <span style={{ fontSize:14, fontWeight:700, color:D.danger }}>-${perdidas}</span>
-                </div>
                 <div style={{ display:"flex", justifyContent:"space-between", padding:"8px 0" }}>
-                  <span style={{ fontSize:13, fontWeight:700 }}>Diferencia</span>
+                  <span style={{ fontSize:13, fontWeight:700 }}>Balance total</span>
                   <span style={{ fontSize:14, fontWeight:900, color:cuadra?D.success:D.danger }}>
-                    {cuadra ? "✓ Cuadra" : "⚠️ Revisar calculos"}
+                    {cuadra ? "✓ Cuadra" : "⚠️ Revisar"}
                   </span>
                 </div>
               </Card>
