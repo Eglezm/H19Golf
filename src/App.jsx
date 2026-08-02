@@ -2513,8 +2513,10 @@ function AdminApp({ onExit, torneoConfig = null }) {
       totalJugadores: totalJ,
     }];
     setCastigos(nuevoCastigos);
-    // Guardar en localStorage como respaldo
+    // Guardar en TODOS los lugares posibles
     try { localStorage.setItem("h19-castigos", JSON.stringify(nuevoCastigos)); } catch(e) {}
+    try { sessionStorage.setItem("h19-castigos", JSON.stringify(nuevoCastigos)); } catch(e) {}
+    window._h19castigos = nuevoCastigos;
     const newPlayers = players.filter((_,i) => i !== pi);
     const newScores = scores.filter((_,i) => i !== pi);
     const newMarcas = marcas.map(m => {
@@ -4012,9 +4014,11 @@ function AdminApp({ onExit, torneoConfig = null }) {
   // ── RESULTADOS ──
   if (screen==="res" && results) {
     const { nets, fi, si, pot, money, hcUpdates, marcasMoney, marcasPts, tarjetasMoney, tarjetasCount, fullScores, rawScores } = results;
-    // Leer castigos de todas las fuentes posibles
+    // Leer castigos de TODAS las fuentes
     const castigosLS = (() => { try { const s = localStorage.getItem("h19-castigos"); return s ? JSON.parse(s) : []; } catch(e) { return []; } })();
-    const castigosRes = castigosLS.length > 0 ? castigosLS : ((results.castigos||[]).length > 0 ? results.castigos : castigos);
+    const castigosSS = (() => { try { const s = sessionStorage.getItem("h19-castigos"); return s ? JSON.parse(s) : []; } catch(e) { return []; } })();
+    const castigosWin = window._h19castigos || [];
+    const castigosRes = castigosWin.length > 0 ? castigosWin : castigosSS.length > 0 ? castigosSS : castigosLS.length > 0 ? castigosLS : (results.castigos||[]).length > 0 ? results.castigos : castigos;
     const totalTarjetaAbandonoPool = castigosRes.filter(c=>c.conCastigo).reduce((a,c)=>a+c.tarjetaPago,0);
     const gananciaXCastigo = players.length > 0 ? Math.round(totalTarjetaAbandonoPool / players.length) : 0;
     const totalCastigoPool = castigosRes.filter(c=>c.conCastigo).reduce((a,c)=>a+(c.scorePago+c.tarjetaPago),0);
@@ -4034,7 +4038,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
       <div style={appSt}>
         {/* DEBUG TEMPORAL */}
         <div style={{ background:"#111", color:"#0f0", padding:8, fontSize:10, wordBreak:"break-all", zIndex:999 }}>
-          state:{castigos.length} | results:{(results.castigos||[]).length} | LS:{castigosLS.length} | usando:{castigosRes.length}
+          state:{castigos.length} | LS:{castigosLS.length} | SS:{castigosSS.length} | win:{castigosWin.length} | usando:{castigosRes.length}
           {castigosRes.map((c,i) => <div key={i} style={{color:"#ff0"}}>{c.name}|castigo:{String(c.conCastigo)}|score:{c.scorePago}|tarjeta:{c.tarjetaPago}</div>)}
         </div>
         {torneoConfig && (
