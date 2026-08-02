@@ -2870,8 +2870,12 @@ function AdminApp({ onExit, torneoConfig = null }) {
     });
     const resultData = { ...r, hcUpdates:hc, marcasMoney, marcasPts, tarjetasMoney, tarjetasCount, fullScores, rawScores, castigos };
     setResults(resultData);
+    // Asegurar que castigos estén en localStorage antes de mostrar resultados
+    try { localStorage.setItem("h19-castigos", JSON.stringify(castigos)); } catch(e) {}
+    try { sessionStorage.setItem("h19-castigos", JSON.stringify(castigos)); } catch(e) {}
+    window._h19castigos = castigos;
     // Guardar estado final en Firebase (scores completos permanentes)
-    const finalState = { ...getState(), scores:sc, status:"finalizada" };
+    const finalState = { ...getState(), scores:sc, status:"finalizada", abandonos:castigos };
     updateGame(finalState);
     // Si estamos en modo torneo, guardar resultados finales del grupo explícitamente
     if (torneoConfig?.torneoId) {
@@ -4018,7 +4022,13 @@ function AdminApp({ onExit, torneoConfig = null }) {
     const castigosLS = (() => { try { const s = localStorage.getItem("h19-castigos"); return s ? JSON.parse(s) : []; } catch(e) { return []; } })();
     const castigosSS = (() => { try { const s = sessionStorage.getItem("h19-castigos"); return s ? JSON.parse(s) : []; } catch(e) { return []; } })();
     const castigosWin = window._h19castigos || [];
-    const castigosRes = castigosWin.length > 0 ? castigosWin : castigosSS.length > 0 ? castigosSS : castigosLS.length > 0 ? castigosLS : (results.castigos||[]).length > 0 ? results.castigos : castigos;
+    const castigosRonda = (() => { try { const s = localStorage.getItem("h19-ronda-activa"); if (!s) return []; const d = JSON.parse(s); return Array.isArray(d.abandonos) ? d.abandonos : []; } catch(e) { return []; } })();
+    const castigosRes = castigosWin.length > 0 ? castigosWin
+      : castigosSS.length > 0 ? castigosSS
+      : castigosLS.length > 0 ? castigosLS
+      : castigosRonda.length > 0 ? castigosRonda
+      : (results.castigos||[]).length > 0 ? results.castigos
+      : castigos;
     const totalTarjetaAbandonoPool = castigosRes.filter(c=>c.conCastigo).reduce((a,c)=>a+c.tarjetaPago,0);
     const gananciaXCastigo = players.length > 0 ? Math.round(totalTarjetaAbandonoPool / players.length) : 0;
     const totalCastigoPool = castigosRes.filter(c=>c.conCastigo).reduce((a,c)=>a+(c.scorePago+c.tarjetaPago),0);
@@ -4038,8 +4048,8 @@ function AdminApp({ onExit, torneoConfig = null }) {
       <div style={appSt}>
         {/* DEBUG TEMPORAL */}
         <div style={{ background:"#111", color:"#0f0", padding:8, fontSize:10, wordBreak:"break-all", zIndex:999 }}>
-          state:{castigos.length} | LS:{castigosLS.length} | SS:{castigosSS.length} | win:{castigosWin.length} | usando:{castigosRes.length}
-          {castigosRes.map((c,i) => <div key={i} style={{color:"#ff0"}}>{c.name}|castigo:{String(c.conCastigo)}|score:{c.scorePago}|tarjeta:{c.tarjetaPago}</div>)}
+          st:{castigos.length} LS:{castigosLS.length} SS:{castigosSS.length} win:{castigosWin.length} ronda:{castigosRonda.length} usando:{castigosRes.length}
+          {castigosRes.map((c,i) => <div key={i} style={{color:"#ff0"}}>{c.name}|{String(c.conCastigo)}|{c.scorePago}|{c.tarjetaPago}</div>)}
         </div>
         {torneoConfig && (
           <div style={{ background:`linear-gradient(135deg,#1A5C24,#2E7D32)`, padding:"12px 16px", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
