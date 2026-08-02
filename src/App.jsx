@@ -2171,7 +2171,7 @@ function GestionJugadores({ players, scores, marcas, tarjetas, pars, hole, campo
             {castigos.map((c, i) => (
               <div key={i} style={{ display:"flex", justifyContent:"space-between", fontSize:12, padding:"4px 0" }}>
                 <span style={{ color:D.textSub }}>{c.name}</span>
-                <span style={{ color:D.danger, fontWeight:700 }}>{c.conCastigo ? `-$${c.scorePago + c.tarjetaPago} (castigo)` : "Sin castigo"}</span>
+                <span style={{ color:D.danger, fontWeight:700 }}>{c.conCastigo ? "$" + (c.scorePago + c.tarjetaPago) + " (castigo)" : "Sin castigo"}</span>
               </div>
             ))}
           </div>
@@ -4198,11 +4198,11 @@ function AdminApp({ onExit, torneoConfig = null }) {
                   <div>
                     <div style={{ fontSize:13, fontWeight:600 }}>{c.name}</div>
                     <div style={{ fontSize:11, color:D.textSub }}>
-                      {c.conCastigo ? `Score $${c.scorePago} + Tarjeta $${c.tarjetaPago}` : "Sin castigo"}
+                      {c.conCastigo ? "Score $" + c.scorePago + " + Tarjeta $" + c.tarjetaPago : "Sin castigo"}
                     </div>
                   </div>
                   <div style={{ fontSize:14, fontWeight:900, color:c.conCastigo?D.danger:D.textSub }}>
-                    {c.conCastigo ? `-$${c.scorePago+c.tarjetaPago}` : "—"}
+                    {c.conCastigo ? "-$" + (c.scorePago+c.tarjetaPago) : "--"}
                   </div>
                 </div>
               ))}
@@ -4310,3 +4310,4 @@ function AdminApp({ onExit, torneoConfig = null }) {
   }
 
   return null;
+}
