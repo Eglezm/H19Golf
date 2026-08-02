@@ -2492,9 +2492,10 @@ function AdminApp({ onExit, torneoConfig = null }) {
   const [shareMsg, setShareMsg] = useState("");
   const [abandonoModal, setAbandonoModal] = useState(null);
   const [agregarModal, setAgregarModal] = useState(false);
-  const [castigos, setCastigos] = useState(() => {
-    try { const s = localStorage.getItem("h19-castigos"); return s ? JSON.parse(s) : []; } catch(e) { return []; }
-  });
+  const getCastigos = () => { try { const s = localStorage.getItem("h19-castigos"); return s ? JSON.parse(s) : []; } catch(e) { return []; } };
+  const saveCastigos = (arr) => { try { localStorage.setItem("h19-castigos", JSON.stringify(arr)); sessionStorage.setItem("h19-castigos", JSON.stringify(arr)); window._h19castigos = arr; } catch(e) {} };
+  const [castigos, setCastigosState] = useState(getCastigos);
+  const setCastigos = (arr) => { saveCastigos(arr); setCastigosState(arr); };
   const [jugadoresPinOk, setJugadoresPinOk] = useState(!torneoConfig);
   const [jugadoresPinInput, setJugadoresPinInput] = useState("");
   const [jugadoresPinError, setJugadoresPinError] = useState(false);
@@ -2868,6 +2869,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
       });
       return Math.round(c * 10) / 10;
     });
+    const castigos = getCastigos(); // leer directo de localStorage, no del state
     const resultData = { ...r, hcUpdates:hc, marcasMoney, marcasPts, tarjetasMoney, tarjetasCount, fullScores, rawScores, castigos };
     setResults(resultData);
     // Asegurar que castigos estén en localStorage antes de mostrar resultados
