@@ -2258,9 +2258,12 @@ function AdminApp({ onExit, torneoConfig = null }) {
   const [showTabla, setShowTabla] = useState(false);
   const [rondaId, setRondaId] = useState(null);
   const [shareMsg, setShareMsg] = useState("");
-  const [abandonoModal, setAbandonoModal] = useState(null); // {pi, player}
+  const [abandonoModal, setAbandonoModal] = useState(null);
   const [agregarModal, setAgregarModal] = useState(false);
-  const [castigos, setCastigos] = useState([]); // [{name, scorePago, tarjetaPago}]
+  const [castigos, setCastigos] = useState([]);
+  const [jugadoresPinOk, setJugadoresPinOk] = useState(!torneoConfig); // en única salida ya está autenticado
+  const [jugadoresPinInput, setJugadoresPinInput] = useState("");
+  const [jugadoresPinError, setJugadoresPinError] = useState(false);
   const [distGreen, setDistGreen] = useState(null);
   const [gpsError, setGpsError] = useState("");
   const [gpsLoading, setGpsLoading] = useState(false);
@@ -3670,6 +3673,22 @@ function AdminApp({ onExit, torneoConfig = null }) {
         {/* ── TAB JUGADORES ── */}
         {tab==="jugadores" && (
           <div>
+            {!jugadoresPinOk ? (
+              <Card>
+                <SLabel>🔒 Acceso restringido</SLabel>
+                <div style={{ fontSize:12, color:D.textSub, marginBottom:12, textAlign:"center" }}>
+                  Solo el administrador general puede modificar jugadores en un torneo
+                </div>
+                <input type="password" value={jugadoresPinInput} onChange={e=>setJugadoresPinInput(e.target.value)}
+                  placeholder="PIN admin general" maxLength={6}
+                  style={{ width:"100%", padding:"12px", border:`1px solid ${jugadoresPinError?D.danger:D.border}`, borderRadius:10, background:D.surface, color:D.text, fontSize:20, textAlign:"center", letterSpacing:6, fontWeight:700, boxSizing:"border-box", marginBottom:8 }} />
+                {jugadoresPinError && <div style={{ color:D.danger, fontSize:12, textAlign:"center", marginBottom:8 }}>PIN incorrecto</div>}
+                <Btn onClick={() => {
+                  if (jugadoresPinInput === ADMIN_PIN) { setJugadoresPinOk(true); setJugadoresPinError(false); setJugadoresPinInput(""); }
+                  else setJugadoresPinError(true);
+                }}>Entrar</Btn>
+              </Card>
+            ) : (
             <Card>
               <SLabel>👥 Jugadores en la ronda</SLabel>
               {players.map((p, pi) => (
@@ -3813,6 +3832,8 @@ function AdminApp({ onExit, torneoConfig = null }) {
                 Cancelar
               </button>
             </div>
+          </div>
+            )} {/* end jugadoresPinOk */}
           </div>
         )}
 
