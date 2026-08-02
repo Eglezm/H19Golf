@@ -696,7 +696,7 @@ function SpectatorView({ rondaId }) {
                   <div style={{ fontSize:13, fontWeight:700 }}>{p.name}</div>
                   <div style={{ fontSize:14, fontWeight:900, color:p.total>=0?D.success:D.danger }}>{p.total>=0?`+$${p.total}`:`-$${Math.abs(p.total)}`}</div>
                 </div>
-                <div style={{ fontSize:11, color:D.textSub }}>Score ${p.scoreMoney} · Marcas ${p.marcasMoney} ({p.marcasPts}pts) · Tarjetas ${p.tarjetasMoney} ({p.tarjetasCount})</div>
+                <div style={{ fontSize:11, color:D.textSub }}>Score {"$"+String(p.scoreMoney)} · Marcas {"$"+String(p.marcasMoney)} ({p.marcasPts}pts) · Tarjetas {"$"+String(p.tarjetasMoney)} ({p.tarjetasCount})</div>
               </div>
             ))}
           </Card>
@@ -945,7 +945,7 @@ function SpectatorView({ rondaId }) {
                   <div style={{ fontSize:13, fontWeight:700 }}>{p.name}</div>
                   <div style={{ fontSize:14, fontWeight:900, color:p.total>=0?D.success:D.danger }}>{p.total>=0?`+$${p.total}`:`-$${Math.abs(p.total)}`}</div>
                 </div>
-                <div style={{ fontSize:10, color:D.textSub }}>Score ${p.scoreMoney} · Marcas ${p.marcasMoney} ({p.marcasPts}pts) · Tarj ${p.tarjetasMoney} ({p.tarjetasCount})</div>
+                <div style={{ fontSize:10, color:D.textSub }}>Score {"$"+String(p.scoreMoney)} · Marcas {"$"+String(p.marcasMoney)} ({p.marcasPts}pts) · Tarj {"$"+String(p.tarjetasMoney)} ({p.tarjetasCount})</div>
               </div>
             ))}
             <div style={{ fontSize:10, color:D.textDim, textAlign:"center", marginTop:6 }}>Los hoyos sin jugar se calculan como par</div>
@@ -1098,7 +1098,7 @@ function TorneoCrear({ onExit, onIniciarGrupo, appStyle }) {
               <div key={label} style={{ display:"flex", alignItems:"center", gap:10, padding:"8px 0", borderBottom:`1px solid ${D.border}` }}>
                 <div style={{ flex:1, fontSize:13, color:D.textSub }}>{label}</div>
                 <button onClick={() => setVal(Math.max(0,val-10))} style={{ width:30,height:30,borderRadius:"50%",border:`1px solid ${D.border}`,background:"transparent",color:D.text,cursor:"pointer",fontSize:18 }}>-</button>
-                <div style={{ width:50, textAlign:"center", fontSize:15, fontWeight:700, color:D.gold }}>${val}</div>
+                <div style={{ width:50, textAlign:"center", fontSize:15, fontWeight:700, color:D.gold }}>{"$"+String(val)}</div>
                 <button onClick={() => setVal(val+10)} style={{ width:30,height:30,borderRadius:"50%",border:`1px solid ${D.gold}`,background:D.goldDim,color:D.gold,cursor:"pointer",fontSize:18 }}>+</button>
               </div>
             ))}
@@ -1795,9 +1795,9 @@ function TorneoSpectator({ torneoId, appStyle, isAdmin = false }) {
               return (
                 <div style={{ marginTop:10, paddingTop:10, borderTop:`1px solid ${D.border}`, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
                   <div style={{ fontSize:11, color:D.textSub }}>
-                    <span style={{ color:D.success, fontWeight:700 }}>+${ganancias}</span>
+                    <span style={{ color:D.success, fontWeight:700 }}>+{"$"+String(ganancias)}</span>
                     <span style={{ color:D.textDim, margin:"0 6px" }}>vs</span>
-                    <span style={{ color:D.danger, fontWeight:700 }}>-${Math.abs(perdidas)}</span>
+                    <span style={{ color:D.danger, fontWeight:700 }}>-{"$"+String(Math.abs(perdidas))}</span>
                   </div>
                   <div style={{ fontSize:11, fontWeight:700, color:cuadra?D.success:D.danger }}>
                     {cuadra ? "✓ Cuadra" : `⚠️ Dif $${ganancias+perdidas}`}
@@ -2302,9 +2302,9 @@ function AbandonoModal({ player, pi, players, apuesta, tarjetaVal, castigos, set
         <div style={{ background:D.redBg, border:`1px solid ${D.danger}44`, borderRadius:10, padding:12, marginBottom:12 }}>
           <div style={{ fontSize:13, fontWeight:700, color:D.danger, marginBottom:6 }}>Con castigo</div>
           <div style={{ fontSize:12, color:D.textSub }}>
-            Score: <strong style={{color:D.text}}>${castScore}</strong> + Tarjeta: <strong style={{color:D.text}}>${tarjetaVal} x {restantes} = ${castTarjeta}</strong>
+            Score: <strong style={{color:D.text}}>{"$"+String(castScore)}</strong> + Tarjeta: <strong style={{color:D.text}}>{"$"+String(tarjetaVal)} x {restantes} = {"$"+String(castTarjeta)}</strong>
           </div>
-          <div style={{ fontSize:13, fontWeight:900, color:D.danger, marginTop:4 }}>Total que paga: ${castTotal}</div>
+          <div style={{ fontSize:13, fontWeight:900, color:D.danger, marginTop:4 }}>Total que paga: {"$"+String(castTotal)}</div>
           <div style={{ fontSize:10, color:D.textDim, marginTop:4 }}>Repartido entre los {restantes} jugadores restantes</div>
         </div>
         <div style={{ display:"flex", gap:8, marginBottom:12 }}>
@@ -3184,7 +3184,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
         <div style={{ width:"100%", padding:"10px 14px", background:D.goldDim, borderRadius:10, fontSize:12, color:D.gold }}>
           <div style={{ fontWeight:700, marginBottom:4 }}>📋 Configuración del torneo:</div>
           <div>{CAMPOS[torneoConfig.campo]?.nombre} · {torneoConfig.nHoles} hoyos</div>
-          <div>Score ${torneoConfig.apuesta} · Marcas ${torneoConfig.marcaVal} · Tarjetas ${torneoConfig.tarjetaVal}</div>
+          <div>Score {"$"+String(torneoConfig.apuesta)} · Marcas {"$"+String(torneoConfig.marcaVal)} · Tarjetas {"$"+String(torneoConfig.tarjetaVal)}</div>
         </div>
         <Btn onClick={() => { if (grupoNombre.trim()) setScreen("dir"); }} disabled={!grupoNombre.trim()}>
           Continuar ->
@@ -3507,7 +3507,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
                                 <div style={{ fontSize:14, fontWeight:900, color:j.total>=0?D.success:D.danger }}>
                                   {j.total>=0?`+$${j.total}`:`-$${Math.abs(j.total)}`}
                                 </div>
-                                <div style={{ fontSize:9, color:D.textDim }}>Sc ${j.scoreMoney} · Mk ${j.marcasMoney} · Tj ${j.tarjetasMoney}</div>
+                                <div style={{ fontSize:9, color:D.textDim }}>Sc {"$"+String(j.scoreMoney)} · Mk {"$"+String(j.marcasMoney)} · Tj {"$"+String(j.tarjetasMoney)}</div>
                               </div>
                             </div>
                           ))}
@@ -3640,7 +3640,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
             <div key={label} style={{ display:"flex", alignItems:"center", gap:10, padding:"8px 0", borderBottom:`1px solid ${D.border}` }}>
               <div style={{ flex:1, fontSize:13, color:D.textSub }}>{label}</div>
               <button onClick={() => set(Math.max(0,val-10))} style={{ width:30,height:30,borderRadius:"50%",border:`1px solid ${D.border}`,background:"transparent",color:D.text,cursor:"pointer",fontSize:18,display:"flex",alignItems:"center",justifyContent:"center" }}>-</button>
-              <div style={{ width:50, textAlign:"center", fontSize:15, fontWeight:700, color:D.gold }}>${val}</div>
+              <div style={{ width:50, textAlign:"center", fontSize:15, fontWeight:700, color:D.gold }}>{"$"+String(val)}</div>
               <button onClick={() => set(val+10)} style={{ width:30,height:30,borderRadius:"50%",border:`1px solid ${D.gold}`,background:D.goldDim,color:D.gold,cursor:"pointer",fontSize:18,display:"flex",alignItems:"center",justifyContent:"center" }}>+</button>
             </div>
           ))}
@@ -3652,7 +3652,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
           </div>
           {n>=2 && (
             <div style={{ fontSize:12, color:D.textSub, padding:"8px 12px", background:D.surface, borderRadius:10, marginBottom:12, border:`1px solid ${D.border}` }}>
-              🏆 Premio <span style={{ color:D.gold, fontWeight:700 }}>${pot}</span> · {n>=10?`1er $${Math.round(pot*0.6)} (60%) · 2do $${Math.round(pot*0.4)} (40%)`:"Todo para el 1er lugar"}
+              🏆 Premio <span style={{ color:D.gold, fontWeight:700 }}>{"$"+String(pot)}</span> · {n>=10?`1er ${"$"+String(Math.round(pot*0.6))} (60%) · 2do ${"$"+String(Math.round(pot*0.4))} (40%)`:"Todo para el 1er lugar"}
             </div>
           )}
           {dir.map((p, idx) => (
@@ -4264,11 +4264,11 @@ function AdminApp({ onExit, torneoConfig = null }) {
                 <div>
                   <div style={{ display:"flex", justifyContent:"space-between", padding:"6px 0", borderBottom:`1px solid ${D.border}` }}>
                     <div><div style={{ fontSize:12, fontWeight:700 }}>📊 Score</div><div style={{ fontSize:11, color:D.textSub }}>Apuesta de la ronda</div></div>
-                    <div style={{ fontSize:15, fontWeight:700, color:D.danger }}>-${c.scorePago}</div>
+                    <div style={{ fontSize:15, fontWeight:700, color:D.danger }}>-{"$"+String(c.scorePago)}</div>
                   </div>
                   <div style={{ display:"flex", justifyContent:"space-between", padding:"6px 0" }}>
-                    <div><div style={{ fontSize:12, fontWeight:700 }}>🃏 Tarjeta abandono</div><div style={{ fontSize:11, color:D.textSub }}>${tarjetaVal} a cada uno de los {players.length} jugadores activos</div></div>
-                    <div style={{ fontSize:15, fontWeight:700, color:D.danger }}>-${c.tarjetaPago}</div>
+                    <div><div style={{ fontSize:12, fontWeight:700 }}>🃏 Tarjeta abandono</div><div style={{ fontSize:11, color:D.textSub }}>{"$"+String(tarjetaVal)} a cada uno de los {players.length} jugadores activos</div></div>
+                    <div style={{ fontSize:15, fontWeight:700, color:D.danger }}>-{"$"+String(c.tarjetaPago)}</div>
                   </div>
                 </div>
               )}
@@ -4411,16 +4411,16 @@ function AdminApp({ onExit, torneoConfig = null }) {
                 <SLabel>✅ Comprobación de cuentas</SLabel>
                 <div style={{ display:"flex", justifyContent:"space-between", padding:"8px 0", borderBottom:`1px solid ${D.border}` }}>
                   <span style={{ fontSize:13, color:D.textSub }}>Ganancias jugadores activos</span>
-                  <span style={{ fontSize:14, fontWeight:700, color:D.success }}>+${ganancias}</span>
+                  <span style={{ fontSize:14, fontWeight:700, color:D.success }}>+{"$"+String(ganancias)}</span>
                 </div>
                 <div style={{ display:"flex", justifyContent:"space-between", padding:"8px 0", borderBottom:`1px solid ${D.border}` }}>
                   <span style={{ fontSize:13, color:D.textSub }}>Pérdidas jugadores activos</span>
-                  <span style={{ fontSize:14, fontWeight:700, color:D.danger }}>-${perdidas}</span>
+                  <span style={{ fontSize:14, fontWeight:700, color:D.danger }}>-{"$"+String(perdidas)}</span>
                 </div>
                 {totalCastigoPool > 0 && (
                   <div style={{ display:"flex", justifyContent:"space-between", padding:"8px 0", borderBottom:`1px solid ${D.border}` }}>
                     <span style={{ fontSize:13, color:D.textSub }}>Pago por abandono</span>
-                    <span style={{ fontSize:14, fontWeight:700, color:D.danger }}>-${totalCastigoPool}</span>
+                    <span style={{ fontSize:14, fontWeight:700, color:D.danger }}>-{"$"+String(totalCastigoPool)}</span>
                   </div>
                 )}
                 <div style={{ display:"flex", justifyContent:"space-between", padding:"8px 0" }}>
