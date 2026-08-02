@@ -2592,6 +2592,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
           tarjetas: state.tarjetas,
           hole: state.hole,
           status: state.status,
+          abandonos: state.abandonos || [],
           updatedAt: Date.now(),
         });
       }
@@ -2973,6 +2974,9 @@ function AdminApp({ onExit, torneoConfig = null }) {
       setPars(p);
       setTab("score");
       setGrupoNombre(torneoConfig.grupoNombre || "Mi Grupo");
+      // Restaurar abandonos
+      const abandonosGuardados = ra.abandonos ? (Array.isArray(ra.abandonos) ? ra.abandonos : Object.values(ra.abandonos)) : [];
+      setCastigos(abandonosGuardados);
 
       // Buscar el rondaId en localStorage, si no hay generar uno nuevo
       let rid = null;
