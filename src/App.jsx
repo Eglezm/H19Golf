@@ -4041,7 +4041,8 @@ function AdminApp({ onExit, torneoConfig = null }) {
 
   // ── RESULTADOS ──
   if (screen==="res" && results) {
-    const { nets, fi, si, pot, money, hcUpdates, marcasMoney, marcasPts, tarjetasMoney, tarjetasCount, fullScores, rawScores } = results;
+    const safeResults = results || {};
+    const { nets=[], fi=[], si=[], pot=0, money=[], hcUpdates=[], marcasMoney=[], marcasPts=[], tarjetasMoney=[], tarjetasCount=[], fullScores=[], rawScores=[] } = safeResults;
     // Leer castigos de TODAS las fuentes
     const castigosLS = (() => { try { const s = localStorage.getItem("h19-castigos"); return s ? JSON.parse(s) : []; } catch(e) { return []; } })();
     const castigosSS = (() => { try { const s = sessionStorage.getItem("h19-castigos"); return s ? JSON.parse(s) : []; } catch(e) { return []; } })();
@@ -4051,21 +4052,20 @@ function AdminApp({ onExit, torneoConfig = null }) {
       : castigosSS.length > 0 ? castigosSS
       : castigosLS.length > 0 ? castigosLS
       : castigosRonda.length > 0 ? castigosRonda
-      : (results.castigos||[]).length > 0 ? results.castigos
+      : (safeResults.castigos||[]).length > 0 ? safeResults.castigos
       : castigos;
     const totalTarjetaAbandonoPool = castigosRes.filter(c=>c.conCastigo).reduce((a,c)=>a+c.tarjetaPago,0);
     const gananciaXCastigo = players.length > 0 ? Math.round(totalTarjetaAbandonoPool / players.length) : 0;
     const totalCastigoPool = castigosRes.filter(c=>c.conCastigo).reduce((a,c)=>a+(c.scorePago+c.tarjetaPago),0);
-
     const ranked = players.map((p,i) => ({
-      ...p, net:nets[i], scoreMoney:money[i], marcasMoney:marcasMoney[i],
-      tarjetasMoney:tarjetasMoney[i],
+      ...p, net:nets[i]??0, scoreMoney:money[i]??0, marcasMoney:marcasMoney[i]??0,
+      tarjetasMoney:tarjetasMoney[i]??0,
       castigoMoney: gananciaXCastigo,
-      total:money[i]+marcasMoney[i]+tarjetasMoney[i]+gananciaXCastigo,
-      pts:marcasPts[i], cards:tarjetasCount[i], bruto:fullScores[i].reduce((a,b)=>a+b,0)
+      total:(money[i]??0)+(marcasMoney[i]??0)+(tarjetasMoney[i]??0)+gananciaXCastigo,
+      pts:marcasPts[i]??0, cards:tarjetasCount[i]??0, bruto:(fullScores[i]||[]).reduce((a,b)=>a+b,0)
     })).sort((a,b)=>a.net-b.net);
-    const fn = fi.map(i=>players[i].name).join(" · ");
-    const fp = money[fi[0]];
+    const fn = fi.map(i=>players[i]?.name||"?").join(" · ");
+    const fp = fi.length > 0 ? (money[fi[0]]??0) : 0;
     const nn = players.length;
 
     return (
