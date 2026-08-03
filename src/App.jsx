@@ -2849,8 +2849,8 @@ function AdminApp({ onExit, torneoConfig = null }) {
     const sc = commitHole(scores, hole); setScores(sc);
     const fullScores = sc.map(row => row.map((v,j) => v===null?pars[j]:v));
     const rawScores = sc;
-    // El score de los abandonados con castigo entra al pozo
-    const extraPotAbandonos = castigos.filter(c=>c.conCastigo).reduce((a,c)=>a+c.scorePago,0);
+    const castigosFinales = getCastigos(); // siempre leer de localStorage
+    const extraPotAbandonos = castigosFinales.filter(c=>c.conCastigo).reduce((a,c)=>a+c.scorePago,0);
     const r = calcMoney(players, fullScores, apuesta, extraPotAbandonos);
     const playsScoreCount = players.filter(p => p.opts ? p.opts.score !== false : true).length;
     const siParaHC = (playsScoreCount >= 10 && r.fi.length === 1) ? r.si : [];
@@ -2869,15 +2869,10 @@ function AdminApp({ onExit, torneoConfig = null }) {
       });
       return Math.round(c * 10) / 10;
     });
-    const castigos = getCastigos(); // leer directo de localStorage, no del state
-    const resultData = { ...r, hcUpdates:hc, marcasMoney, marcasPts, tarjetasMoney, tarjetasCount, fullScores, rawScores, castigos };
+    const resultData = { ...r, hcUpdates:hc, marcasMoney, marcasPts, tarjetasMoney, tarjetasCount, fullScores, rawScores, castigos:castigosFinales };
     setResults(resultData);
-    // Asegurar que castigos estén en localStorage antes de mostrar resultados
-    try { localStorage.setItem("h19-castigos", JSON.stringify(castigos)); } catch(e) {}
-    try { sessionStorage.setItem("h19-castigos", JSON.stringify(castigos)); } catch(e) {}
-    window._h19castigos = castigos;
-    // Guardar estado final en Firebase (scores completos permanentes)
-    const finalState = { ...getState(), scores:sc, status:"finalizada", abandonos:castigos };
+    window._h19castigos = castigosFinales;
+    const finalState = { ...getState(), scores:sc, status:"finalizada", abandonos:castigosFinales };
     updateGame(finalState);
     // Si estamos en modo torneo, guardar resultados finales del grupo explícitamente
     if (torneoConfig?.torneoId) {
