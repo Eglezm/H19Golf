@@ -2104,24 +2104,30 @@ function JugadoresPanel(props) {
     return (
       <Card>
         <SLabel>Eliminar jugador</SLabel>
-        <div style={{ fontSize:14, fontWeight:700, marginBottom:8 }}>{pAbandono.name} abandona</div>
+        <div style={{ fontSize:14, fontWeight:700, marginBottom:12 }}>{pAbandono.name} abandona la ronda</div>
         {torneoConfig && (
-          <div style={{ marginBottom:12, padding:10, background:D.goldDim, borderRadius:10 }}>
-            <div style={{ fontSize:12, color:D.gold, fontWeight:700, marginBottom:4 }}>
-              Total jugadores en el torneo
+          <div style={{ marginBottom:12, padding:12, background:D.goldDim, border:"1px solid "+D.gold+"44", borderRadius:10 }}>
+            <div style={{ fontSize:12, color:D.gold, fontWeight:700, marginBottom:8 }}>
+              ⚠️ Total de jugadores en el torneo completo
             </div>
-            <div style={{ display:"flex", alignItems:"center", gap:10, marginTop:6 }}>
+            <div style={{ fontSize:11, color:D.textSub, marginBottom:8 }}>
+              {"Ajusta al número total de jugadores en todos los grupos (actualmente: "+players.length+" en este grupo)"}
+            </div>
+            <div style={{ display:"flex", alignItems:"center", gap:12 }}>
               <button
                 onClick={() => setTotalJugadoresTorneoAdmin(t => Math.max(players.length, (t || players.length) - 1))}
-                style={{ width:32, height:32, borderRadius:"50%", border:"1px solid "+D.border, background:D.surface, color:D.text, fontSize:18, cursor:"pointer" }}>
+                style={{ width:40, height:40, borderRadius:"50%", border:"1px solid "+D.border, background:D.surface, color:D.text, fontSize:22, cursor:"pointer", fontWeight:700 }}>
                 -
               </button>
-              <div style={{ fontSize:22, fontWeight:900, color:D.gold, minWidth:30, textAlign:"center" }}>
-                {totalJugadoresTorneoAdmin || players.length}
+              <div style={{ flex:1, textAlign:"center" }}>
+                <div style={{ fontSize:32, fontWeight:900, color:D.gold }}>
+                  {totalJugadoresTorneoAdmin || players.length}
+                </div>
+                <div style={{ fontSize:10, color:D.textSub }}>jugadores en el torneo</div>
               </div>
               <button
                 onClick={() => setTotalJugadoresTorneoAdmin(t => (t || players.length) + 1)}
-                style={{ width:32, height:32, borderRadius:"50%", border:"1px solid "+D.gold, background:D.goldDim, color:D.gold, fontSize:18, cursor:"pointer" }}>
+                style={{ width:40, height:40, borderRadius:"50%", border:"1px solid "+D.gold, background:D.goldDim, color:D.gold, fontSize:22, cursor:"pointer", fontWeight:700 }}>
                 +
               </button>
             </div>
@@ -2528,6 +2534,21 @@ function AdminApp({ onExit, torneoConfig = null }) {
   const [abandonandoIdx, setAbandonandoIdx] = useState(null);
   const [agregandoJugador, setAgregandoJugador] = useState(false);
   const [totalJugadoresTorneoAdmin, setTotalJugadoresTorneoAdmin] = useState(0);
+
+  // En modo torneo, obtener total de jugadores de todos los grupos automáticamente
+  useEffect(() => {
+    if (!torneoConfig?.torneoId) return;
+    const r = ref(db, `torneos/${torneoConfig.torneoId}/grupos`);
+    get(r).then(snap => {
+      if (!snap.exists()) return;
+      const grupos = snap.val();
+      let total = 0;
+      Object.values(grupos).forEach(g => {
+        if (g.players) total += Array.isArray(g.players) ? g.players.length : Object.keys(g.players).length;
+      });
+      if (total > 0) setTotalJugadoresTorneoAdmin(total);
+    }).catch(() => {});
+  }, [torneoConfig?.torneoId]);
 
   const handleEliminarJugador = (pi, conCastigo) => {
     const totalJ = (torneoConfig && totalJugadoresTorneoAdmin > 0) ? totalJugadoresTorneoAdmin : players.length;
@@ -4102,6 +4123,38 @@ function AdminApp({ onExit, torneoConfig = null }) {
           </div>
         )}
         <div style={{ padding:"0 12px" }}>
+          {/* Jugador que abandono - mostrar primero y siempre */}
+          {castigosRes.length > 0 && castigosRes.map((c, i) => (
+            <Card key={"abandono-top-"+i} style={{ border:`2px solid ${D.danger}`, marginBottom:8 }}>
+              <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:8, paddingBottom:8, borderBottom:`1px solid ${D.border}` }}>
+                <div style={{ fontSize:24 }}>🚪</div>
+                <div style={{ flex:1 }}>
+                  <div style={{ fontSize:15, fontWeight:700 }}>{c.name}</div>
+                  <div style={{ fontSize:11, color:D.danger }}>Abandono{c.conCastigo ? " con castigo" : " sin castigo"}</div>
+                </div>
+                <div style={{ textAlign:"right" }}>
+                  <div style={{ fontSize:22, fontWeight:900, color:D.danger }}>
+                    {c.conCastigo ? "-$"+(c.scorePago+c.tarjetaPago) : "$0"}
+                  </div>
+                </div>
+              </div>
+              {c.conCastigo && (
+                <div>
+                  <div style={{ display:"flex", justifyContent:"space-between", padding:"6px 0", borderBottom:`1px solid ${D.border}` }}>
+                    <div style={{ fontSize:12 }}>📊 Score (apuesta)</div>
+                    <div style={{ fontSize:14, fontWeight:700, color:D.danger }}>-{"$"+c.scorePago}</div>
+                  </div>
+                  <div style={{ display:"flex", justifyContent:"space-between", padding:"6px 0", borderBottom:`1px solid ${D.border}` }}>
+                    <div style={{ fontSize:12 }}>{"🃏 Tarjeta abandono ($"+tarjetaVal+" x "+(c.totalJugadores?c.totalJugadores-1:players.length)+" jugadores)"}</div>
+                    <div style={{ fontSize:14, fontWeight:700, color:D.danger }}>-{"$"+c.tarjetaPago}</div>
+                  </div>
+                  <div style={{ fontSize:11, color:D.textSub, paddingTop:6 }}>
+                    {"Cada jugador activo recibe: +$"+gananciaXCastigo+" de tarjeta de abandono"}
+                  </div>
+                </div>
+              )}
+            </Card>
+          ))}
           <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
             <div style={{ fontSize:10, fontWeight:700, color:D.gold, textTransform:"uppercase", letterSpacing:2 }}>Clasificación final v8</div>
             <button onClick={() => setShowTabla(s=>!s)} style={{ padding:"5px 12px", border:`1px solid ${showTabla?D.gold:D.border}`, borderRadius:20, background:showTabla?D.goldDim:"transparent", color:showTabla?D.gold:D.textSub, fontSize:11, fontWeight:700, cursor:"pointer" }}>
