@@ -800,6 +800,32 @@ function SpectatorView({ rondaId }) {
             </Card>
           )}
 
+          {histData.abandonos && histData.abandonos.length > 0 && (
+            <Card style={{ border:`1px solid ${D.danger}44` }}>
+              <SLabel>🚪 Jugadores que abandonaron</SLabel>
+              {histData.abandonos.map((c, i) => (
+                <div key={i} style={{ padding:"10px 0", borderBottom:i<histData.abandonos.length-1?`1px solid ${D.border}`:"none" }}>
+                  <div style={{ display:"flex", justifyContent:"space-between", marginBottom:4 }}>
+                    <div style={{ fontSize:13, fontWeight:700 }}>{c.name}</div>
+                    <div style={{ fontSize:14, fontWeight:900, color:D.danger }}>
+                      {c.conCastigo ? "-$"+(c.scorePago+c.tarjetaPago) : "Sin castigo"}
+                    </div>
+                  </div>
+                  {c.conCastigo && (
+                    <div style={{ fontSize:11, color:D.textSub }}>
+                      {"Score: $"+c.scorePago+" · Tarjeta abandono: $"+c.tarjetaPago+" (a todos los jugadores del torneo)"}
+                    </div>
+                  )}
+                </div>
+              ))}
+              <div style={{ marginTop:8, paddingTop:8, borderTop:`1px solid ${D.border}` }}>
+                <div style={{ fontSize:11, color:D.textSub }}>
+                  {"Cada jugador activo recibe: $"+Math.round(histData.abandonos.filter(c=>c.conCastigo).reduce((a,c)=>a+c.tarjetaPago,0) / Math.max(1, histData.jugadores?.length||1))+" por tarjeta de abandono"}
+                </div>
+              </div>
+            </Card>
+          )}
+
           <div style={{ textAlign:"center", fontSize:11, color:D.textDim, marginTop:8 }}>Resultados finales · Vista de solo lectura</div>
         </div>
       </div>
@@ -2912,6 +2938,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
         rondaId,
         apuesta, marcaVal, tarjetaVal,
         jugadores: jugadoresDetalle,
+        abandonos: castigosFinales,
         hcUpdates: hc.map(u => ({ name:u.name, before:u.before, delta:u.delta, after:u.after })),
         // Tarjeta completa hoyo por hoyo
         pars,
