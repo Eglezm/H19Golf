@@ -1622,14 +1622,24 @@ function TorneoSpectator({ torneoId, appStyle, isAdmin = false }) {
     return a.vsParHC - b.vsParHC;
   });
 
-  // Calcular dinero global (score) + por grupo (marcas+tarjetas)
+  // Recolectar todos los abandonos de todos los grupos
+  const todosAbandonos = [];
+  grupos.forEach(([gid, g]) => {
+    const abs = g.abandonos ? (Array.isArray(g.abandonos) ? g.abandonos : Object.values(g.abandonos)) : [];
+    abs.forEach(a => todosAbandonos.push({ ...a, grupoId: gid }));
+  });
+  const extraPotAbandonos = todosAbandonos.filter(a=>a.conCastigo).reduce((a,c)=>a+c.scorePago,0);
+  const totalTarjetaAbandonos = todosAbandonos.filter(a=>a.conCastigo).reduce((a,c)=>a+c.tarjetaPago,0);
+  const gananciaXCastigoGlobal = allPlayers.length > 0 ? Math.round(totalTarjetaAbandonos / allPlayers.length) : 0;
+
+  // Calcular dinero global (score) incluyendo el pozo de abandonos
   const playersForCalc = allPlayers.map(p => ({ ...p, opts:{score:true,marcas:true,tarjetas:true} }));
   const fullScoresForCalc = allPlayers.map(p => pars.map((par,h) => {
     const v = p.scores[h];
     return (v===null||v===undefined) ? par : v;
   }));
   const moneyGlobal = allPlayers.length >= 2
-    ? calcMoney(playersForCalc, fullScoresForCalc, torneo.apuesta || 50).money
+    ? calcMoney(playersForCalc, fullScoresForCalc, torneo.apuesta || 50, extraPotAbandonos).money
     : allPlayers.map(() => 0);
 
   // Marcas y tarjetas por grupo (excluyendo peorscore que se calcula globalmente)
@@ -1707,7 +1717,8 @@ function TorneoSpectator({ torneoId, appStyle, isAdmin = false }) {
     // Peor score global
     const peorM = peorScoreMoneyGlobal[`${p.grupoId}-${p.id}`] || 0;
     const tarjetasM = tarjetasLocalesM + peorM;
-    return { ...p, scoreM, marcasM, tarjetasM, totalM: scoreM + marcasM + tarjetasM };
+    const castigoM = gananciaXCastigoGlobal; // ganancia por tarjeta de abandono
+    return { ...p, scoreM, marcasM, tarjetasM, castigoM, totalM: scoreM + marcasM + tarjetasM + castigoM };
   });
 
   return (
@@ -1793,6 +1804,33 @@ function TorneoSpectator({ torneoId, appStyle, isAdmin = false }) {
           </Card>
         )}
 
+        {/* Resumen global de abandonos */}
+        {todosAbandonos.length > 0 && (
+          <Card style={{ border:`1px solid ${D.danger}44` }}>
+            <SLabel>🚪 Jugadores que abandonaron</SLabel>
+            {todosAbandonos.map((a, i) => (
+              <div key={i} style={{ padding:"8px 0", borderBottom:i<todosAbandonos.length-1?`1px solid ${D.border}`:"none" }}>
+                <div style={{ display:"flex", justifyContent:"space-between" }}>
+                  <div style={{ fontSize:13, fontWeight:700 }}>{a.name}</div>
+                  <div style={{ fontSize:14, fontWeight:900, color:D.danger }}>
+                    {a.conCastigo ? "-$"+(a.scorePago+a.tarjetaPago) : "Sin castigo"}
+                  </div>
+                </div>
+                {a.conCastigo && (
+                  <div style={{ fontSize:11, color:D.textSub, marginTop:2 }}>
+                    {"Score: $"+a.scorePago+" · Tarjeta: $"+a.tarjetaPago+" (a todos los jugadores)"}
+                  </div>
+                )}
+              </div>
+            ))}
+            {gananciaXCastigoGlobal > 0 && (
+              <div style={{ marginTop:8, paddingTop:8, borderTop:`1px solid ${D.border}`, fontSize:11, color:D.success, fontWeight:700 }}>
+                {"Cada jugador activo recibe: +$"+gananciaXCastigoGlobal+" por tarjeta de abandono"}
+              </div>
+            )}
+          </Card>
+        )}
+
         {/* Dinero en vivo */}
         {rankedWithMoney.some(p => p.vsParHC !== null) && (
           <Card>
@@ -1809,7 +1847,10 @@ function TorneoSpectator({ torneoId, appStyle, isAdmin = false }) {
                   </div>
                   <div style={{ fontSize:14, fontWeight:900, color:moneyColor(p.totalM) }}>{fmtMoney(p.totalM)}</div>
                 </div>
-                <div style={{ fontSize:10, color:D.textSub, paddingLeft:28 }}>Score {fmtMoney(p.scoreM)} · Marcas {fmtMoney(p.marcasM)} · Tarjetas {fmtMoney(p.tarjetasM)}</div>
+                <div style={{ fontSize:10, color:D.textSub, paddingLeft:28 }}>
+                  Score {fmtMoney(p.scoreM)} · Marcas {fmtMoney(p.marcasM)} · Tarjetas {fmtMoney(p.tarjetasM)}
+                  {p.castigoM > 0 ? " · Abandono +" + "$" + p.castigoM : ""}
+                </div>
               </div>
             ))}
             <div style={{ fontSize:10, color:D.textDim, textAlign:"center", marginTop:6 }}>Score: global entre todos · Marcas y Tarjetas: dentro de cada grupo</div>
