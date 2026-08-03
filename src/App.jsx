@@ -1901,6 +1901,26 @@ function TorneoSpectator({ torneoId, appStyle, isAdmin = false }) {
                   </div>
                 ) : null;
               })()}
+              {/* Abandonos del grupo */}
+              {(() => {
+                const abandonos = g.abandonos ? (Array.isArray(g.abandonos) ? g.abandonos : Object.values(g.abandonos)) : [];
+                return abandonos.length > 0 ? (
+                  <div style={{ marginTop:10, paddingTop:10, borderTop:`1px solid ${D.border}` }}>
+                    <div style={{ fontSize:10, fontWeight:700, color:D.danger, textTransform:"uppercase", letterSpacing:1, marginBottom:6 }}>🚪 Abandonos</div>
+                    {abandonos.map((c, i) => (
+                      <div key={i} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", fontSize:11, padding:"4px 0" }}>
+                        <div>
+                          <span style={{ fontWeight:700 }}>{c.name}</span>
+                          <span style={{ color:D.textSub, marginLeft:4 }}>{c.conCastigo ? "con castigo" : "sin castigo"}</span>
+                        </div>
+                        <span style={{ fontWeight:700, color:D.danger }}>
+                          {c.conCastigo ? "-$"+(c.scorePago+c.tarjetaPago) : "$0"}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                ) : null;
+              })()}
             </Card>
           );
         })}
@@ -2929,6 +2949,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
           nombre: grupoNombre || torneoConfig.grupoNombre || "Grupo",
           players, scores: sc, marcas, tarjetas,
           hole, status: "finalizada", updatedAt: Date.now(),
+          abandonos: castigosFinales,
           resultados: {
             ganador: r.fi.map(i=>players[i].name).join(" · "),
             netGanador: r.nets[r.fi[0]],
