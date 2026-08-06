@@ -2123,7 +2123,7 @@ function JugadoresPanel(props) {
     abandonandoIdx, setAbandonandoIdx,
     agregandoJugador, setAgregandoJugador,
     totalJugadoresTorneoAdmin, setTotalJugadoresTorneoAdmin,
-    apuesta, tarjetaVal, onEliminar, onAgregar } = props;
+    apuesta, tarjetaVal, onEliminar, onAgregar, onToggleOpts } = props;
 
   // PIN check en modo torneo
   if (torneoConfig && !jugadoresPinOk) {
@@ -2258,21 +2258,43 @@ function JugadoresPanel(props) {
     <div>
       <Card>
         <SLabel>Jugadores en la ronda</SLabel>
-        {players.map((p, pi) => (
-          <div key={p.id || pi}
-            style={{ display:"flex", alignItems:"center", gap:8, padding:"10px 0", borderBottom: pi < players.length - 1 ? "1px solid "+D.border : "none" }}>
-            <Avatar name={p.name} id={p.id || pi} size={30} />
-            <div style={{ flex:1 }}>
-              <div style={{ fontSize:13, fontWeight:600 }}>{p.name}</div>
-              <div style={{ fontSize:11, color:D.textSub }}>{"HC " + p.hc}</div>
+        <div style={{ display:"flex", alignItems:"center", marginBottom:8, paddingBottom:8, borderBottom:"1px solid "+D.border }}>
+          <div style={{ flex:1, fontSize:10, color:D.textSub }}>Jugador</div>
+          {["Score","Marcas","Tarjetas"].map(o => (
+            <div key={o} style={{ width:50, textAlign:"center", fontSize:9, color:D.gold, fontWeight:700 }}>{o}</div>
+          ))}
+          <div style={{ width:44 }}></div>
+        </div>
+        {players.map((p, pi) => {
+          const opts = p.opts || {score:true, marcas:true, tarjetas:true};
+          return (
+            <div key={p.id||pi} style={{ display:"flex", alignItems:"center", gap:2, padding:"6px 0", borderBottom:"1px solid "+D.border }}>
+              <div style={{ flex:1, display:"flex", alignItems:"center", gap:6 }}>
+                <Avatar name={p.name} id={p.id||pi} size={24} />
+                <div>
+                  <div style={{ fontSize:12, fontWeight:600 }}>{p.name}</div>
+                  <div style={{ fontSize:10, color:D.textSub }}>{"HC "+p.hc}</div>
+                </div>
+              </div>
+              {["score","marcas","tarjetas"].map(key => (
+                <div key={key} style={{ width:50, display:"flex", justifyContent:"center" }}
+                  onClick={() => onToggleOpts(pi, { ...opts, [key]: opts[key]!==false ? false : true })}>
+                  <div style={{ width:26, height:26, borderRadius:6,
+                    border:"2px solid "+(opts[key]!==false ? D.gold : D.border),
+                    background:opts[key]!==false ? D.goldDim : "transparent",
+                    display:"flex", alignItems:"center", justifyContent:"center",
+                    fontSize:13, color:D.gold, fontWeight:700, cursor:"pointer" }}>
+                    {opts[key]!==false ? "✓" : ""}
+                  </div>
+                </div>
+              ))}
+              <button onClick={() => setAbandonandoIdx(pi)}
+                style={{ width:44, padding:"4px 2px", border:"1px solid "+D.danger+"44", borderRadius:8, background:D.redBg, color:D.danger, fontSize:9, fontWeight:700, cursor:"pointer" }}>
+                Salir
+              </button>
             </div>
-            <button
-              onClick={() => setAbandonandoIdx(pi)}
-              style={{ padding:"6px 12px", border:"1px solid "+D.danger+"44", borderRadius:8, background:D.redBg, color:D.danger, fontSize:11, fontWeight:700, cursor:"pointer" }}>
-              Eliminar
-            </button>
-          </div>
-        ))}
+          );
+        })}
         {castigos.length > 0 && (
           <div style={{ marginTop:10, paddingTop:10, borderTop:"1px solid "+D.border }}>
             <div style={{ fontSize:11, fontWeight:700, color:D.danger, marginBottom:6 }}>
@@ -2636,6 +2658,12 @@ function AdminApp({ onExit, torneoConfig = null }) {
     setPlayers(newPlayers); setScores(newScores); setMarcas(newMarcas);
     updateGame({ players:newPlayers, pars, scores:newScores, marcas:newMarcas, tarjetas, hole, campo, status:"en_juego", rondaId, grupoNombre, abandonos:nuevoCastigos });
     setAbandonandoIdx(null);
+  };
+
+  const handleToggleOpts = (pi, newOpts) => {
+    const newPlayers = players.map((pl, i) => i === pi ? { ...pl, opts: newOpts } : pl);
+    setPlayers(newPlayers);
+    updateGame({ players:newPlayers, pars, scores, marcas, tarjetas, hole, campo, status:"en_juego", rondaId, grupoNombre, abandonos:castigos });
   };
 
   const handleAgregarJugador = (p) => {
@@ -4075,6 +4103,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
             apuesta={apuesta} tarjetaVal={tarjetaVal}
             onEliminar={handleEliminarJugador}
             onAgregar={handleAgregarJugador}
+            onToggleOpts={handleToggleOpts}
           />
         )}
         <Card>
