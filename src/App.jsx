@@ -72,7 +72,7 @@ function getGreenCoord(campo, holeIndex) {
 
 const MARCAS_MULTI = [
   { key: "holeinone", label: "🎯 Hole in One", pts: 10 },
-  { key: "eagle",     label: "🦅 Eagle",       pts: 3  },
+  { key: "eagle",     label: "🦅 Eagle",       pts: 6  },
   { key: "birdie",    label: "🐦 Birdie",      pts: 2  },
   { key: "holeout",   label: "🕳️ Hole out",   pts: 1  },
   { key: "sandy",     label: "🏖️ Sandy par",  pts: 2  },
