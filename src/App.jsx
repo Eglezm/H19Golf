@@ -4039,6 +4039,8 @@ function AdminApp({ onExit, torneoConfig = null }) {
         {tab==="tabla" && (pars.length === 0 || players.length === 0 ? (
           <Card><div style={{ textAlign:"center", color:D.textSub, padding:24 }}>No hay datos para mostrar</div></Card>
         ) : (() => {
+          const fmtVs = (v) => v === null ? "-" : v === 0 ? "E" : v > 0 ? "+"+v : ""+v;
+          const vsColor = (v) => v === null ? D.textDim : v < 0 ? D.success : v > 0 ? D.danger : D.text;
           const parTotal = pars.reduce((a,b)=>a+b,0);
           const tablaData = players.map((pl, pi) => {
             const rowScores = scores[pi];
