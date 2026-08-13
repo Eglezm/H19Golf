@@ -2985,7 +2985,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
     const sc = commitHole(scores, hole); setScores(sc);
     const fullScores = sc.map(row => row.map((v,j) => v===null?pars[j]:v));
     const rawScores = sc;
-    const castigosFinales = getCastigos(); // siempre leer de localStorage
+    const castigosFinales = getCastigos();
     const extraPotAbandonos = castigosFinales.filter(c=>c.conCastigo).reduce((a,c)=>a+c.scorePago,0);
     const r = calcMoney(players, fullScores, apuesta, extraPotAbandonos);
     const playsScoreCount = players.filter(p => p.opts ? p.opts.score !== false : true).length;
@@ -2994,12 +2994,25 @@ function AdminApp({ onExit, torneoConfig = null }) {
     const marcasMoney = calcMarcasMoney(players, marcas, marcaVal);
     const marcasPtsRaw = calcMarcasPts(players, marcas);
     const marcasPts = players.map((p,i) => (p.opts?.marcas === false) ? 0 : marcasPtsRaw[i]);
-    const tarjetasMoney = calcTarjetasMoney(players, tarjetas, tarjetaVal);
+    // Recalcular peorscore con scores COMPLETOS (total tiros - HC)
+    const netosFinales = players.map((p,i) => {
+      if (p.opts?.tarjetas === false) return null;
+      return fullScores[i].reduce((a,b)=>a+b,0) - p.hc;
+    });
+    const validNetosFinales = netosFinales.filter(n => n !== null);
+    const tarjetasFinales = { ...tarjetas };
+    if (validNetosFinales.length > 0) {
+      const peorNetoFinal = Math.max(...validNetosFinales);
+      const peoresFinal = netosFinales.map((n,i) => n === peorNetoFinal ? i : -1).filter(i => i >= 0);
+      tarjetasFinales.peorscore = peoresFinal.length === 1 ? peoresFinal[0] : peoresFinal;
+      setTarjetas(tarjetasFinales);
+    }
+    const tarjetasMoney = calcTarjetasMoney(players, tarjetasFinales, tarjetaVal);
     const tarjetasCount = players.map((p,i) => {
       if (p.opts?.tarjetas === false) return 0;
       let c = 0;
       TARJETAS.forEach(t => {
-        const owner = tarjetas[t.key];
+        const owner = tarjetasFinales[t.key];
         if (Array.isArray(owner)) { if (owner.includes(i)) c += 1/owner.length; }
         else if (owner === i) c += 1;
       });
@@ -3008,7 +3021,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
     const resultData = { ...r, hcUpdates:hc, marcasMoney, marcasPts, tarjetasMoney, tarjetasCount, fullScores, rawScores, castigos:castigosFinales };
     setResults(resultData);
     window._h19castigos = castigosFinales;
-    const finalState = { ...getState(), scores:sc, status:"finalizada", abandonos:castigosFinales };
+    const finalState = { ...getState(), scores:sc, tarjetas:tarjetasFinales, status:"finalizada", abandonos:castigosFinales };
     updateGame(finalState);
     // Si estamos en modo torneo, guardar resultados finales del grupo explícitamente
     if (torneoConfig?.torneoId) {
@@ -4023,7 +4036,9 @@ function AdminApp({ onExit, torneoConfig = null }) {
           </Card>
         )}
 
-        {tab==="tabla" && pars.length > 0 && players.length > 0 && (() => {
+        {tab==="tabla" && (pars.length === 0 || players.length === 0 ? (
+          <Card><div style={{ textAlign:"center", color:D.textSub, padding:24 }}>No hay datos para mostrar</div></Card>
+        ) : (() => {
           const parTotal = pars.reduce((a,b)=>a+b,0);
           const tablaData = players.map((pl, pi) => {
             const rowScores = scores[pi];
@@ -4086,7 +4101,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
             <ScoreLegend />
           </div>
           );
-        })()}
+        })())}
 
         {tab==="jugadores" && (
           <JugadoresPanel
