@@ -1197,7 +1197,6 @@ function TorneoCrear({ onExit, onIniciarGrupo, appStyle }) {
       </div>
     );
   }
-
   // ── PASO 3: Compartir códigos por grupo ──
   if (paso === 3) {
     const torneoUrl = `${window.location.origin}${window.location.pathname}?torneo=${torneoId}`;
@@ -4876,3 +4875,4 @@ function EstadisticasScreen({ onExit, appStyle }) {
 
   return null;
 }
+
