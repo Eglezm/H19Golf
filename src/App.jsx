@@ -2455,6 +2455,8 @@ export default function H19() {
         <div style={{ width:"100%", borderTop:`1px solid ${D.border}`, margin:"4px 0" }} />
         <Btn outline onClick={() => setMode("spectator-input")}>👀 Ver ronda en vivo</Btn>
         <Btn outline onClick={() => setMode("torneo-spectator-input")}>🏆 Ver torneo en vivo</Btn>
+        <div style={{ width:"100%", borderTop:`1px solid ${D.border}`, margin:"4px 0" }} />
+        <Btn outline onClick={() => setMode("estadisticas")}>📈 Estadísticas de jugadores</Btn>
       </div>
     );
   }
@@ -2521,6 +2523,7 @@ export default function H19() {
     onExit={(td) => { if (td?.torneoId) setSavedTorneoAdmin(td); setMode("home"); }}
     onIniciarGrupo={(tc) => { setActiveTorneoConfig(tc); setSavedTorneoAdmin(tc); setMode("torneo-admin"); }}
     appStyle={appStyle} />;
+  if (mode === "estadisticas") return <EstadisticasScreen onExit={() => setMode("home")} appStyle={appStyle} />;
   if (mode === "torneo-unirse") return <TorneoUnirse onExit={() => setMode("home")} appStyle={appStyle} />;
   if (mode === "torneo-admin") return <AdminApp onExit={() => setMode("home")} torneoConfig={activeTorneoConfig} />;
 
@@ -2572,7 +2575,238 @@ export default function H19() {
 }
 
 // ─── ADMIN APP ────────────────────────────────────
-function AdminApp({ onExit, torneoConfig = null }) {
+// ─── ESTADÍSTICAS DE JUGADORES ────────────────────────────────
+function EstadisticasScreen({ onExit, appStyle }) {
+  const [rondas, setRondas] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [jugadorSel, setJugadorSel] = useState(null);
+  const [nRondas, setNRondas] = useState(10);
+  const [campoFiltro, setCampoFiltro] = useState("todos");
+
+  useEffect(() => {
+    const r = ref(db, "historial");
+    get(r).then(snap => {
+      if (!snap.exists()) { setLoading(false); return; }
+      const data = snap.val();
+      const arr = Object.values(data)
+        .filter(d => d.jugadores && d.playerNames && d.scoresPorHoyo)
+        .sort((a,b) => (b.fechaTs||0) - (a.fechaTs||0));
+      setRondas(arr);
+      setLoading(false);
+    }).catch(() => setLoading(false));
+  }, []);
+
+  // Construir índice de jugadores
+  const jugadoresIdx = {};
+  rondas.forEach(r => {
+    (r.playerNames||[]).forEach((name, pi) => {
+      if (!jugadoresIdx[name]) jugadoresIdx[name] = [];
+      const bruto = r.jugadores?.[pi]?.bruto ?? (r.scoresPorHoyo?.[pi]?.reduce((a,b)=>a+b,0)||null);
+      const hc = r.jugadores?.[pi]?.hc ?? 0;
+      const neto = bruto !== null ? bruto - hc : null;
+      jugadoresIdx[name].push({
+        fecha: r.fecha, fechaTs: r.fechaTs||0,
+        campo: r.campo, nHoles: r.nHoles||18,
+        bruto, hc, neto,
+        pars: r.pars,
+        scores: r.scoresPorHoyo?.[pi],
+      });
+    });
+  });
+
+  const todosJugadores = Object.keys(jugadoresIdx).sort();
+  const todosCampos = [...new Set(rondas.map(r=>r.campo).filter(Boolean))].sort();
+
+  // Stats de un jugador seleccionado
+  const calcStats = (nombre) => {
+    let rds = jugadoresIdx[nombre] || [];
+    if (campoFiltro !== "todos") rds = rds.filter(r => r.campo === campoFiltro);
+    rds = rds.slice(0, nRondas);
+    if (rds.length === 0) return null;
+    const conBruto = rds.filter(r => r.bruto !== null);
+    const promBruto = conBruto.length > 0 ? Math.round(conBruto.reduce((a,r)=>a+r.bruto,0)/conBruto.length*10)/10 : null;
+    const promNeto = conBruto.length > 0 ? Math.round(conBruto.reduce((a,r)=>a+r.neto,0)/conBruto.length*10)/10 : null;
+    const mejorBruto = conBruto.length > 0 ? Math.min(...conBruto.map(r=>r.bruto)) : null;
+    const peorBruto = conBruto.length > 0 ? Math.max(...conBruto.map(r=>r.bruto)) : null;
+    // HC sugerido: promedio de los mejores diferentials
+    // Differential = (bruto - par) donde par = suma de pars
+    const diffs = conBruto.map(r => {
+      const par = r.pars ? r.pars.reduce((a,b)=>a+b,0) : 72;
+      return r.bruto - par;
+    }).sort((a,b)=>a-b);
+    const nBest = Math.max(1, Math.floor(diffs.length * 0.4)); // 40% mejores
+    const hcSugerido = diffs.length > 0 ? Math.round(diffs.slice(0,nBest).reduce((a,b)=>a+b,0)/nBest) : null;
+    // Evolucion HC
+    const evolucion = rds.map(r => ({ fecha:r.fecha, hc:r.hc, bruto:r.bruto })).reverse();
+    // Por campo
+    const porCampo = {};
+    (jugadoresIdx[nombre]||[]).forEach(r => {
+      if (!r.campo) return;
+      if (!porCampo[r.campo]) porCampo[r.campo] = [];
+      if (r.bruto !== null) porCampo[r.campo].push(r.bruto);
+    });
+    return { promBruto, promNeto, mejorBruto, peorBruto, hcSugerido, evolucion, porCampo, nRondas:conBruto.length, hcActual: rds[0]?.hc };
+  };
+
+  const stats = jugadorSel ? calcStats(jugadorSel) : null;
+
+  return (
+    <div style={{ ...appStyle, overflowY:"auto" }}>
+      {/* Header */}
+      <div style={{ background:`linear-gradient(135deg,#1A2A1A,#2E3D2E)`, padding:"14px 16px", display:"flex", alignItems:"center", gap:10 }}>
+        <button onClick={onExit} style={{ background:"none", border:"none", color:D.gold, fontSize:22, cursor:"pointer" }}>{"<"}</button>
+        <div>
+          <div style={{ fontSize:16, fontWeight:900, color:D.gold }}>📈 Estadísticas</div>
+          <div style={{ fontSize:11, color:D.textSub }}>Historial de jugadores</div>
+        </div>
+      </div>
+
+      <div style={{ padding:"12px 12px 80px" }}>
+        {loading && <Card><div style={{ textAlign:"center", color:D.textSub, padding:24 }}>Cargando historial...</div></Card>}
+
+        {!loading && rondas.length === 0 && (
+          <Card><div style={{ textAlign:"center", color:D.textSub, padding:24 }}>No hay rondas guardadas aún</div></Card>
+        )}
+
+        {!loading && rondas.length > 0 && (
+          <>
+            {/* Selector de jugador */}
+            <Card>
+              <SLabel>Seleccionar jugador</SLabel>
+              <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
+                {todosJugadores.map(n => (
+                  <button key={n} onClick={() => setJugadorSel(jugadorSel===n?null:n)}
+                    style={{ padding:"7px 14px", border:"1px solid "+(jugadorSel===n?D.gold:D.border), borderRadius:20, background:jugadorSel===n?D.goldDim:"transparent", color:jugadorSel===n?D.gold:D.textSub, fontSize:12, fontWeight:jugadorSel===n?700:400, cursor:"pointer" }}>
+                    {n}
+                  </button>
+                ))}
+              </div>
+            </Card>
+
+            {jugadorSel && (
+              <>
+                {/* Filtros */}
+                <Card>
+                  <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
+                    <div>
+                      <div style={{ fontSize:10, color:D.textSub, marginBottom:4 }}>Rondas a considerar</div>
+                      <div style={{ display:"flex", gap:4 }}>
+                        {[5,10,15,20].map(n => (
+                          <button key={n} onClick={() => setNRondas(n)}
+                            style={{ padding:"5px 10px", border:"1px solid "+(nRondas===n?D.gold:D.border), borderRadius:12, background:nRondas===n?D.goldDim:"transparent", color:nRondas===n?D.gold:D.textSub, fontSize:12, fontWeight:700, cursor:"pointer" }}>
+                            {n}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div style={{ flex:1 }}>
+                      <div style={{ fontSize:10, color:D.textSub, marginBottom:4 }}>Campo</div>
+                      <select value={campoFiltro} onChange={e=>setCampoFiltro(e.target.value)}
+                        style={{ padding:"6px 10px", border:"1px solid "+D.border, borderRadius:10, background:D.surface, color:D.text, fontSize:12, width:"100%" }}>
+                        <option value="todos">Todos los campos</option>
+                        {todosCampos.map(c => <option key={c} value={c}>{CAMPOS[c]?.nombre||c}</option>)}
+                      </select>
+                    </div>
+                  </div>
+                </Card>
+
+                {stats && (
+                  <>
+                    {/* Resumen principal */}
+                    <Card>
+                      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
+                        <div style={{ fontSize:16, fontWeight:900 }}>{jugadorSel}</div>
+                        <div style={{ fontSize:11, color:D.textSub }}>{stats.nRondas} ronda{stats.nRondas!==1?"s":""}</div>
+                      </div>
+                      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8, marginBottom:8 }}>
+                        {[
+                          { label:"Promedio bruto", val:stats.promBruto, color:D.text },
+                          { label:"Promedio neto", val:stats.promNeto, color:D.text },
+                          { label:"Mejor ronda", val:stats.mejorBruto, color:D.success },
+                          { label:"Peor ronda", val:stats.peorBruto, color:D.danger },
+                        ].map(({ label, val, color }) => (
+                          <div key={label} style={{ background:D.surface, borderRadius:10, padding:"10px 12px" }}>
+                            <div style={{ fontSize:10, color:D.textSub, marginBottom:2 }}>{label}</div>
+                            <div style={{ fontSize:22, fontWeight:900, color }}>{val ?? "--"}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </Card>
+
+                    {/* HC */}
+                    <Card style={{ border:"1px solid "+D.gold+"44" }}>
+                      <SLabel>🎯 Handicap</SLabel>
+                      <div style={{ display:"flex", gap:8 }}>
+                        <div style={{ flex:1, background:D.surface, borderRadius:10, padding:"12px", textAlign:"center" }}>
+                          <div style={{ fontSize:10, color:D.textSub, marginBottom:4 }}>HC actual</div>
+                          <div style={{ fontSize:32, fontWeight:900, color:D.text }}>{stats.hcActual ?? "--"}</div>
+                        </div>
+                        <div style={{ flex:1, background:D.goldDim, border:"1px solid "+D.gold+"44", borderRadius:10, padding:"12px", textAlign:"center" }}>
+                          <div style={{ fontSize:10, color:D.gold, marginBottom:4 }}>HC sugerido</div>
+                          <div style={{ fontSize:32, fontWeight:900, color:D.gold }}>{stats.hcSugerido ?? "--"}</div>
+                          <div style={{ fontSize:9, color:D.textSub, marginTop:2 }}>40% mejores rondas</div>
+                        </div>
+                      </div>
+                      {stats.hcSugerido !== null && stats.hcActual !== null && stats.hcSugerido !== stats.hcActual && (
+                        <div style={{ marginTop:8, padding:"8px 12px", background:D.surface, borderRadius:8, fontSize:12, color:D.textSub }}>
+                          {stats.hcSugerido < stats.hcActual
+                            ? "⬇️ Sugerimos bajar HC de "+stats.hcActual+" a "+stats.hcSugerido
+                            : "⬆️ Sugerimos subir HC de "+stats.hcActual+" a "+stats.hcSugerido}
+                        </div>
+                      )}
+                    </Card>
+
+                    {/* Promedio por campo */}
+                    {Object.keys(stats.porCampo).length > 0 && (
+                      <Card>
+                        <SLabel>⛳ Promedio por campo</SLabel>
+                        {Object.entries(stats.porCampo).map(([campo, brutos]) => {
+                          const prom = Math.round(brutos.reduce((a,b)=>a+b,0)/brutos.length*10)/10;
+                          const mejor = Math.min(...brutos);
+                          return (
+                            <div key={campo} style={{ padding:"10px 0", borderBottom:"1px solid "+D.border }}>
+                              <div style={{ display:"flex", justifyContent:"space-between", marginBottom:4 }}>
+                                <div style={{ fontSize:13, fontWeight:700 }}>{CAMPOS[campo]?.nombre||campo}</div>
+                                <div style={{ fontSize:13, fontWeight:900 }}>{prom} prom</div>
+                              </div>
+                              <div style={{ display:"flex", gap:12, fontSize:11, color:D.textSub }}>
+                                <span>{"Mejor: "+mejor}</span>
+                                <span>{brutos.length+" ronda"+(brutos.length!==1?"s":"")}</span>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </Card>
+                    )}
+
+                    {/* Historial de rondas */}
+                    <Card>
+                      <SLabel>📋 Últimas rondas</SLabel>
+                      {stats.evolucion.slice().reverse().map((r, i) => (
+                        <div key={i} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"8px 0", borderBottom:"1px solid "+D.border }}>
+                          <div>
+                            <div style={{ fontSize:12, fontWeight:600 }}>{r.fecha||"Sin fecha"}</div>
+                            <div style={{ fontSize:10, color:D.textSub }}>{"HC "+r.hc}</div>
+                          </div>
+                          <div style={{ textAlign:"right" }}>
+                            <div style={{ fontSize:16, fontWeight:900 }}>{r.bruto ?? "--"}</div>
+                            <div style={{ fontSize:10, color:D.textSub }}>tiros</div>
+                          </div>
+                        </div>
+                      ))}
+                    </Card>
+                  </>
+                )}
+              </>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── ADMIN APP ────────────────────────────────────────────────
   const [screen, setScreen] = useState(() => {
     if (!torneoConfig) return "dir";
     if (torneoConfig.rondaActiva) return "torneo-resume"; // ronda en curso, retomar
