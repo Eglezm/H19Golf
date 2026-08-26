@@ -246,7 +246,7 @@ function getBadge(s, par) {
 // Notación tradicional de golf
 function ScoreCell({ s, par, size = 24 }) {
   if (s === null || s === undefined) return (
-    <div style={{ width:size, height:size, display:"flex", alignItems:"center", justifyContent:"center", fontSize:size*0.45, color:D.textDim, margin:"0 auto" }}>—</div>
+    <div style={{ width:size, height:size, display:"flex", alignItems:"center", justifyContent:"center", fontSize:size*0.45, color:D.textDim, margin:"0 auto" }}>-</div>
   );
   const d = s - par;
   const fs = Math.round(size * 0.46);
@@ -1724,7 +1724,7 @@ function TorneoSpectator({ torneoId, appStyle, isAdmin = false }) {
   return (
     <div style={appStyle}>
       <div style={{ background:D.surface, borderBottom:`1px solid ${D.border}`, padding:"16px 16px 12px", textAlign:"center" }}>
-        <div style={{ fontSize:24, fontWeight:900, color:D.gold }}>H19 — Torneo</div>
+        <div style={{ fontSize:24, fontWeight:900, color:D.gold }}>H19 - Torneo</div>
         <div style={{ fontSize:13, color:D.textSub, marginTop:2 }}>{torneo.nombre}</div>
         <div style={{ fontSize:11, color:D.textSub, marginTop:2 }}>{CAMPOS[torneo.campo]?.nombre} · {torneo.nHoles} hoyos · {grupos.length} grupos · {allPlayers.length} jugadores</div>
       </div>
@@ -2449,8 +2449,8 @@ export default function H19() {
             </div>
           </div>
         )}
-        <Btn onClick={() => setMode("pin")}>🏌️ Admin — Única salida</Btn>
-        <Btn onClick={() => setMode("pin-torneo")} style={{ background:`linear-gradient(135deg,#1A5C24,#2E7D32)` }}>🏌️🏌️ Admin — Crear torneo</Btn>
+        <Btn onClick={() => setMode("pin")}>🏌️ Admin - Única salida</Btn>
+        <Btn onClick={() => setMode("pin-torneo")} style={{ background:`linear-gradient(135deg,#1A5C24,#2E7D32)` }}>🏌️🏌️ Admin - Crear torneo</Btn>
         <Btn outline onClick={() => setMode("torneo-unirse")}>🔗 Entrar con código de grupo</Btn>
         <div style={{ width:"100%", borderTop:`1px solid ${D.border}`, margin:"4px 0" }} />
         <Btn outline onClick={() => setMode("spectator-input")}>👀 Ver ronda en vivo</Btn>
@@ -2807,6 +2807,7 @@ function EstadisticasScreen({ onExit, appStyle }) {
 }
 
 // ─── ADMIN APP ────────────────────────────────────────────────
+function AdminApp({ onExit, torneoConfig = null }) {
   const [screen, setScreen] = useState(() => {
     if (!torneoConfig) return "dir";
     if (torneoConfig.rondaActiva) return "torneo-resume"; // ronda en curso, retomar
@@ -3494,7 +3495,7 @@ function EstadisticasScreen({ onExit, appStyle }) {
   if (screen === "grupo-nombre" && torneoConfig) return (
     <div style={appSt}>
       <div style={{ background:D.surface, borderBottom:`1px solid ${D.border}`, padding:"20px 16px 14px", textAlign:"center" }}>
-        <div style={{ fontSize:22, fontWeight:900, color:D.gold }}>H19 — Torneo</div>
+        <div style={{ fontSize:22, fontWeight:900, color:D.gold }}>H19 - Torneo</div>
         <div style={{ fontSize:13, color:D.textSub, marginTop:2 }}>{torneoConfig.nombre}</div>
       </div>
       <div style={{ padding:"24px 16px", display:"flex", flexDirection:"column", gap:16, alignItems:"center" }}>
@@ -3837,7 +3838,7 @@ function EstadisticasScreen({ onExit, appStyle }) {
                           ))}
                         </div>
                       ) : (
-                        <div style={{ textAlign:"center", color:D.textDim, fontSize:12, padding:12 }}>Torneo guardado con versión anterior — sin resumen global</div>
+                        <div style={{ textAlign:"center", color:D.textDim, fontSize:12, padding:12 }}>Torneo guardado con versión anterior - sin resumen global</div>
                       )}
 
                       {/* ── DESGLOSE POR GRUPO (tarjeta, marcas, tarjetas) ── */}
