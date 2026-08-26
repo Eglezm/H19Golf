@@ -2979,7 +2979,8 @@ function AdminApp({ onExit, torneoConfig = null }) {
   const [historial, setHistorial] = useState([]);
   const [historialTorneos, setHistorialTorneos] = useState([]);
   const [expandedHist, setExpandedHist] = useState(null);
-  const [expandedTorneoHist, setExpandedTorneoHist] = useState(null); // torneoId
+  const [expandedTorneoHist, setExpandedTorneoHist] = useState(null);
+  const [confirmDeleteTorneo, setConfirmDeleteTorneo] = useState(null); // torneoId a eliminar
   const [expandedGrupoHist, setExpandedGrupoHist] = useState(null);   // grupoId
   const [histTab, setHistTab] = useState("rondas");
   const [confirmDeleteHist, setConfirmDeleteHist] = useState(null);
@@ -3868,10 +3869,24 @@ function AdminApp({ onExit, torneoConfig = null }) {
                     {rg && <div style={{ fontSize:12, background:D.goldDim, color:D.gold, padding:"2px 10px", borderRadius:10, fontWeight:700, display:"inline-block", marginBottom:4 }}>🏆 {ganadorNombre} ({rg.netGanador} neto)</div>}
                     <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginTop:4 }}>
                       <div style={{ fontSize:11, color:D.textSub }}>{isOpen ? "▲ Ocultar grupos" : "▼ Ver grupos"}</div>
-                      <button onClick={e => { e.stopPropagation(); remove(ref(db, `torneos/${t.id}`)); setExpandedTorneoHist(null); }}
-                        style={{ fontSize:11, color:D.danger, background:"transparent", border:`1px solid ${D.danger}44`, borderRadius:6, padding:"2px 8px", cursor:"pointer" }}>
-                        🗑️ Eliminar
-                      </button>
+                      {confirmDeleteTorneo === t.id ? (
+                        <div style={{ display:"flex", gap:6, alignItems:"center" }}>
+                          <span style={{ fontSize:11, color:D.danger, fontWeight:700 }}>¿Eliminar?</span>
+                          <button onClick={e => { e.stopPropagation(); remove(ref(db, `torneos/${t.id}`)); setExpandedTorneoHist(null); setConfirmDeleteTorneo(null); }}
+                            style={{ fontSize:11, color:"#fff", background:D.danger, border:"none", borderRadius:6, padding:"3px 10px", cursor:"pointer", fontWeight:700 }}>
+                            Sí, eliminar
+                          </button>
+                          <button onClick={e => { e.stopPropagation(); setConfirmDeleteTorneo(null); }}
+                            style={{ fontSize:11, color:D.textSub, background:"transparent", border:`1px solid ${D.border}`, borderRadius:6, padding:"3px 10px", cursor:"pointer" }}>
+                            Cancelar
+                          </button>
+                        </div>
+                      ) : (
+                        <button onClick={e => { e.stopPropagation(); setConfirmDeleteTorneo(t.id); }}
+                          style={{ fontSize:11, color:D.danger, background:"transparent", border:`1px solid ${D.danger}44`, borderRadius:6, padding:"2px 8px", cursor:"pointer" }}>
+                          🗑️ Eliminar
+                        </button>
+                      )}
                     </div>
                   </div>
                   {isOpen && (
