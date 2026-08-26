@@ -2779,6 +2779,67 @@ function EstadisticasScreen({ onExit, appStyle }) {
                       </Card>
                     )}
 
+                    {/* Gráfica de evolución */}
+                    {stats.evolucion.length >= 2 && (() => {
+                      const datos = stats.evolucion.filter(r => r.bruto !== null);
+                      if (datos.length < 2) return null;
+                      const W = 320, H = 160, padL = 36, padR = 12, padT = 12, padB = 32;
+                      const minVal = Math.min(...datos.map(r=>r.bruto)) - 2;
+                      const maxVal = Math.max(...datos.map(r=>r.bruto)) + 2;
+                      const xStep = (W - padL - padR) / (datos.length - 1);
+                      const yScale = (H - padT - padB) / (maxVal - minVal);
+                      const px = i => padL + i * xStep;
+                      const py = v => H - padB - (v - minVal) * yScale;
+                      const prom = stats.promBruto;
+                      const polyline = datos.map((r,i) => px(i)+","+py(r.bruto)).join(" ");
+                      return (
+                        <Card>
+                          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8 }}>
+                            <SLabel style={{ margin:0 }}>📈 Evolución de scores</SLabel>
+                            <div style={{ fontSize:10, color:D.textSub }}>{"Prom: "+prom}</div>
+                          </div>
+                          <div style={{ overflowX:"auto" }}>
+                            <svg width={W} height={H} style={{ display:"block" }}>
+                              {/* Grid lines */}
+                              {[0,1,2,3].map(i => {
+                                const v = Math.round(minVal + (maxVal - minVal) * i / 3);
+                                return (
+                                  <g key={i}>
+                                    <line x1={padL} y1={py(v)} x2={W-padR} y2={py(v)} stroke={D.border} strokeWidth="1" />
+                                    <text x={padL-4} y={py(v)+4} textAnchor="end" fontSize="9" fill={D.textSub}>{v}</text>
+                                  </g>
+                                );
+                              })}
+                              {/* Promedio line */}
+                              <line x1={padL} y1={py(prom)} x2={W-padR} y2={py(prom)} stroke={D.gold} strokeWidth="1" strokeDasharray="4,3" opacity="0.6" />
+                              {/* Line */}
+                              <polyline points={polyline} fill="none" stroke={D.success} strokeWidth="2" strokeLinejoin="round" />
+                              {/* Dots + labels */}
+                              {datos.map((r,i) => (
+                                <g key={i}>
+                                  <circle cx={px(i)} cy={py(r.bruto)} r="4" fill={D.success} stroke={D.surface} strokeWidth="2" />
+                                  <text x={px(i)} y={H-padB+14} textAnchor="middle" fontSize="8" fill={D.textSub}>
+                                    {r.fecha ? r.fecha.split("/").slice(0,2).join("/") : i+1}
+                                  </text>
+                                  <text x={px(i)} y={py(r.bruto)-8} textAnchor="middle" fontSize="9" fontWeight="700" fill={D.text}>{r.bruto}</text>
+                                </g>
+                              ))}
+                            </svg>
+                          </div>
+                          <div style={{ display:"flex", gap:12, marginTop:4, fontSize:10, color:D.textSub }}>
+                            <span style={{ display:"flex", alignItems:"center", gap:4 }}>
+                              <span style={{ display:"inline-block", width:16, height:2, background:D.success }}></span>
+                              Scores
+                            </span>
+                            <span style={{ display:"flex", alignItems:"center", gap:4 }}>
+                              <span style={{ display:"inline-block", width:16, height:2, background:D.gold, opacity:0.6 }}></span>
+                              {"Promedio ("+prom+")"}
+                            </span>
+                          </div>
+                        </Card>
+                      );
+                    })()}
+
                     {/* Historial de rondas */}
                     <Card>
                       <SLabel>📋 Últimas rondas</SLabel>
