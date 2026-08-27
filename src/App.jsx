@@ -4369,7 +4369,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
             const vsPar = jugados.length > 0 ? total - parJugados : null;
             const hcEf = nHoles <= 9 ? Math.ceil(pl.hc / 2) : pl.hc;
             const vsParHC = vsPar !== null ? vsPar - hcEf : null;
-            return { pl, pi, rowScores, total: jugados.length>0?total:null, vsPar, vsParHC, hcEf };
+            return { pl, pi, rowScores, total: jugados.length>0?total:null, vsPar, vsParHC };
           }).sort((a,b) => {
             if (a.vsParHC === null && b.vsParHC === null) return 0;
             if (a.vsParHC === null) return 1;
@@ -4398,9 +4398,12 @@ function AdminApp({ onExit, torneoConfig = null }) {
                 </tr>
               </thead>
               <tbody>
-                {tablaData.map(({ pl, pi, rowScores, total, vsPar, vsParHC, hcEf }, pos) => (
-                  <tr key={pl.id} style={{ borderBottom:`1px solid ${D.border}`, background:pos===0&&vsParHC!==null?D.goldDim+"55":"transparent" }}>
-                    <td style={{ padding:"7px 6px", position:"sticky", left:0, background:pos===0&&vsParHC!==null?D.goldDim+"55":D.card, zIndex:1 }}>
+                {tablaData.map(({ pl, pi, rowScores, total, vsPar, vsParHC }, pos) => {
+                  const hcMostrar = nHoles <= 9 ? Math.ceil(pl.hc / 2) : pl.hc;
+                  const vsParHCcorrecto = vsPar !== null ? vsPar - hcMostrar : null;
+                  return (
+                  <tr key={pl.id} style={{ borderBottom:`1px solid ${D.border}`, background:pos===0&&vsParHCcorrecto!==null?D.goldDim+"55":"transparent" }}>
+                    <td style={{ padding:"7px 6px", position:"sticky", left:0, background:pos===0&&vsParHCcorrecto!==null?D.goldDim+"55":D.card, zIndex:1 }}>
                       <div style={{ display:"flex", alignItems:"center", gap:5 }}>
                         <span style={{ fontSize:10, fontWeight:700, color:pos===0?D.gold:D.textSub, minWidth:12 }}>{pos+1}</span>
                         <Avatar name={pl.name} id={pl.id} size={20} />
@@ -4412,11 +4415,15 @@ function AdminApp({ onExit, torneoConfig = null }) {
                       return <td key={hi} style={{ textAlign:"center", padding:"3px 2px" }}><ScoreCell s={s??null} par={par} size={22} /></td>;
                     })}
                     <td style={{ textAlign:"center", padding:"5px 5px", fontWeight:700, fontSize:12, borderLeft:`1px solid ${D.border}` }}>{total??'--'}</td>
-                    <td style={{ textAlign:"center", padding:"5px 4px", fontSize:11, color:D.textSub }}>{hcEf}{nHoles<=9&&pl.hc!==hcEf?<span style={{fontSize:9,color:D.textDim}}> ({pl.hc})</span>:null}</td>
+                    <td style={{ textAlign:"center", padding:"5px 4px", fontSize:11, color:D.textSub }}>
+                      {hcMostrar}
+                      {nHoles<=9 && pl.hc!==hcMostrar ? <span style={{fontSize:9,color:D.textDim}}> ({pl.hc})</span> : null}
+                    </td>
                     <td style={{ textAlign:"center", padding:"5px 5px", fontWeight:700, fontSize:12, color:vsColor(vsPar), borderLeft:`1px solid ${D.border}` }}>{fmtVs(vsPar)}</td>
-                    <td style={{ textAlign:"center", padding:"5px 5px", fontWeight:900, fontSize:12, color:vsColor(vsParHC), borderLeft:`1px solid ${D.border}` }}>{fmtVs(vsParHC)}</td>
+                    <td style={{ textAlign:"center", padding:"5px 5px", fontWeight:900, fontSize:12, color:vsColor(vsParHCcorrecto), borderLeft:`1px solid ${D.border}` }}>{fmtVs(vsParHCcorrecto)}</td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
             <ScoreLegend />
