@@ -420,7 +420,7 @@ function calcMoney(players, scores, apuesta, extraPot = 0, nHoles = 18) {
   const idxIn = players.map((_, i) => i).filter(i => playsScore[i]);
   const n = idxIn.length;
   // HC proporcional: 9 hoyos = HC/2, 18 hoyos = HC completo
-  const hcEfectivo = (p) => nHoles <= 9 ? Math.round(p.hc / 2) : p.hc;
+  const hcEfectivo = (p) => nHoles <= 9 ? Math.ceil(p.hc / 2) : p.hc;
   const nets = players.map((p, i) => scores[i].reduce((a, b) => a+b, 0) - hcEfectivo(p));
   if (n < 2) {
     return { nets, fi:[], si:[], pot:0, money: players.map(() => 0) };
@@ -453,7 +453,7 @@ function calcMoney(players, scores, apuesta, extraPot = 0, nHoles = 18) {
 }
 
 function calcHC(players, scores, si = [], nHoles = 18) {
-  const hcEfectivo = (p) => nHoles <= 9 ? Math.round(p.hc / 2) : p.hc;
+  const hcEfectivo = (p) => nHoles <= 9 ? Math.ceil(p.hc / 2) : p.hc;
   const nets = players.map((p, i) => scores[i].reduce((a, b) => a+b, 0) - hcEfectivo(p));
   const fnet = Math.min(...nets);
   const fi = nets.reduce((a, v, i) => v===fnet ? [...a,i] : a, []);
@@ -3198,7 +3198,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
       if (p.opts?.tarjetas === false) return null;
       const jugados = newScores[i].filter(v => v !== null && v !== undefined);
       if (jugados.length === 0) return null;
-      const hcEfTab = nHoles <= 9 ? Math.round(p.hc/2) : p.hc; return jugados.reduce((a,b)=>a+b,0) - hcEfTab;
+      const hcEfTab = nHoles <= 9 ? Math.ceil(p.hc/2) : p.hc; return jugados.reduce((a,b)=>a+b,0) - hcEfTab;
     });
     const validNetos = netosActuales.filter(n => n !== null);
     if (validNetos.length > 0) {
@@ -3299,7 +3299,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
     // Recalcular peorscore con scores COMPLETOS (total tiros - HC)
     const netosFinales = players.map((p,i) => {
       if (p.opts?.tarjetas === false) return null;
-      const hcEfFin = nHoles <= 9 ? Math.round(p.hc/2) : p.hc;
+      const hcEfFin = nHoles <= 9 ? Math.ceil(p.hc/2) : p.hc;
       return fullScores[i].reduce((a,b)=>a+b,0) - hcEfFin;
     });
     const validNetosFinales = netosFinales.filter(n => n !== null);
@@ -3408,7 +3408,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
   };
 
   const getDisplay = (pi, h) => scores[pi]?.[h]===null ? pars[h] : scores[pi]?.[h];
-  const hcEf = (p) => nHoles <= 9 ? Math.round(p.hc/2) : p.hc;
+  const hcEf = (p) => nHoles <= 9 ? Math.ceil(p.hc/2) : p.hc;
   const liveNets = players.map((p,i) => (scores[i]||[]).reduce((a,v,j)=>a+(v===null?pars[j]:v),0) - hcEf(p));
   const par = pars[hole] || 4;
   const n = sel.size, pot = apuesta * n;
@@ -3550,7 +3550,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
             {ps.map(p => (
               <div key={p.id} style={{ display:"flex", alignItems:"center", gap:6, padding:"6px 12px", background:D.goldDim, borderRadius:20, border:`1px solid ${D.gold}44` }}>
                 <Avatar name={p.name} id={p.id} size={22} />
-                <span style={{ fontSize:12, fontWeight:600 }}>{p.name} · HC {p.hc}</span>
+                <span style={{ fontSize:12, fontWeight:600 }}>{p.name} · HC {nHoles<=9?Math.ceil(p.hc/2):p.hc}{nHoles<=9?" ("+p.hc+"/2)":""}</span>
               </div>
             ))}
           </div>
@@ -4070,7 +4070,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
               </div>
               <Avatar name={p.name} id={p.id} size={32} />
               <div style={{ flex:1, fontSize:14, fontWeight:600 }}>{p.name}</div>
-              <div style={{ fontSize:12, color:D.gold }}>HC {p.hc}</div>
+              <div style={{ fontSize:12, color:D.gold }}>HC {nHoles<=9?Math.ceil(p.hc/2):p.hc}{nHoles<=9?" (de "+p.hc+")":""}</div>
             </div>
           ))}
         </Card>
@@ -4221,7 +4221,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
                   <Avatar name={pl.name} id={pl.id} size={30} />
                   <div style={{ flex:1 }}>
                     <div style={{ fontSize:13, fontWeight:600 }}>{pl.name}</div>
-                    <div style={{ fontSize:11, color:D.textSub }}>HC {pl.hc}</div>
+                    <div style={{ fontSize:11, color:D.textSub }}>HC {nHoles<=9?Math.ceil(pl.hc/2):pl.hc}</div>
                   </div>
                   {hasScore && b && <span style={{ fontSize:10, padding:"3px 8px", borderRadius:8, fontWeight:700, background:b.bg, color:b.fg, marginRight:4 }}>{b.label}</span>}
                   <div style={{ display:"flex", alignItems:"center", gap:10 }}>
@@ -4673,7 +4673,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
                 <Avatar name={p.name} id={p.id} size={36} />
                 <div style={{ flex:1 }}>
                   <div style={{ fontSize:15, fontWeight:700 }}>{p.name}</div>
-                  <div style={{ fontSize:11, color:D.textSub }}>HC {p.hc} · {p.net} golpes netos</div>
+                  <div style={{ fontSize:11, color:D.textSub }}>HC {nHoles<=9?Math.ceil(p.hc/2):p.hc}{nHoles<=9?" (de "+p.hc+")":""} · {p.net} golpes netos</div>
                 </div>
                 <div style={{ textAlign:"right" }}>
                   <div style={{ fontSize:20, fontWeight:900, color:fmtC(p.total) }}>{fmt(p.total)}</div>
@@ -4681,7 +4681,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
                 </div>
               </div>
               {[
-                {icon:"📊",label:"Score",sub:`${p.bruto} bruto · HC ${p.hc} · ${p.net} neto`,val:p.scoreMoney},
+                {icon:"📊",label:"Score",sub:`${p.bruto} bruto · HC ${nHoles<=9?Math.ceil(p.hc/2):p.hc} · ${p.net} neto`,val:p.scoreMoney},
                 {icon:"⭐",label:"Marcas",sub:`${p.pts} puntos · $${marcaVal} por punto`,val:p.marcasMoney},
                 {icon:"🃏",label:"Tarjetas",sub:`${p.cards} tarjeta${p.cards!==1?"s":""} · $${tarjetaVal} por tarjeta`,val:p.tarjetasMoney},
                 ...(p.castigoMoney > 0 ? [{icon:"🚪",label:"Castigo abandono",sub:"Reparto del fondo de abandonos",val:p.castigoMoney}] : []),
