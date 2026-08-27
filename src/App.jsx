@@ -4360,6 +4360,12 @@ function AdminApp({ onExit, torneoConfig = null }) {
           const fmtVs = (v) => v === null ? "-" : v === 0 ? "E" : v > 0 ? "+"+v : ""+v;
           const vsColor = (v) => v === null ? D.textDim : v < 0 ? D.success : v > 0 ? D.danger : D.text;
           const parTotal = pars.reduce((a,b)=>a+b,0);
+          // DEBUG
+          const debugHC = players.map(p => p.name+":HC"+p.hc+"->ef"+(nHoles<=9?Math.ceil(p.hc/2):p.hc)).join(" | ");
+          return (<div>
+          <div style={{background:"#000",color:"#0f0",padding:6,fontSize:10,wordBreak:"break-all"}}>
+            nHoles={nHoles} | {debugHC}
+          </div>
           const tablaData = players.map((pl, pi) => {
             const rowScores = scores[pi];
             const jugados = rowScores.filter(s => s !== null && s !== undefined);
@@ -4427,6 +4433,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
               </tbody>
             </table>
             <ScoreLegend />
+          </div>
           </div>
           );
         })())}
