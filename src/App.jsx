@@ -415,11 +415,13 @@ function calcTarjetasMoney(players, tarjetas, tarjetaVal) {
   });
 }
 
-function calcMoney(players, scores, apuesta, extraPot = 0) {
+function calcMoney(players, scores, apuesta, extraPot = 0, nHoles = 18) {
   const playsScore = players.map(p => p.opts ? p.opts.score !== false : true);
   const idxIn = players.map((_, i) => i).filter(i => playsScore[i]);
   const n = idxIn.length;
-  const nets = players.map((p, i) => scores[i].reduce((a, b) => a+b, 0) - p.hc);
+  // HC proporcional: 9 hoyos = HC/2, 18 hoyos = HC completo
+  const hcEfectivo = (p) => nHoles <= 9 ? Math.round(p.hc / 2) : p.hc;
+  const nets = players.map((p, i) => scores[i].reduce((a, b) => a+b, 0) - hcEfectivo(p));
   if (n < 2) {
     return { nets, fi:[], si:[], pot:0, money: players.map(() => 0) };
   }
@@ -450,25 +452,28 @@ function calcMoney(players, scores, apuesta, extraPot = 0) {
   })};
 }
 
-function calcHC(players, scores, si = []) {
-  const nets = players.map((p, i) => scores[i].reduce((a, b) => a+b, 0) - p.hc);
+function calcHC(players, scores, si = [], nHoles = 18) {
+  const hcEfectivo = (p) => nHoles <= 9 ? Math.round(p.hc / 2) : p.hc;
+  const nets = players.map((p, i) => scores[i].reduce((a, b) => a+b, 0) - hcEfectivo(p));
   const fnet = Math.min(...nets);
   const fi = nets.reduce((a, v, i) => v===fnet ? [...a,i] : a, []);
   const ganadores = [...new Set([...fi, ...si])];
   const deltas = {};
   players.forEach(p => { deltas[p.id] = 0; });
 
+  const hcMax = nHoles <= 9 ? 5 : 10;
+  const hcElegible = (p) => p.hc >= 0 && p.hc <= hcMax - 1; // sube si está bajo el tope
+
   let subeATodos = false;
   ganadores.forEach(wi => {
     const w = players[wi];
-    if (w.hc === 0) subeATodos = true; // ganador con HC=0 -> todos los elegibles suben
-    else deltas[w.id] -= 1; // ganador con HC>0 -> baja -1
+    if (w.hc === 0) subeATodos = true;
+    else deltas[w.id] -= 1;
   });
 
   if (subeATodos) {
-    // Suben los que tienen HC entre 0 y 4 (no los ganadores, no los que tienen HC 5+)
     players.forEach((p, i) => {
-      if (!ganadores.includes(i) && p.hc >= 0 && p.hc <= 4) {
+      if (!ganadores.includes(i) && hcElegible(p)) {
         deltas[p.id] += 1;
       }
     });
@@ -478,7 +483,7 @@ function calcHC(players, scores, si = []) {
     ...p,
     before: p.hc,
     delta: deltas[p.id],
-    after: Math.min(5, Math.max(0, p.hc + deltas[p.id])), // tope máximo HC 5
+    after: Math.min(hcMax, Math.max(0, p.hc + deltas[p.id])),
   }));
 }
 
@@ -644,7 +649,7 @@ function SpectatorView({ rondaId }) {
       const v = (scores[i]||[])[h];
       return v===null||v===undefined ? par : v;
     }));
-    const r = calcMoney(players, fullSc, apuesta);
+    const r = calcMoney(players, fullSc, apuesta, 0, histData.nHoles||18);
     const mMoney = marcas ? calcMarcasMoney(players, marcas, marcaVal||0) : players.map(()=>0);
     const mPtsRaw = marcas ? calcMarcasPts(players, marcas) : players.map(()=>0);
     const mPts = players.map((p,i) => (p.opts?.marcas === false) ? 0 : mPtsRaw[i]);
@@ -1367,10 +1372,10 @@ function CerrarTorneoPanel({ torneoId, torneo, grupos, allPlayers, ranked, pars,
       return (v===null||v===undefined) ? par : v;
     }));
 
-    const r = calcMoney(playersGlobal, scoresGlobal, torneo.apuesta||50);
+    const r = calcMoney(playersGlobal, scoresGlobal, torneo.apuesta||50, 0, torneo.nHoles||18);
     const playsScoreCount = playersGlobal.length;
     const siParaHC = (playsScoreCount >= 10 && r.fi.length === 1) ? r.si : [];
-    const hc = calcHC(playersGlobal, scoresGlobal, siParaHC);
+    const hc = calcHC(playersGlobal, scoresGlobal, siParaHC, torneo.nHoles||18);
     setHcUpdates(hc);
   }, []);
 
@@ -1398,7 +1403,7 @@ function CerrarTorneoPanel({ torneoId, torneo, grupos, allPlayers, ranked, pars,
 
       // Score global entre todos
       const scoresGlobal = allPlayers.map(p => p.fullScores);
-      const rGlobal = calcMoney(allPlayers, scoresGlobal, torneo.apuesta||50);
+      const rGlobal = calcMoney(allPlayers, scoresGlobal, torneo.apuesta||50, 0, torneo.nHoles||18);
 
       // Peor score global
       const netsGlobal = allPlayers.map((p,i) => scoresGlobal[i].reduce((a,b)=>a+b,0) - p.hc);
@@ -1639,7 +1644,7 @@ function TorneoSpectator({ torneoId, appStyle, isAdmin = false }) {
     return (v===null||v===undefined) ? par : v;
   }));
   const moneyGlobal = allPlayers.length >= 2
-    ? calcMoney(playersForCalc, fullScoresForCalc, torneo.apuesta || 50, extraPotAbandonos).money
+    ? calcMoney(playersForCalc, fullScoresForCalc, torneo.apuesta || 50, extraPotAbandonos, torneo.nHoles||18).money
     : allPlayers.map(() => 0);
 
   // Marcas y tarjetas por grupo (excluyendo peorscore que se calcula globalmente)
@@ -3193,7 +3198,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
       if (p.opts?.tarjetas === false) return null;
       const jugados = newScores[i].filter(v => v !== null && v !== undefined);
       if (jugados.length === 0) return null;
-      return jugados.reduce((a,b)=>a+b,0) - p.hc;
+      const hcEfTab = nHoles <= 9 ? Math.round(p.hc/2) : p.hc; return jugados.reduce((a,b)=>a+b,0) - hcEfTab;
     });
     const validNetos = netosActuales.filter(n => n !== null);
     if (validNetos.length > 0) {
@@ -3284,17 +3289,18 @@ function AdminApp({ onExit, torneoConfig = null }) {
     const rawScores = sc;
     const castigosFinales = getCastigos();
     const extraPotAbandonos = castigosFinales.filter(c=>c.conCastigo).reduce((a,c)=>a+c.scorePago,0);
-    const r = calcMoney(players, fullScores, apuesta, extraPotAbandonos);
+    const r = calcMoney(players, fullScores, apuesta, extraPotAbandonos, nHoles);
     const playsScoreCount = players.filter(p => p.opts ? p.opts.score !== false : true).length;
     const siParaHC = (playsScoreCount >= 10 && r.fi.length === 1) ? r.si : [];
-    const hc = calcHC(players, fullScores, siParaHC);
+    const hc = calcHC(players, fullScores, siParaHC, nHoles);
     const marcasMoney = calcMarcasMoney(players, marcas, marcaVal);
     const marcasPtsRaw = calcMarcasPts(players, marcas);
     const marcasPts = players.map((p,i) => (p.opts?.marcas === false) ? 0 : marcasPtsRaw[i]);
     // Recalcular peorscore con scores COMPLETOS (total tiros - HC)
     const netosFinales = players.map((p,i) => {
       if (p.opts?.tarjetas === false) return null;
-      return fullScores[i].reduce((a,b)=>a+b,0) - p.hc;
+      const hcEfFin = nHoles <= 9 ? Math.round(p.hc/2) : p.hc;
+      return fullScores[i].reduce((a,b)=>a+b,0) - hcEfFin;
     });
     const validNetosFinales = netosFinales.filter(n => n !== null);
     const tarjetasFinales = { ...tarjetas };
@@ -3402,7 +3408,8 @@ function AdminApp({ onExit, torneoConfig = null }) {
   };
 
   const getDisplay = (pi, h) => scores[pi]?.[h]===null ? pars[h] : scores[pi]?.[h];
-  const liveNets = players.map((p,i) => (scores[i]||[]).reduce((a,v,j)=>a+(v===null?pars[j]:v),0) - p.hc);
+  const hcEf = (p) => nHoles <= 9 ? Math.round(p.hc/2) : p.hc;
+  const liveNets = players.map((p,i) => (scores[i]||[]).reduce((a,v,j)=>a+(v===null?pars[j]:v),0) - hcEf(p));
   const par = pars[hole] || 4;
   const n = sel.size, pot = apuesta * n;
 
