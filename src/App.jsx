@@ -4602,7 +4602,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
               const brutoReal = jugados.length > 0 ? jugados.reduce((a,b)=>a+b,0) : null;
               const parJugados = pars.slice(0, raw.reduce((last,s,i)=>s!==null&&s!==undefined?i+1:last, 0)).reduce((a,b)=>a+b,0);
               const vsPar = brutoReal !== null ? brutoReal - parJugados : null;
-              const vsParHC = vsPar !== null ? vsPar - p.hc : null;
+              const vsParHC = vsPar !== null ? vsPar - (nHoles<=9?Math.ceil(p.hc/2):p.hc) : null;
               return { ...p, pi, raw, brutoReal, vsPar, vsParHC };
             }).sort((a,b) => {
               if (a.vsParHC === null && b.vsParHC === null) return 0;
@@ -4653,7 +4653,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
                         <td key={hi} style={{ textAlign:"center", padding:"3px 1px" }}><ScoreCell s={s??null} par={pars[hi]} size={20} /></td>
                       ))}
                       <td style={{ textAlign:"center", padding:"5px 4px", fontWeight:700, fontSize:11, borderLeft:`1px solid ${D.border}` }}>{p.brutoReal??'—'}</td>
-                      <td style={{ textAlign:"center", padding:"5px 3px", fontSize:11, color:D.textSub }}>{p.hc}</td>
+                      <td style={{ textAlign:"center", padding:"5px 3px", fontSize:11, color:D.textSub }}>{nHoles<=9?Math.ceil(p.hc/2):p.hc}</td>
                       <td style={{ textAlign:"center", padding:"5px 4px", fontWeight:700, fontSize:11, color:p.vsPar!==null?vsColor(p.vsPar):D.textDim, borderLeft:`1px solid ${D.border}` }}>{p.vsPar!==null?fmtVs(p.vsPar):'—'}</td>
                       <td style={{ textAlign:"center", padding:"5px 4px", fontWeight:900, fontSize:12, color:p.vsParHC!==null?vsColor(p.vsParHC):D.textDim, borderLeft:`1px solid ${D.border}` }}>{p.vsParHC!==null?fmtVs(p.vsParHC):'—'}</td>
                       <td style={{ textAlign:"center", padding:"5px 3px", fontWeight:700, fontSize:11, color:"#1A5C24", borderLeft:`1px solid ${D.border}` }}>{p.pts}</td>
