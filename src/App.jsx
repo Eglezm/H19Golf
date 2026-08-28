@@ -4384,7 +4384,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
             <table style={{ borderCollapse:"collapse", width:"100%", fontSize:11, color:D.text }}>
               <thead>
                 <tr style={{ background:D.surface }}>
-                  <td style={{ padding:"8px 6px", fontWeight:700, color:D.gold, fontSize:10, textTransform:"uppercase", letterSpacing:1, position:"sticky", left:0, background:D.surface, borderBottom:`1px solid ${D.border}`, minWidth:70 }}>Jugador</td>
+                  <td style={{ padding:"8px 6px", fontWeight:700, color:D.gold, fontSize:10, textTransform:"uppercase", letterSpacing:1, position:"sticky", left:0, background:D.surface, borderBottom:`1px solid ${D.border}`, minWidth:70 }}>Jugador v9HC</td>
                   {pars.map((_,i) => <td key={i} style={{ padding:"6px 3px", textAlign:"center", fontWeight:700, color:D.textSub, borderBottom:`1px solid ${D.border}`, minWidth:26, fontSize:10 }}>{i+1}</td>)}
                   <td style={{ padding:"6px 5px", textAlign:"center", fontWeight:700, color:D.gold, borderBottom:`1px solid ${D.border}`, minWidth:32, borderLeft:`1px solid ${D.border}` }}>TOT</td>
                   <td style={{ padding:"6px 4px", textAlign:"center", fontWeight:700, color:D.textSub, borderBottom:`1px solid ${D.border}`, minWidth:28 }}>HC</td>
