@@ -43,6 +43,9 @@ const CAMPOS = {
 };
 
 // Distancia en yardas entre 2 coordenadas GPS (fórmula de Haversine)
+// HC efectivo según número de hoyos (9 hoyos = HC/2 redondeado arriba)
+const hcEf = (hc, nHoles) => nHoles <= 9 ? Math.ceil(hc / 2) : hc;
+
 function distanciaYardas(lat1, lng1, lat2, lng2) {
   const R = 6371000; // radio de la Tierra en metros
   const toRad = (d) => d * Math.PI / 180;
@@ -613,7 +616,7 @@ function SpectatorView({ rondaId }) {
   const { players: _players, scores: _scores, pars, hole, campo, tarjetas, marcas, status, apuesta, marcaVal, tarjetaVal } = ronda;
   const players = Array.isArray(_players) ? _players : Object.values(_players||{});
   const scores = Array.isArray(_scores) ? _scores : Object.values(_scores||{});
-  const nets = players.map((p, i) => (scores[i]||[]).reduce((a,v)=>a+(v||0),0) - p.hc);
+  const nets = players.map((p, i) => (scores[i]||[]).reduce((a,v)=>a+(v||0),0) - hcEf(p.hc, histData.nHoles||18));
   const ranked = players.map((p, i) => ({ ...p, net:nets[i], gross:(scores[i]||[]).reduce((a,v)=>a+(v||0),0) })).sort((a,b)=>a.net-b.net);
   const campoNombre = CAMPOS[campo]?.nombre || campo;
 
@@ -683,7 +686,7 @@ function SpectatorView({ rondaId }) {
                 <Avatar name={p.name} id={p.name} size={32} />
                 <div style={{ flex:1 }}>
                   <div style={{ fontSize:14, fontWeight:600 }}>{p.name}</div>
-                  <div style={{ fontSize:11, color:D.textSub }}>HC {p.hc} · {p.bruto} bruto</div>
+                  <div style={{ fontSize:11, color:D.textSub }}>HC {hcEf(p.hc, histData.nHoles||18)}{histData.nHoles<=9?" (de "+p.hc+")":""} · {p.bruto} bruto</div>
                 </div>
                 <div style={{ textAlign:"right" }}>
                   <div style={{ fontSize:18, fontWeight:900, color:pos===0?D.gold:D.text }}>{p.neto}</div>
@@ -905,7 +908,7 @@ function SpectatorView({ rondaId }) {
               const lastIdx = rowScores.reduce((last,s,i) => s!==null&&s!==undefined ? i+1 : last, 0);
               const parJugados = (pars||[]).slice(0, lastIdx).reduce((a,b)=>a+b,0);
               const vsPar = total !== null ? total - parJugados : null;
-              const vsParHC = vsPar !== null ? vsPar - pl.hc : null;
+              const vsParHC = vsPar !== null ? vsPar - hcEf(pl.hc, histData.nHoles||18) : null;
               return { pl, pi, rowScores, total, vsPar, vsParHC };
             }).sort((a,b) => {
               if (a.vsParHC === null && b.vsParHC === null) return 0;
@@ -954,7 +957,7 @@ function SpectatorView({ rondaId }) {
                           );
                         })}
                         <td style={{ textAlign:"center", padding:"5px 4px", fontWeight:700, fontSize:12, borderLeft:`1px solid ${D.border}` }}>{total??'—'}</td>
-                        <td style={{ textAlign:"center", padding:"5px 3px", fontSize:11, color:D.textSub }}>{pl.hc}</td>
+                        <td style={{ textAlign:"center", padding:"5px 3px", fontSize:11, color:D.textSub }}>{hcEf(pl.hc, histData.nHoles||18)}</td>
                         <td style={{ textAlign:"center", padding:"5px 4px", fontWeight:700, fontSize:12, color:vsColor(vsPar), borderLeft:`1px solid ${D.border}` }}>{fmtVs(vsPar)}</td>
                         <td style={{ textAlign:"center", padding:"5px 4px", fontWeight:900, fontSize:12, color:vsColor(vsParHC), borderLeft:`1px solid ${D.border}` }}>{fmtVs(vsParHC)}</td>
                       </tr>
@@ -1187,7 +1190,7 @@ function TorneoCrear({ onExit, onIniciarGrupo, appStyle }) {
                   <Avatar name={p.name} id={p.id} size={30} />
                   <div style={{ flex:1 }}>
                     <div style={{ fontSize:13, fontWeight:600 }}>{p.name}</div>
-                    <div style={{ fontSize:11, color:D.textSub }}>HC {p.hc}</div>
+                    <div style={{ fontSize:11, color:D.textSub }}>HC {hcEf(p.hc, histData.nHoles||18)}</div>
                   </div>
                   {enOtroGrupo && <div style={{ fontSize:10, color:D.textDim }}>En {grupos[enOtroGrupoIdx]?.nombre||`Grupo ${enOtroGrupoIdx+1}`}</div>}
                 </div>
@@ -1406,7 +1409,7 @@ function CerrarTorneoPanel({ torneoId, torneo, grupos, allPlayers, ranked, pars,
       const rGlobal = calcMoney(allPlayers, scoresGlobal, torneo.apuesta||50, 0, torneo.nHoles||18);
 
       // Peor score global
-      const netsGlobal = allPlayers.map((p,i) => scoresGlobal[i].reduce((a,b)=>a+b,0) - p.hc);
+      const netsGlobal = allPlayers.map((p,i) => scoresGlobal[i].reduce((a,b)=>a+b,0) - hcEf(p.hc, torneo.nHoles||18));
       const peorNeto = Math.max(...netsGlobal);
       const peoresIdx = netsGlobal.map((n,i)=>n===peorNeto?i:-1).filter(i=>i>=0);
       const tv = torneo.tarjetaVal||10;
@@ -1618,7 +1621,7 @@ function TorneoSpectator({ torneoId, appStyle, isAdmin = false }) {
     const lastIdx = p.scores.reduce((last,s,i) => s!==null&&s!==undefined ? i+1 : last, 0);
     const parJugados = pars.slice(0, lastIdx).reduce((a,b)=>a+b,0);
     const vsPar = bruto !== null ? bruto - parJugados : null;
-    const vsParHC = vsPar !== null ? vsPar - p.hc : null;
+    const vsParHC = vsPar !== null ? vsPar - hcEf(p.hc, torneo.nHoles||18) : null;
     return { ...p, bruto, vsPar, vsParHC };
   }).sort((a,b) => {
     if (a.vsParHC===null && b.vsParHC===null) return 0;
@@ -1897,7 +1900,7 @@ function TorneoSpectator({ torneoId, appStyle, isAdmin = false }) {
                   <div key={pi} style={{ display:"flex", alignItems:"center", gap:8, padding:"7px 0", borderBottom:pi<gPlayers.length-1?`1px solid ${D.border}`:"none" }}>
                     <Avatar name={String(p.name||'?')} id={p.id||pi} size={26} />
                     <div style={{ flex:1, fontSize:13, fontWeight:600 }}>{p.name}</div>
-                    <div style={{ fontSize:11, color:D.textSub }}>HC {p.hc}</div>
+                    <div style={{ fontSize:11, color:D.textSub }}>HC {hcEf(p.hc, torneo.nHoles||18)}</div>
                     <div style={{ fontSize:13, fontWeight:700, color:D.gold }}>{bruto??'—'} golpes</div>
                   </div>
                 );
@@ -4491,8 +4494,8 @@ function AdminApp({ onExit, torneoConfig = null }) {
           {players.map((p,i) => {
             const jugados = (scores[i]||[]).filter(v => v !== null && v !== undefined);
             const bruto = jugados.length > 0 ? jugados.reduce((a,b)=>a+b,0) : null;
-            const neto = bruto !== null ? bruto - p.hc : null;
-            return { name:p.name, id:p.id, bruto, hc:p.hc, neto };
+            const neto = bruto !== null ? bruto - hcEf(p.hc, nHoles) : null;
+            return { name:p.name, id:p.id, bruto, hc:hcEf(p.hc, nHoles), hcReal:p.hc, neto };
           }).sort((a,b) => {
             if (a.neto === null && b.neto === null) return 0;
             if (a.neto === null) return 1;
