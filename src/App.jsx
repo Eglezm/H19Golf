@@ -4378,13 +4378,10 @@ function AdminApp({ onExit, torneoConfig = null }) {
           });
           return (
           <div style={{ overflowX:"auto", marginBottom:12 }}>
-            <div style={{background:"#000",color:"#0f0",padding:6,fontSize:10,wordBreak:"break-all"}}>
-              {"nHoles="+nHoles+" | "+players.map(p=>p.name+":HC"+p.hc+"->ef"+(nHoles<=9?Math.ceil(p.hc/2):p.hc)).join(" | ")}
-            </div>
             <table style={{ borderCollapse:"collapse", width:"100%", fontSize:11, color:D.text }}>
               <thead>
                 <tr style={{ background:D.surface }}>
-                  <td style={{ padding:"8px 6px", fontWeight:700, color:D.gold, fontSize:10, textTransform:"uppercase", letterSpacing:1, position:"sticky", left:0, background:D.surface, borderBottom:`1px solid ${D.border}`, minWidth:70 }}>Jugador v9HC</td>
+                  <td style={{ padding:"8px 6px", fontWeight:700, color:D.gold, fontSize:10, textTransform:"uppercase", letterSpacing:1, position:"sticky", left:0, background:D.surface, borderBottom:`1px solid ${D.border}`, minWidth:70 }}>Jugador</td>
                   {pars.map((_,i) => <td key={i} style={{ padding:"6px 3px", textAlign:"center", fontWeight:700, color:D.textSub, borderBottom:`1px solid ${D.border}`, minWidth:26, fontSize:10 }}>{i+1}</td>)}
                   <td style={{ padding:"6px 5px", textAlign:"center", fontWeight:700, color:D.gold, borderBottom:`1px solid ${D.border}`, minWidth:32, borderLeft:`1px solid ${D.border}` }}>TOT</td>
                   <td style={{ padding:"6px 4px", textAlign:"center", fontWeight:700, color:D.textSub, borderBottom:`1px solid ${D.border}`, minWidth:28 }}>HC</td>
@@ -4528,11 +4525,6 @@ function AdminApp({ onExit, torneoConfig = null }) {
 
     return (
       <div style={appSt}>
-        {/* DEBUG TEMPORAL */}
-        <div style={{ background:"#111", color:"#0f0", padding:8, fontSize:10, wordBreak:"break-all", zIndex:999 }}>
-          st:{castigos.length} LS:{castigosLS.length} SS:{castigosSS.length} win:{castigosWin.length} ronda:{castigosRonda.length} usando:{castigosRes.length}
-          {castigosRes.map((c,i) => <div key={i} style={{color:"#ff0"}}>{c.name}|{String(c.conCastigo)}|{c.scorePago}|{c.tarjetaPago}</div>)}
-        </div>
         {torneoConfig && (
           <div style={{ background:`linear-gradient(135deg,#1A5C24,#2E7D32)`, padding:"12px 16px", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
             <div>
@@ -4593,7 +4585,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
             </Card>
           ))}
           <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
-            <div style={{ fontSize:10, fontWeight:700, color:D.gold, textTransform:"uppercase", letterSpacing:2 }}>Clasificación final v8</div>
+            <div style={{ fontSize:10, fontWeight:700, color:D.gold, textTransform:"uppercase", letterSpacing:2 }}>Clasificación final</div>
             <button onClick={() => setShowTabla(s=>!s)} style={{ padding:"5px 12px", border:`1px solid ${showTabla?D.gold:D.border}`, borderRadius:20, background:showTabla?D.goldDim:"transparent", color:showTabla?D.gold:D.textSub, fontSize:11, fontWeight:700, cursor:"pointer" }}>
               {showTabla ? "📊 Desglose" : "📋 Tabla"}
             </button>
