@@ -2035,15 +2035,31 @@ function TorneoCodigosView({ torneoAdmin, onExit, appStyle }) {
   const [grupos, setGrupos] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
+  const cargarGrupos = () => {
     get(ref(db, `torneos/${torneoAdmin.torneoId}`)).then(snap => {
       if (snap.exists()) {
         const t = snap.val();
         const gs = Array.isArray(t.gruposConfig) ? t.gruposConfig : Object.values(t.gruposConfig||{});
-        setGrupos(gs);
+        // Enriquecer con jugadores reales de cada grupo
+        const gruposFirebase = t.grupos || {};
+        const gsEnriquecidos = gs.map(g => {
+          const grupoData = gruposFirebase[g.id] || {};
+          const playersArr = grupoData.players
+            ? (Array.isArray(grupoData.players) ? grupoData.players : Object.values(grupoData.players))
+            : (g.players || []);
+          return { ...g, players: playersArr, status: grupoData.status };
+        });
+        setGrupos(gsEnriquecidos);
       }
       setLoading(false);
     }).catch(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    cargarGrupos();
+    // Recargar cada 30 segundos para ver jugadores que van entrando
+    const interval = setInterval(cargarGrupos, 30000);
+    return () => clearInterval(interval);
   }, [torneoAdmin.torneoId]);
 
   const torneoUrl = `${window.location.origin}${window.location.pathname}?torneo=${torneoAdmin.torneoId}`;
@@ -2055,7 +2071,10 @@ function TorneoCodigosView({ torneoAdmin, onExit, appStyle }) {
           <div style={{ fontSize:18, fontWeight:900, color:D.gold }}>Códigos del torneo</div>
           <div style={{ fontSize:12, color:D.textSub }}>{torneoAdmin.nombre}</div>
         </div>
-        <button onClick={onExit} style={{ fontSize:12, color:D.textSub, background:"none", border:`1px solid ${D.border}`, borderRadius:8, padding:"5px 10px", cursor:"pointer" }}>Volver</button>
+        <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+          <button onClick={cargarGrupos} style={{ fontSize:12, color:D.gold, background:D.goldDim, border:`1px solid ${D.gold}44`, borderRadius:8, padding:"5px 10px", cursor:"pointer" }}>🔄 Actualizar</button>
+          <button onClick={onExit} style={{ fontSize:12, color:D.textSub, background:"none", border:`1px solid ${D.border}`, borderRadius:8, padding:"5px 10px", cursor:"pointer" }}>Volver</button>
+        </div>
       </div>
       <div style={{ padding:"12px" }}>
         {/* Link del torneo */}
@@ -2082,19 +2101,29 @@ function TorneoCodigosView({ torneoAdmin, onExit, appStyle }) {
           <Card key={g.id||i}>
             <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:6 }}>
               <SLabel style={{ marginBottom:0 }}>Grupo {i+1}: {g.nombre}</SLabel>
-              <div style={{ fontSize:11, color:D.textSub }}>{g.players?.length||0} jugadores</div>
+              <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                <div style={{ fontSize:10, color: g.status==="finalizada"?D.success:g.status==="en_juego"?D.gold:D.textSub, fontWeight:700 }}>
+                  {g.status==="finalizada"?"✅ Finalizado":g.status==="en_juego"?"🟡 En juego":"⏳ Sin iniciar"}
+                </div>
+                <div style={{ fontSize:11, color:D.textSub }}>{g.players?.length||0} jug.</div>
+              </div>
             </div>
             <div style={{ fontSize:30, fontWeight:900, letterSpacing:4, color:D.gold, textAlign:"center", padding:"10px 0" }}>{g.id}</div>
             {/* Jugadores del grupo */}
-            {(g.players||[]).length > 0 && (
-              <div style={{ marginBottom:10 }}>
+            {(g.players||[]).length > 0 ? (
+              <div style={{ marginBottom:10, background:D.surface, borderRadius:10, padding:"8px 10px" }}>
+                <div style={{ fontSize:10, fontWeight:700, color:D.textSub, textTransform:"uppercase", letterSpacing:1, marginBottom:6 }}>Jugadores</div>
                 {(g.players||[]).map((p,pi) => (
-                  <div key={pi} style={{ display:"flex", alignItems:"center", gap:6, padding:"4px 0", borderBottom:pi<(g.players||[]).length-1?`1px solid ${D.border}`:"none" }}>
-                    <Avatar name={String(p.name||'?')} id={p.id||pi} size={22} />
-                    <span style={{ fontSize:12, fontWeight:600 }}>{p.name}</span>
-                    <span style={{ fontSize:11, color:D.textSub, marginLeft:"auto" }}>HC {p.hc}</span>
+                  <div key={pi} style={{ display:"flex", alignItems:"center", gap:6, padding:"5px 0", borderBottom:pi<(g.players||[]).length-1?`1px solid ${D.border}`:"none" }}>
+                    <Avatar name={String(p.name||'?')} id={p.id||pi} size={24} />
+                    <span style={{ fontSize:13, fontWeight:600, flex:1 }}>{p.name}</span>
+                    <span style={{ fontSize:11, color:D.gold, fontWeight:700 }}>HC {p.hc}</span>
                   </div>
                 ))}
+              </div>
+            ) : (
+              <div style={{ marginBottom:10, padding:"8px", background:D.surface, borderRadius:8, textAlign:"center", fontSize:11, color:D.textDim }}>
+                Sin jugadores aún — esperando que el admin del grupo ingrese
               </div>
             )}
             <div style={{ display:"flex", gap:8 }}>
