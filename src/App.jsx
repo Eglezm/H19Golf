@@ -1190,7 +1190,7 @@ function TorneoCrear({ onExit, onIniciarGrupo, appStyle }) {
                   <Avatar name={p.name} id={p.id} size={30} />
                   <div style={{ flex:1 }}>
                     <div style={{ fontSize:13, fontWeight:600 }}>{p.name}</div>
-                    <div style={{ fontSize:11, color:D.textSub }}>HC {hcEf(p.hc, histData.nHoles||18)}</div>
+                    <div style={{ fontSize:11, color:D.textSub }}>HC {hcEf(p.hc, nHoles)}</div>
                   </div>
                   {enOtroGrupo && <div style={{ fontSize:10, color:D.textDim }}>En {grupos[enOtroGrupoIdx]?.nombre||`Grupo ${enOtroGrupoIdx+1}`}</div>}
                 </div>
