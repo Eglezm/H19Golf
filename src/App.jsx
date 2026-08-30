@@ -616,7 +616,9 @@ function SpectatorView({ rondaId }) {
   const { players: _players, scores: _scores, pars, hole, campo, tarjetas, marcas, status, apuesta, marcaVal, tarjetaVal } = ronda;
   const players = Array.isArray(_players) ? _players : Object.values(_players||{});
   const scores = Array.isArray(_scores) ? _scores : Object.values(_scores||{});
-  const nets = players.map((p, i) => (scores[i]||[]).reduce((a,v)=>a+(v||0),0) - hcEf(p.hc, histData.nHoles||18));
+  // nHoles: de ronda activa, de historial, o inferir de pars
+  const svNHoles = ronda.nHoles || histData?.nHoles || (pars ? (Array.isArray(pars)?pars:Object.values(pars)).length : 18);
+  const nets = players.map((p, i) => (scores[i]||[]).reduce((a,v)=>a+(v||0),0) - hcEf(p.hc, svNHoles));
   const ranked = players.map((p, i) => ({ ...p, net:nets[i], gross:(scores[i]||[]).reduce((a,v)=>a+(v||0),0) })).sort((a,b)=>a.net-b.net);
   const campoNombre = CAMPOS[campo]?.nombre || campo;
 
@@ -652,7 +654,7 @@ function SpectatorView({ rondaId }) {
       const v = (scores[i]||[])[h];
       return v===null||v===undefined ? par : v;
     }));
-    const r = calcMoney(players, fullSc, apuesta, 0, histData.nHoles||18);
+    const r = calcMoney(players, fullSc, apuesta, 0, svNHoles);
     const mMoney = marcas ? calcMarcasMoney(players, marcas, marcaVal||0) : players.map(()=>0);
     const mPtsRaw = marcas ? calcMarcasPts(players, marcas) : players.map(()=>0);
     const mPts = players.map((p,i) => (p.opts?.marcas === false) ? 0 : mPtsRaw[i]);
@@ -686,7 +688,7 @@ function SpectatorView({ rondaId }) {
                 <Avatar name={p.name} id={p.name} size={32} />
                 <div style={{ flex:1 }}>
                   <div style={{ fontSize:14, fontWeight:600 }}>{p.name}</div>
-                  <div style={{ fontSize:11, color:D.textSub }}>HC {hcEf(p.hc, histData.nHoles||18)}{histData.nHoles<=9?" (de "+p.hc+")":""} · {p.bruto} bruto</div>
+                  <div style={{ fontSize:11, color:D.textSub }}>HC {hcEf(p.hc, svNHoles)}{svNHoles<=9?" (de "+p.hc+")":""} · {p.bruto} bruto</div>
                 </div>
                 <div style={{ textAlign:"right" }}>
                   <div style={{ fontSize:18, fontWeight:900, color:pos===0?D.gold:D.text }}>{p.neto}</div>
@@ -908,7 +910,7 @@ function SpectatorView({ rondaId }) {
               const lastIdx = rowScores.reduce((last,s,i) => s!==null&&s!==undefined ? i+1 : last, 0);
               const parJugados = (pars||[]).slice(0, lastIdx).reduce((a,b)=>a+b,0);
               const vsPar = total !== null ? total - parJugados : null;
-              const vsParHC = vsPar !== null ? vsPar - hcEf(pl.hc, histData.nHoles||18) : null;
+              const vsParHC = vsPar !== null ? vsPar - hcEf(pl.hc, svNHoles) : null;
               return { pl, pi, rowScores, total, vsPar, vsParHC };
             }).sort((a,b) => {
               if (a.vsParHC === null && b.vsParHC === null) return 0;
@@ -957,7 +959,7 @@ function SpectatorView({ rondaId }) {
                           );
                         })}
                         <td style={{ textAlign:"center", padding:"5px 4px", fontWeight:700, fontSize:12, borderLeft:`1px solid ${D.border}` }}>{total??'—'}</td>
-                        <td style={{ textAlign:"center", padding:"5px 3px", fontSize:11, color:D.textSub }}>{hcEf(pl.hc, histData.nHoles||18)}</td>
+                        <td style={{ textAlign:"center", padding:"5px 3px", fontSize:11, color:D.textSub }}>{hcEf(pl.hc, svNHoles)}</td>
                         <td style={{ textAlign:"center", padding:"5px 4px", fontWeight:700, fontSize:12, color:vsColor(vsPar), borderLeft:`1px solid ${D.border}` }}>{fmtVs(vsPar)}</td>
                         <td style={{ textAlign:"center", padding:"5px 4px", fontWeight:900, fontSize:12, color:vsColor(vsParHC), borderLeft:`1px solid ${D.border}` }}>{fmtVs(vsParHC)}</td>
                       </tr>
