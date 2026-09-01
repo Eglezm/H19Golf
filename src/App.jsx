@@ -464,25 +464,32 @@ function calcHC(players, scores, si = [], nHoles = 18) {
   const deltas = {};
   players.forEach(p => { deltas[p.id] = 0; });
 
-  // Tope para SUBIR: 10 (18 hoyos) o 5 (9 hoyos)
-  // Si HC >= tope: no puede subir, pero SÍ puede bajar al ganar
-  // Si HC > tope: se respeta el HC actual, solo se restringe subir más
-  const hcTope = nHoles <= 9 ? 5 : 10;
+  // Escala 18h siempre:
+  // HC 0 gana  → no baja, los demás suben +1 (18h) o +2 (9h), tope 10
+  // HC 1+ gana → baja -1 (18h) o -2 (9h), los demás no cambian
+  const deltaGanadorBaja = nHoles <= 9 ? 2 : 1;
+  const deltaPerderSube  = nHoles <= 9 ? 2 : 1;
+  const hcTope = 10;
 
-  let subeATodos = false;
+  let ganadorHC0 = false;
   ganadores.forEach(wi => {
     const w = players[wi];
-    if (w.hc === 0) subeATodos = true;
-    else deltas[w.id] -= 1; // ganador baja -1 siempre (sin importar HC)
+    if (w.hc === 0) {
+      ganadorHC0 = true;
+      // HC 0 no cambia
+    } else {
+      // HC 1+ baja deltaGanadorBaja
+      deltas[w.id] -= deltaGanadorBaja;
+    }
   });
 
-  if (subeATodos) {
+  if (ganadorHC0) {
+    // Todos los NO ganadores suben (si están bajo el tope)
     players.forEach((p, i) => {
-      // Solo sube si está por debajo del tope
       if (!ganadores.includes(i) && p.hc < hcTope) {
-        deltas[p.id] += 1;
+        const nuevoHC = p.hc + deltaPerderSube;
+        deltas[p.id] = Math.min(nuevoHC, hcTope) - p.hc;
       }
-      // Si HC >= tope: no sube (delta queda en 0)
     });
   }
 
@@ -490,8 +497,6 @@ function calcHC(players, scores, si = [], nHoles = 18) {
     ...p,
     before: p.hc,
     delta: deltas[p.id],
-    // No truncar hacia arriba: respetar HC actual si es > tope
-    // Solo limitar que no baje de 0
     after: Math.max(0, p.hc + deltas[p.id]),
   }));
 }
