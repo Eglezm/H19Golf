@@ -247,47 +247,48 @@ function getBadge(s, par) {
 }
 
 // Notación tradicional de golf
-function ScoreCell({ s, par, size = 24 }) {
+function ScoreCell({ s, par, size = 24, isSalida = false }) {
+  const starOverlay = isSalida ? (
+    <span style={{ position:"absolute", top:-4, right:-3, fontSize:8, color:"#2E7D32", lineHeight:1 }}>★</span>
+  ) : null;
+
   if (s === null || s === undefined) return (
-    <div style={{ width:size, height:size, display:"flex", alignItems:"center", justifyContent:"center", fontSize:size*0.45, color:D.textDim, margin:"0 auto" }}>-</div>
+    <div style={{ width:size, height:size, display:"flex", alignItems:"center", justifyContent:"center", fontSize:size*0.45, color:D.textDim, margin:"0 auto", position:"relative" }}>
+      -{starOverlay}
+    </div>
   );
   const d = s - par;
   const fs = Math.round(size * 0.46);
   const base = { width:size, height:size, display:"flex", alignItems:"center", justifyContent:"center", fontSize:fs, fontWeight:700, margin:"0 auto", position:"relative", boxSizing:"border-box", background:"transparent" };
 
   if (d <= -2) {
-    // Eagle o mejor: doble círculo, línea dorada
     return (
-      <div style={{ ...base, borderRadius:"50%", border:`1.5px solid ${D.gold}`, outline:`1.5px solid ${D.gold}`, outlineOffset:"2px", color:D.gold }}>{s}</div>
+      <div style={{ ...base, borderRadius:"50%", border:`1.5px solid ${D.gold}`, outline:`1.5px solid ${D.gold}`, outlineOffset:"2px", color:D.gold }}>{s}{starOverlay}</div>
     );
   }
   if (d === -1) {
-    // Birdie: círculo, línea verde
     return (
-      <div style={{ ...base, borderRadius:"50%", border:`1.5px solid #1A5C24`, color:"#1A5C24" }}>{s}</div>
+      <div style={{ ...base, borderRadius:"50%", border:`1.5px solid #1A5C24`, color:"#1A5C24" }}>{s}{starOverlay}</div>
     );
   }
   if (d === 0) {
-    // Par: número solo, sin adorno
     return (
-      <div style={{ ...base, color:D.text }}>{s}</div>
+      <div style={{ ...base, color:D.text }}>{s}{starOverlay}</div>
     );
   }
   if (d === 1) {
-    // Bogey: cuadro, línea naranja
     return (
-      <div style={{ ...base, border:`1.5px solid #C87A30`, color:"#8A4A00" }}>{s}</div>
+      <div style={{ ...base, border:`1.5px solid #C87A30`, color:"#8A4A00" }}>{s}{starOverlay}</div>
     );
   }
   if (d === 2) {
-    // Doble bogey: doble cuadro, línea roja
     return (
-      <div style={{ ...base, border:`1.5px solid #C62828`, outline:`1.5px solid #C62828`, outlineOffset:"2px", color:"#C62828" }}>{s}</div>
+      <div style={{ ...base, border:`1.5px solid #C62828`, outline:`1.5px solid #C62828`, outlineOffset:"2px", color:"#C62828" }}>{s}{starOverlay}</div>
     );
   }
-  // Triple bogey o peor: doble cuadro, línea rojo oscuro
+  // Triple bogey o peor
   return (
-    <div style={{ ...base, border:`1.5px solid #7B0000`, outline:`1.5px solid #7B0000`, outlineOffset:"2px", color:"#7B0000", fontWeight:900 }}>{s}</div>
+    <div style={{ ...base, border:`1.5px solid #7B0000`, outline:`1.5px solid #7B0000`, outlineOffset:"2px", color:"#7B0000", fontWeight:900 }}>{s}{starOverlay}</div>
   );
 }
 
@@ -965,7 +966,7 @@ function SpectatorView({ rondaId }) {
                           const isCurrent = hi === (hole||0);
                           return (
                             <td key={hi} style={{ textAlign:"center", padding:"3px 1px", background:isCurrent?D.goldDim+"55":"transparent" }}>
-                              <ScoreCell s={s??null} par={par} size={22} />
+                              <ScoreCell s={s??null} par={par} size={22} isSalida={hi===(ronda.hoyoSalida||1)-1&&ronda.hoyoSalida>1} />
                             </td>
                           );
                         })}
@@ -4202,25 +4203,34 @@ function AdminApp({ onExit, torneoConfig = null }) {
   if (screen==="score") return (
     <div style={appSt}>
       <div style={{ height:3, background:D.border }}>
-        <div style={{ height:"100%", width:`${Math.round((hole/nHoles)*100)}%`, background:`linear-gradient(90deg,${D.gold},${D.goldLight})`, transition:"width 0.3s" }} />
+        <div style={{ height:"100%", width:`${Math.round(((() => { const hi = torneoConfig?.hoyoSalida?torneoConfig.hoyoSalida-1:0; const tot = pars.length||nHoles; return ((hole-hi+tot)%tot+1)/nHoles; })()*100))}%`, background:`linear-gradient(90deg,${D.gold},${D.goldLight})`, transition:"width 0.3s" }} />
       </div>
       <div style={{ background:D.surface, borderBottom:`1px solid ${D.border}`, padding:"12px 16px", display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:12 }}>
-        <button onClick={prevHole} disabled={hole===0} style={{ width:36,height:36,borderRadius:"50%",border:`1px solid ${D.border}`,background:"transparent",color:D.text,cursor:"pointer",fontSize:20,opacity:hole===0?0.3:1 }}>{"<"}</button>
-        <div style={{ textAlign:"center" }}>
-          <div style={{ fontSize:11, color:D.textSub, letterSpacing:1, textTransform:"uppercase" }}>{CAMPOS[campo]?.nombre||"Campo"}</div>
-          <div style={{ fontSize:22, fontWeight:900 }}>Hoyo {hole+1}{hole===(torneoConfig?.hoyoSalida||1)-1&&torneoConfig?.hoyoSalida>1?" ⭐":""}</div>
-          <div style={{ fontSize:12, color:D.gold, fontWeight:700, letterSpacing:1 }}>PAR {par}</div>
-        </div>
-        <div style={{ display:"flex", flexDirection:"column", alignItems:"flex-end", gap:4 }}>
-          {hole < nHoles-1
-            ? <button onClick={nextHole} style={{ padding:"7px 14px", border:`1px solid ${D.gold}`, borderRadius:20, background:D.goldDim, color:D.gold, fontSize:12, fontWeight:700, cursor:"pointer" }}>Siguiente</button>
-            : <div style={{ width:80 }} />
-          }
-          {torneoConfig
-            ? <button onClick={() => onExit()} style={{ padding:"4px 10px", border:`1px solid ${D.border}`, borderRadius:12, background:"transparent", color:D.textSub, fontSize:10, cursor:"pointer" }}>⏸ Salir</button>
-            : rondaId && <button onClick={shareRonda} style={{ padding:"4px 10px", border:`1px solid ${D.border}`, borderRadius:12, background:"transparent", color:D.textSub, fontSize:10, cursor:"pointer" }}>📤 Compartir</button>
-          }
-        </div>
+        {(() => {
+          const hoyoIni = torneoConfig?.hoyoSalida ? torneoConfig.hoyoSalida - 1 : 0;
+          const totalH = pars.length || nHoles;
+          const hoyoFin = (hoyoIni + nHoles - 1) % totalH;
+          const esUltimo = hole === hoyoFin;
+          const esPrimero = hole === hoyoIni;
+          return (<>
+            <button onClick={prevHole} disabled={esPrimero} style={{ width:36,height:36,borderRadius:"50%",border:`1px solid ${D.border}`,background:"transparent",color:D.text,cursor:"pointer",fontSize:20,opacity:esPrimero?0.3:1 }}>{"<"}</button>
+            <div style={{ textAlign:"center" }}>
+              <div style={{ fontSize:11, color:D.textSub, letterSpacing:1, textTransform:"uppercase" }}>{CAMPOS[campo]?.nombre||"Campo"}</div>
+              <div style={{ fontSize:22, fontWeight:900 }}>Hoyo {hole+1}{hole===hoyoIni&&(torneoConfig?.hoyoSalida||1)>1?" ⭐":""}</div>
+              <div style={{ fontSize:12, color:D.gold, fontWeight:700, letterSpacing:1 }}>PAR {par}</div>
+            </div>
+            <div style={{ display:"flex", flexDirection:"column", alignItems:"flex-end", gap:4 }}>
+              {!esUltimo
+                ? <button onClick={nextHole} style={{ padding:"7px 14px", border:`1px solid ${D.gold}`, borderRadius:20, background:D.goldDim, color:D.gold, fontSize:12, fontWeight:700, cursor:"pointer" }}>Siguiente</button>
+                : <div style={{ width:80 }} />
+              }
+              {torneoConfig
+                ? <button onClick={() => onExit()} style={{ padding:"4px 10px", border:`1px solid ${D.border}`, borderRadius:12, background:"transparent", color:D.textSub, fontSize:10, cursor:"pointer" }}>Salir</button>
+                : rondaId && <button onClick={shareRonda} style={{ padding:"4px 10px", border:`1px solid ${D.border}`, borderRadius:12, background:"transparent", color:D.textSub, fontSize:10, cursor:"pointer" }}>Compartir</button>
+              }
+            </div>
+          </>);
+        })()}
       </div>
       {shareMsg && <div style={{ margin:"0 12px 10px", padding:"8px 12px", background:D.greenBg, border:`1px solid ${D.success}`, borderRadius:10, color:D.success, fontSize:12, textAlign:"center", fontWeight:600 }}>{shareMsg}</div>}
 
@@ -4491,7 +4501,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
                     </td>
                     {pars.map((par, hi) => {
                       const s = rowScores[hi];
-                      return <td key={hi} style={{ textAlign:"center", padding:"3px 2px" }}><ScoreCell s={s??null} par={par} size={22} /></td>;
+                      return <td key={hi} style={{ textAlign:"center", padding:"3px 2px" }}><ScoreCell s={s??null} par={par} size={22} isSalida={hi===(torneoConfig?.hoyoSalida||1)-1&&!!torneoConfig?.hoyoSalida&&torneoConfig.hoyoSalida>1} /></td>;
                     })}
                     <td style={{ textAlign:"center", padding:"5px 5px", fontWeight:700, fontSize:12, borderLeft:`1px solid ${D.border}` }}>{total??'--'}</td>
                     <td style={{ textAlign:"center", padding:"5px 4px", fontSize:11, color:D.textSub }}>
@@ -4729,7 +4739,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
                         </div>
                       </td>
                       {p.raw.map((s,hi) => (
-                        <td key={hi} style={{ textAlign:"center", padding:"3px 1px" }}><ScoreCell s={s??null} par={pars[hi]} size={20} /></td>
+                        <td key={hi} style={{ textAlign:"center", padding:"3px 1px" }}><ScoreCell s={s??null} par={pars[hi]} size={20} isSalida={hi===(torneoConfig?.hoyoSalida||1)-1&&!!torneoConfig?.hoyoSalida&&torneoConfig.hoyoSalida>1} /></td>
                       ))}
                       <td style={{ textAlign:"center", padding:"5px 4px", fontWeight:700, fontSize:11, borderLeft:`1px solid ${D.border}` }}>{p.brutoReal??'—'}</td>
                       <td style={{ textAlign:"center", padding:"5px 3px", fontSize:11, color:D.textSub }}>{nHoles<=9?Math.ceil(p.hc/2):p.hc}</td>
