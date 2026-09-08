@@ -1048,7 +1048,7 @@ function TorneoCrear({ onExit, onIniciarGrupo, appStyle }) {
   const [marcaVal, setMarcaVal] = useState(10);
   const [tarjetaVal, setTarjetaVal] = useState(10);
   const [nombre, setNombre] = useState("");
-  const [grupos, setGrupos] = useState([{nombre:"", id:null, players:[]},{nombre:"", id:null, players:[]}]);
+  const [grupos, setGrupos] = useState([{nombre:"", id:null, players:[], hoyoSalida:1},{nombre:"", id:null, players:[], hoyoSalida:1}]);
   const [torneoId, setTorneoId] = useState(null);
   const [creando, setCreando] = useState(false);
   const [dir, setDir] = useState([]);
@@ -1067,9 +1067,10 @@ function TorneoCrear({ onExit, onIniciarGrupo, appStyle }) {
     }
   }, [paso, torneoId]);
 
-  const addGrupo = () => setGrupos(g => [...g, {nombre:"", id:null, players:[]}]);
+  const addGrupo = () => setGrupos(g => [...g, {nombre:"", id:null, players:[], hoyoSalida:1}]);
   const removeGrupo = (i) => setGrupos(g => g.filter((_,idx)=>idx!==i));
   const setGrupoNombre = (i, val) => setGrupos(g => g.map((g2,idx) => idx===i ? {...g2, nombre:val} : g2));
+  const setGrupoHoyoSalida = (i, val) => setGrupos(g => g.map((g2,idx) => idx===i ? {...g2, hoyoSalida:val} : g2));
   const togglePlayerInGrupo = (grupoIdx, player) => {
     setGrupos(g => g.map((g2, idx) => {
       if (idx !== grupoIdx) return g2;
@@ -1183,6 +1184,20 @@ function TorneoCrear({ onExit, onIniciarGrupo, appStyle }) {
               <input value={grupos[grupoActivo]?.nombre||""} onChange={e=>setGrupoNombre(grupoActivo,e.target.value)} placeholder={`Grupo ${grupoActivo+1} — Ej: Salida 8am`}
                 style={{ flex:1, padding:"10px 12px", border:`1px solid ${D.border}`, borderRadius:10, background:D.surface, color:D.text, fontSize:14 }} />
               {grupos.length > 2 && <button onClick={() => { removeGrupo(grupoActivo); setGrupoActivo(Math.max(0,grupoActivo-1)); }} style={{ padding:"8px 10px", border:`1px solid ${D.danger}44`, borderRadius:8, background:"transparent", color:D.danger, fontSize:12, cursor:"pointer" }}>Eliminar</button>}
+            </div>
+          </Card>
+
+          <Card>
+            <SLabel>Hoyo de salida</SLabel>
+            <div style={{ display:"flex", alignItems:"center", gap:12 }}>
+              <button onClick={() => setGrupoHoyoSalida(grupoActivo, Math.max(1, (grupos[grupoActivo]?.hoyoSalida||1)-1))}
+                style={{ width:36,height:36,borderRadius:"50%",border:`1px solid ${D.border}`,background:D.surface,color:D.text,fontSize:20,cursor:"pointer",fontWeight:700 }}>-</button>
+              <div style={{ flex:1,textAlign:"center" }}>
+                <div style={{ fontSize:36,fontWeight:900,color:D.gold }}>{grupos[grupoActivo]?.hoyoSalida||1}</div>
+                <div style={{ fontSize:10,color:D.textSub }}>hoyo de salida (orden ciclico)</div>
+              </div>
+              <button onClick={() => setGrupoHoyoSalida(grupoActivo, Math.min(nHoles, (grupos[grupoActivo]?.hoyoSalida||1)+1))}
+                style={{ width:36,height:36,borderRadius:"50%",border:`1px solid ${D.gold}`,background:D.goldDim,color:D.gold,fontSize:20,cursor:"pointer",fontWeight:700 }}>+</button>
             </div>
           </Card>
 
@@ -1334,13 +1349,19 @@ function TorneoUnirse({ onExit, appStyle }) {
       }
 
       setBuscando(false);
+      // Obtener hoyoSalida del grupoConfig
+      const grupoConfig = t.gruposConfig
+        ? (Array.isArray(t.gruposConfig) ? t.gruposConfig : Object.values(t.gruposConfig)).find(g => g.id === grupoId)
+        : null;
+      const hoyoSalida = grupoConfig?.hoyoSalida || 1;
       setTorneoConfig({
         torneoId, grupoId, grupoNombre,
         campo: t.campo, nHoles: t.nHoles,
         apuesta: t.apuesta, marcaVal: t.marcaVal, tarjetaVal: t.tarjetaVal,
         nombre: t.nombre,
         playersPreasignados,
-        rondaActiva, // datos de ronda en curso si existe
+        hoyoSalida,
+        rondaActiva,
       });
     } catch(e) {
       setBuscando(false);
@@ -3561,12 +3582,16 @@ function AdminApp({ onExit, torneoConfig = null }) {
 
   // ── INICIO AUTOMÁTICO EN MODO TORNEO CON JUGADORES PRE-ASIGNADOS ──
   if (screen === "score-torneo-init" && torneoConfig?.playersPreasignados?.length >= 2) {
-    // Auto-iniciar la ronda con los jugadores asignados
     const ps = torneoConfig.playersPreasignados;
-    const basePares = CAMPOS[campo].pares || Array(18).fill(4);
-    const p = basePares.slice(0, nHoles);
+    const basePares = CAMPOS[campo]?.pares || Array(18).fill(4);
+    // Aplicar orden cíclico según hoyo de salida
+    const hoyoInicio = (torneoConfig.hoyoSalida || 1) - 1; // 0-indexed
+    const totalHoyosCampo = basePares.length;
+    const parsOrdenados = Array(nHoles).fill(null).map((_, i) =>
+      basePares[(hoyoInicio + i) % totalHoyosCampo]
+    );
+    const p = parsOrdenados;
     if (players.length === 0) {
-      // Inicializar solo una vez
       const initScores = ps.map(() => Array(nHoles).fill(null));
       const initMarcas = Array(nHoles).fill(null).map(() => emptyMarca(ps.length));
       const initTarjetas = emptyTarjetas();
@@ -3575,11 +3600,11 @@ function AdminApp({ onExit, torneoConfig = null }) {
       setScores(initScores); setMarcas(initMarcas); setTarjetas(initTarjetas);
       setCastigos([]); try{localStorage.removeItem("h19-castigos");}catch(e){} setHole(0); setTab("score"); setResults(null);
       setGrupoNombre(torneoConfig.grupoNombre || "Mi Grupo");
-      const state = { players:ps, pars:p, scores:initScores, marcas:initMarcas, tarjetas:initTarjetas, hole:0, campo, status:"en_juego", rondaId:rid, grupoNombre:torneoConfig.grupoNombre };
+      const state = { players:ps, pars:p, scores:initScores, marcas:initMarcas, tarjetas:initTarjetas, hole:0, campo, status:"en_juego", rondaId:rid, grupoNombre:torneoConfig.grupoNombre, hoyoSalida:torneoConfig.hoyoSalida||1 };
       saveToLocal(state);
       try { set(ref(db, `rondas/${rid}`), { ...state, createdAt:Date.now(), updatedAt:Date.now() }); } catch(e) {}
       try { set(ref(db, `torneos/${torneoConfig.torneoId}/grupos/${torneoConfig.grupoId}`), {
-        nombre: torneoConfig.grupoNombre, players:ps, scores:initScores, marcas:initMarcas, tarjetas:initTarjetas, hole:0, status:"en_juego", updatedAt:Date.now()
+        nombre: torneoConfig.grupoNombre, players:ps, scores:initScores, marcas:initMarcas, tarjetas:initTarjetas, hole:0, status:"en_juego", hoyoSalida:torneoConfig.hoyoSalida||1, updatedAt:Date.now()
       }); } catch(e) {}
     }
     return (
@@ -3622,7 +3647,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
           style={{ width:"100%", padding:"14px 16px", border:`1px solid ${D.border}`, borderRadius:12, background:D.surface, color:D.text, fontSize:16, textAlign:"center", boxSizing:"border-box" }} />
         <div style={{ width:"100%", padding:"10px 14px", background:D.goldDim, borderRadius:10, fontSize:12, color:D.gold }}>
           <div style={{ fontWeight:700, marginBottom:4 }}>📋 Configuración del torneo:</div>
-          <div>{CAMPOS[torneoConfig.campo]?.nombre} · {torneoConfig.nHoles} hoyos</div>
+          <div>{CAMPOS[torneoConfig.campo]?.nombre} · {torneoConfig.nHoles} hoyos · Salida hoyo {torneoConfig.hoyoSalida||1}</div>
           <div>Score {"$"+String(torneoConfig.apuesta)} · Marcas {"$"+String(torneoConfig.marcaVal)} · Tarjetas {"$"+String(torneoConfig.tarjetaVal)}</div>
         </div>
         <Btn onClick={() => { if (grupoNombre.trim()) setScreen("dir"); }} disabled={!grupoNombre.trim()}>
