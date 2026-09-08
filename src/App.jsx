@@ -249,7 +249,7 @@ function getBadge(s, par) {
 // Notación tradicional de golf
 function ScoreCell({ s, par, size = 24, isSalida = false }) {
   const starOverlay = isSalida ? (
-    <span style={{ position:"absolute", top:-4, right:-3, fontSize:8, color:"#2E7D32", lineHeight:1 }}>★</span>
+    <span style={{ position:"absolute", top:-5, right:-4, fontSize:9, color:"#1A5C24", lineHeight:1, fontWeight:900 }}>★</span>
   ) : null;
 
   if (s === null || s === undefined) return (
@@ -966,7 +966,7 @@ function SpectatorView({ rondaId }) {
                           const isCurrent = hi === (hole||0);
                           return (
                             <td key={hi} style={{ textAlign:"center", padding:"3px 1px", background:isCurrent?D.goldDim+"55":"transparent" }}>
-                              <ScoreCell s={s??null} par={par} size={22} isSalida={hi===(ronda.hoyoSalida||1)-1&&ronda.hoyoSalida>1} />
+                              <ScoreCell s={s??null} par={par} size={22} isSalida={!!ronda.hoyoSalida&&hi===(ronda.hoyoSalida||1)-1} />
                             </td>
                           );
                         })}
@@ -1781,10 +1781,10 @@ function TorneoSpectator({ torneoId, appStyle, isAdmin = false }) {
                 <tr>
                   <td style={{ padding:"6px 6px", fontWeight:700, color:D.gold, fontSize:10, position:"sticky", left:0, background:D.surface, borderBottom:`1px solid ${D.border}`, minWidth:80 }}>Jugador</td>
                   {pars.map((_,i) => {
-                    const gruposQueArrancan = grupos.filter(([,g]) => (g.hoyoSalida||1)-1 === i && (g.hoyoSalida||1) > 1);
+                    const gruposQueArrancan = grupos.filter(([,g]) => (g.hoyoSalida||1)-1 === i);
                     const esSalida = gruposQueArrancan.length > 0;
                     return (
-                      <td key={i} style={{ padding:"5px 2px", textAlign:"center", fontWeight:700, color:esSalida?"#1A5C24":D.textSub, borderBottom:`1px solid ${D.border}`, minWidth:22, fontSize:10, background:esSalida?"#1A5C2415":"transparent" }}>
+                      <td key={i} style={{ padding:"5px 2px", textAlign:"center", fontWeight:700, color:esSalida?"#1A5C24":D.textSub, borderBottom:`1px solid ${D.border}`, minWidth:22, fontSize:10, background:esSalida?"#1A5C2435":"transparent" }}>
                         {i+1}{esSalida?"★":""}
                       </td>
                     );
@@ -1817,9 +1817,9 @@ function TorneoSpectator({ torneoId, appStyle, isAdmin = false }) {
                       </div>
                     </td>
                     {pars.map((par, hi) => {
-                      const esSalida = hi === (pHoyoSalida || 1) - 1 && (pHoyoSalida || 1) > 1;
+                      const esSalida = hi === (pHoyoSalida || 1) - 1;
                       return (
-                        <td key={hi} style={{ textAlign:"center", padding:"2px 1px", background:esSalida?"#1A5C2422":"transparent", borderLeft:esSalida?"2px solid #2E7D32":"none" }}>
+                        <td key={hi} style={{ textAlign:"center", padding:"2px 1px", background:esSalida?"#1A5C2440":"transparent", borderLeft:esSalida?"2px solid #2E7D32":"none" }}>
                           <ScoreCell s={sc[hi]??null} par={par} size={20} isSalida={esSalida} />
                         </td>
                       );
@@ -4512,7 +4512,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
                     </td>
                     {pars.map((par, hi) => {
                       const s = rowScores[hi];
-                      return <td key={hi} style={{ textAlign:"center", padding:"3px 2px" }}><ScoreCell s={s??null} par={par} size={22} isSalida={hi===(torneoConfig?.hoyoSalida||1)-1&&!!torneoConfig?.hoyoSalida&&torneoConfig.hoyoSalida>1} /></td>;
+                      return <td key={hi} style={{ textAlign:"center", padding:"3px 2px" }}><ScoreCell s={s??null} par={par} size={22} isSalida={!!torneoConfig?.hoyoSalida&&hi===(torneoConfig.hoyoSalida||1)-1} /></td>;
                     })}
                     <td style={{ textAlign:"center", padding:"5px 5px", fontWeight:700, fontSize:12, borderLeft:`1px solid ${D.border}` }}>{total??'--'}</td>
                     <td style={{ textAlign:"center", padding:"5px 4px", fontSize:11, color:D.textSub }}>
@@ -4750,7 +4750,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
                         </div>
                       </td>
                       {p.raw.map((s,hi) => (
-                        <td key={hi} style={{ textAlign:"center", padding:"3px 1px" }}><ScoreCell s={s??null} par={pars[hi]} size={20} isSalida={hi===(torneoConfig?.hoyoSalida||1)-1&&!!torneoConfig?.hoyoSalida&&torneoConfig.hoyoSalida>1} /></td>
+                        <td key={hi} style={{ textAlign:"center", padding:"3px 1px" }}><ScoreCell s={s??null} par={pars[hi]} size={20} isSalida={!!torneoConfig?.hoyoSalida&&hi===(torneoConfig.hoyoSalida||1)-1} /></td>
                       ))}
                       <td style={{ textAlign:"center", padding:"5px 4px", fontWeight:700, fontSize:11, borderLeft:`1px solid ${D.border}` }}>{p.brutoReal??'—'}</td>
                       <td style={{ textAlign:"center", padding:"5px 3px", fontSize:11, color:D.textSub }}>{nHoles<=9?Math.ceil(p.hc/2):p.hc}</td>
