@@ -3306,11 +3306,22 @@ function AdminApp({ onExit, torneoConfig = null }) {
 
   const nextHole = () => {
     const sc = commitHole(scores, hole); setScores(sc);
-    const nh = hole < nHoles-1 ? hole+1 : hole;
+    // Con hoyo de salida: el último hoyo es (hoyoSalida-1 + nHoles-1) % totalHoyos
+    const hoyoIni = torneoConfig?.hoyoSalida ? torneoConfig.hoyoSalida - 1 : 0;
+    const totalH = pars.length || nHoles;
+    const hoyoFin = (hoyoIni + nHoles - 1) % totalH;
+    const nh = hole !== hoyoFin ? (hole + 1) % totalH : hole;
     setHole(nh); setTab("score"); updateGame({ ...getState(), scores:sc, hole:nh });
   };
 
-  const prevHole = () => { if (hole>0) { setHole(hole-1); setTab("score"); } };
+  const prevHole = () => {
+    const hoyoIni = torneoConfig?.hoyoSalida ? torneoConfig.hoyoSalida - 1 : 0;
+    if (hole !== hoyoIni) {
+      const totalH = pars.length || nHoles;
+      const ph = (hole - 1 + totalH) % totalH;
+      setHole(ph); setTab("score");
+    }
+  };
 
   const [distWaypoint, setDistWaypoint] = useState(null);
 
@@ -3585,13 +3596,9 @@ function AdminApp({ onExit, torneoConfig = null }) {
   if (screen === "score-torneo-init" && torneoConfig?.playersPreasignados?.length >= 2) {
     const ps = torneoConfig.playersPreasignados;
     const basePares = CAMPOS[campo]?.pares || Array(18).fill(4);
-    // Aplicar orden cíclico según hoyo de salida
-    const hoyoInicio = (torneoConfig.hoyoSalida || 1) - 1; // 0-indexed
-    const totalHoyosCampo = basePares.length;
-    const parsOrdenados = Array(nHoles).fill(null).map((_, i) =>
-      basePares[(hoyoInicio + i) % totalHoyosCampo]
-    );
-    const p = parsOrdenados;
+    // NO reordenar pars - los scores siempre van en orden 0,1,2...
+    // hoyoSalida solo afecta el display y el hoyo inicial
+    const p = basePares.slice(0, nHoles);
     if (players.length === 0) {
       const initScores = ps.map(() => Array(nHoles).fill(null));
       const initMarcas = Array(nHoles).fill(null).map(() => emptyMarca(ps.length));
@@ -4201,7 +4208,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
         <button onClick={prevHole} disabled={hole===0} style={{ width:36,height:36,borderRadius:"50%",border:`1px solid ${D.border}`,background:"transparent",color:D.text,cursor:"pointer",fontSize:20,opacity:hole===0?0.3:1 }}>{"<"}</button>
         <div style={{ textAlign:"center" }}>
           <div style={{ fontSize:11, color:D.textSub, letterSpacing:1, textTransform:"uppercase" }}>{CAMPOS[campo]?.nombre||"Campo"}</div>
-          <div style={{ fontSize:22, fontWeight:900 }}>Hoyo {(() => { const hs=(torneoConfig?.hoyoSalida||1); const tot=pars.length; return ((hs-1+hole)%tot)+1; })()}{hole===0&&torneoConfig?.hoyoSalida>1?" ⭐":""}</div>
+          <div style={{ fontSize:22, fontWeight:900 }}>Hoyo {hole+1}{hole===(torneoConfig?.hoyoSalida||1)-1&&torneoConfig?.hoyoSalida>1?" ⭐":""}</div>
           <div style={{ fontSize:12, color:D.gold, fontWeight:700, letterSpacing:1 }}>PAR {par}</div>
         </div>
         <div style={{ display:"flex", flexDirection:"column", alignItems:"flex-end", gap:4 }}>
@@ -4561,7 +4568,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
           </div>
         )}
 
-        {hole===nHoles-1 && <Btn onClick={finish}>Ver resultados finales 🏆</Btn>}
+        {hole===((torneoConfig?.hoyoSalida||1)-1+nHoles-1)%Math.max(nHoles,pars.length) && <Btn onClick={finish}>Ver resultados finales 🏆</Btn>}
       </div>
     </div>
   );
