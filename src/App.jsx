@@ -1640,7 +1640,7 @@ function TorneoSpectator({ torneoId, appStyle, isAdmin = false }) {
       const row = Array.isArray(rowRaw) ? rowRaw : Object.values(rowRaw||{});
       // Pad al tamaño correcto
       const scores = Array(torneo.nHoles).fill(null).map((_, h) => row[h] ?? null);
-      return { ...p, grupoId:gid, grupoNombre: g.nombre || `Grupo ${gid.slice(-3)}`, scores, marcas: g.marcas, tarjetas: g.tarjetas, grupoStatus: g.status };
+      return { ...p, grupoId:gid, grupoNombre: g.nombre || `Grupo ${gid.slice(-3)}`, scores, marcas: g.marcas, tarjetas: g.tarjetas, grupoStatus: g.status, hoyoSalida: g.hoyoSalida || 1 };
     });
   });
 
@@ -1780,7 +1780,15 @@ function TorneoSpectator({ torneoId, appStyle, isAdmin = false }) {
               <thead>
                 <tr>
                   <td style={{ padding:"6px 6px", fontWeight:700, color:D.gold, fontSize:10, position:"sticky", left:0, background:D.surface, borderBottom:`1px solid ${D.border}`, minWidth:80 }}>Jugador</td>
-                  {pars.map((_,i) => <td key={i} style={{ padding:"5px 2px", textAlign:"center", fontWeight:700, color:D.textSub, borderBottom:`1px solid ${D.border}`, minWidth:22, fontSize:10 }}>{i+1}</td>)}
+                  {pars.map((_,i) => {
+                    const gruposQueArrancan = grupos.filter(([,g]) => (g.hoyoSalida||1)-1 === i && (g.hoyoSalida||1) > 1);
+                    const esSalida = gruposQueArrancan.length > 0;
+                    return (
+                      <td key={i} style={{ padding:"5px 2px", textAlign:"center", fontWeight:700, color:esSalida?"#1A5C24":D.textSub, borderBottom:`1px solid ${D.border}`, minWidth:22, fontSize:10, background:esSalida?"#1A5C2415":"transparent" }}>
+                        {i+1}{esSalida?"★":""}
+                      </td>
+                    );
+                  })}
                   <td style={{ padding:"5px 4px", textAlign:"center", fontWeight:700, color:D.gold, borderBottom:`1px solid ${D.border}`, minWidth:28, borderLeft:`1px solid ${D.border}` }}>TOT</td>
                   <td style={{ padding:"5px 3px", textAlign:"center", fontWeight:700, color:D.textSub, borderBottom:`1px solid ${D.border}`, minWidth:22 }}>HC</td>
                   <td style={{ padding:"5px 4px", textAlign:"center", fontWeight:700, color:"#1A5C24", borderBottom:`1px solid ${D.border}`, minWidth:32, borderLeft:`1px solid ${D.border}` }}>VS Par</td>
@@ -1796,7 +1804,7 @@ function TorneoSpectator({ torneoId, appStyle, isAdmin = false }) {
                 </tr>
               </thead>
               <tbody>
-                {rankedWithMoney.map(({ name, id, hc, scores: sc, grupoNombre, bruto, vsPar, vsParHC, scoreM, marcasM, tarjetasM, totalM }, pos) => (
+                {rankedWithMoney.map(({ name, id, hc, scores: sc, grupoNombre, bruto, vsPar, vsParHC, scoreM, marcasM, tarjetasM, totalM, hoyoSalida: pHoyoSalida }, pos) => (
                   <tr key={`${grupoNombre}-${name}`} style={{ borderBottom:`1px solid ${D.border}`, background:pos===0&&vsParHC!==null?D.goldDim+"55":"transparent" }}>
                     <td style={{ padding:"6px 6px", position:"sticky", left:0, background:pos===0&&vsParHC!==null?D.goldDim+"55":D.card, zIndex:1 }}>
                       <div style={{ display:"flex", alignItems:"center", gap:4 }}>
@@ -1808,11 +1816,14 @@ function TorneoSpectator({ torneoId, appStyle, isAdmin = false }) {
                         </div>
                       </div>
                     </td>
-                    {pars.map((par, hi) => (
-                      <td key={hi} style={{ textAlign:"center", padding:"2px 1px" }}>
-                        <ScoreCell s={sc[hi]??null} par={par} size={20} />
-                      </td>
-                    ))}
+                    {pars.map((par, hi) => {
+                      const esSalida = hi === (pHoyoSalida || 1) - 1 && (pHoyoSalida || 1) > 1;
+                      return (
+                        <td key={hi} style={{ textAlign:"center", padding:"2px 1px", background:esSalida?"#1A5C2422":"transparent", borderLeft:esSalida?"2px solid #2E7D32":"none" }}>
+                          <ScoreCell s={sc[hi]??null} par={par} size={20} isSalida={esSalida} />
+                        </td>
+                      );
+                    })}
                     <td style={{ textAlign:"center", padding:"5px 4px", fontWeight:700, fontSize:11, borderLeft:`1px solid ${D.border}` }}>{bruto??'—'}</td>
                     <td style={{ textAlign:"center", padding:"5px 3px", fontSize:11, color:D.textSub }}>{hc}</td>
                     <td style={{ textAlign:"center", padding:"5px 4px", fontWeight:700, fontSize:11, color:vsColor(vsPar), borderLeft:`1px solid ${D.border}` }}>{fmtVs(vsPar)}</td>
