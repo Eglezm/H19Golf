@@ -2146,6 +2146,7 @@ function TorneoCodigosView({ torneoAdmin, onExit, appStyle }) {
               </div>
             </div>
             <div style={{ fontSize:30, fontWeight:900, letterSpacing:4, color:D.gold, textAlign:"center", padding:"10px 0" }}>{g.id}</div>
+            <div style={{ textAlign:"center", marginBottom:8 }}><span style={{ fontSize:12, color:D.gold, fontWeight:700, background:D.goldDim, padding:"3px 10px", borderRadius:20 }}>{"Sale del hoyo "+(g.hoyoSalida||1)}</span></div>
             {/* Jugadores del grupo */}
             {(g.players||[]).length > 0 ? (
               <div style={{ marginBottom:10, background:D.surface, borderRadius:10, padding:"8px 10px" }}>
@@ -3598,13 +3599,14 @@ function AdminApp({ onExit, torneoConfig = null }) {
       const rid = Math.random().toString(36).substring(2,8).toUpperCase();
       setRondaId(rid); setPlayers(ps); setPars(p);
       setScores(initScores); setMarcas(initMarcas); setTarjetas(initTarjetas);
-      setCastigos([]); try{localStorage.removeItem("h19-castigos");}catch(e){} setHole(0); setTab("score"); setResults(null);
+      const hoyoInicial = (torneoConfig.hoyoSalida||1) - 1;
+      setCastigos([]); try{localStorage.removeItem("h19-castigos");}catch(e){} setHole(hoyoInicial); setTab("score"); setResults(null);
       setGrupoNombre(torneoConfig.grupoNombre || "Mi Grupo");
-      const state = { players:ps, pars:p, scores:initScores, marcas:initMarcas, tarjetas:initTarjetas, hole:0, campo, status:"en_juego", rondaId:rid, grupoNombre:torneoConfig.grupoNombre, hoyoSalida:torneoConfig.hoyoSalida||1 };
+      const state = { players:ps, pars:p, scores:initScores, marcas:initMarcas, tarjetas:initTarjetas, hole:hoyoInicial, campo, status:"en_juego", rondaId:rid, grupoNombre:torneoConfig.grupoNombre, hoyoSalida:torneoConfig.hoyoSalida||1 };
       saveToLocal(state);
       try { set(ref(db, `rondas/${rid}`), { ...state, createdAt:Date.now(), updatedAt:Date.now() }); } catch(e) {}
       try { set(ref(db, `torneos/${torneoConfig.torneoId}/grupos/${torneoConfig.grupoId}`), {
-        nombre: torneoConfig.grupoNombre, players:ps, scores:initScores, marcas:initMarcas, tarjetas:initTarjetas, hole:0, status:"en_juego", hoyoSalida:torneoConfig.hoyoSalida||1, updatedAt:Date.now()
+        nombre: torneoConfig.grupoNombre, players:ps, scores:initScores, marcas:initMarcas, tarjetas:initTarjetas, hole:hoyoInicial, status:"en_juego", hoyoSalida:torneoConfig.hoyoSalida||1, updatedAt:Date.now()
       }); } catch(e) {}
     }
     return (
@@ -4199,7 +4201,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
         <button onClick={prevHole} disabled={hole===0} style={{ width:36,height:36,borderRadius:"50%",border:`1px solid ${D.border}`,background:"transparent",color:D.text,cursor:"pointer",fontSize:20,opacity:hole===0?0.3:1 }}>{"<"}</button>
         <div style={{ textAlign:"center" }}>
           <div style={{ fontSize:11, color:D.textSub, letterSpacing:1, textTransform:"uppercase" }}>{CAMPOS[campo]?.nombre||"Campo"}</div>
-          <div style={{ fontSize:22, fontWeight:900 }}>Hoyo {hole+1}</div>
+          <div style={{ fontSize:22, fontWeight:900 }}>Hoyo {(() => { const hs=(torneoConfig?.hoyoSalida||1); const tot=pars.length; return ((hs-1+hole)%tot)+1; })()}{hole===0&&torneoConfig?.hoyoSalida>1?" ⭐":""}</div>
           <div style={{ fontSize:12, color:D.gold, fontWeight:700, letterSpacing:1 }}>PAR {par}</div>
         </div>
         <div style={{ display:"flex", flexDirection:"column", alignItems:"flex-end", gap:4 }}>
