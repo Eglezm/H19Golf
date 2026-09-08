@@ -1794,8 +1794,8 @@ function TorneoSpectator({ torneoId, appStyle, isAdmin = false }) {
                     });
                     const esSalida = gruposQueArrancan.length > 0;
                     return (
-                      <td key={i} style={{ padding:"5px 2px", textAlign:"center", fontWeight:700, color:esSalida?"#1A5C24":D.textSub, borderBottom:`1px solid ${D.border}`, minWidth:22, fontSize:10, background:esSalida?"#1A5C2435":"transparent" }}>
-                        {i+1}{esSalida?"★":""}
+                      <td key={i} style={{ padding:"5px 2px", textAlign:"center", fontWeight:700, color:D.textSub, borderBottom:`1px solid ${D.border}`, minWidth:22, fontSize:10 }}>
+                        {i+1}
                       </td>
                     );
                   })}
@@ -1829,7 +1829,7 @@ function TorneoSpectator({ torneoId, appStyle, isAdmin = false }) {
                     {pars.map((par, hi) => {
                       const esSalida = hi === (pHoyoSalida || 1) - 1;
                       return (
-                        <td key={hi} style={{ textAlign:"center", padding:"2px 1px", background:esSalida?"#1A5C2440":"transparent", borderLeft:esSalida?"2px solid #2E7D32":"none" }}>
+                        <td key={hi} style={{ textAlign:"center", padding:"2px 1px", background:"transparent" }}>
                           <ScoreCell s={sc[hi]??null} par={par} size={20} isSalida={esSalida} />
                         </td>
                       );
