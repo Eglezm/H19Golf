@@ -1635,12 +1635,16 @@ function TorneoSpectator({ torneoId, appStyle, isAdmin = false }) {
   const allPlayers = grupos.flatMap(([gid, g]) => {
     const gPlayers = Array.isArray(g.players) ? g.players : Object.values(g.players||{});
     const gScoresRaw = Array.isArray(g.scores) ? g.scores : Object.values(g.scores||{});
+    // hoyoSalida: del grupo en Firebase, o del gruposConfig del torneo
+    const grupoConfig = torneo.gruposConfig
+      ? (Array.isArray(torneo.gruposConfig) ? torneo.gruposConfig : Object.values(torneo.gruposConfig)).find(gc => gc.id === gid)
+      : null;
+    const hoyoSalida = g.hoyoSalida || grupoConfig?.hoyoSalida || 1;
     return gPlayers.map((p, pi) => {
       const rowRaw = gScoresRaw[pi];
       const row = Array.isArray(rowRaw) ? rowRaw : Object.values(rowRaw||{});
-      // Pad al tamaño correcto
       const scores = Array(torneo.nHoles).fill(null).map((_, h) => row[h] ?? null);
-      return { ...p, grupoId:gid, grupoNombre: g.nombre || `Grupo ${gid.slice(-3)}`, scores, marcas: g.marcas, tarjetas: g.tarjetas, grupoStatus: g.status, hoyoSalida: g.hoyoSalida || 1 };
+      return { ...p, grupoId:gid, grupoNombre: g.nombre || `Grupo ${gid.slice(-3)}`, scores, marcas: g.marcas, tarjetas: g.tarjetas, grupoStatus: g.status, hoyoSalida };
     });
   });
 
@@ -1781,7 +1785,13 @@ function TorneoSpectator({ torneoId, appStyle, isAdmin = false }) {
                 <tr>
                   <td style={{ padding:"6px 6px", fontWeight:700, color:D.gold, fontSize:10, position:"sticky", left:0, background:D.surface, borderBottom:`1px solid ${D.border}`, minWidth:80 }}>Jugador</td>
                   {pars.map((_,i) => {
-                    const gruposQueArrancan = grupos.filter(([,g]) => (g.hoyoSalida||1)-1 === i);
+                    const gruposConfig = torneo.gruposConfig
+                      ? (Array.isArray(torneo.gruposConfig) ? torneo.gruposConfig : Object.values(torneo.gruposConfig))
+                      : [];
+                    const gruposQueArrancan = grupos.filter(([gid, g]) => {
+                      const hs = g.hoyoSalida || gruposConfig.find(gc=>gc.id===gid)?.hoyoSalida || 1;
+                      return hs - 1 === i;
+                    });
                     const esSalida = gruposQueArrancan.length > 0;
                     return (
                       <td key={i} style={{ padding:"5px 2px", textAlign:"center", fontWeight:700, color:esSalida?"#1A5C24":D.textSub, borderBottom:`1px solid ${D.border}`, minWidth:22, fontSize:10, background:esSalida?"#1A5C2435":"transparent" }}>
