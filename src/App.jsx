@@ -2551,6 +2551,7 @@ export default function H19() {
         <Btn outline onClick={() => setMode("torneo-spectator-input")}>🏆 Ver torneo en vivo</Btn>
         <div style={{ width:"100%", borderTop:`1px solid ${D.border}`, margin:"4px 0" }} />
         <Btn outline onClick={() => setMode("estadisticas")}>📈 Estadísticas de jugadores</Btn>
+        <Btn outline onClick={() => setMode("whs")}>🏌️ Handicap WHS (Fase 1)</Btn>
       </div>
     );
   }
@@ -2617,6 +2618,7 @@ export default function H19() {
     onExit={(td) => { if (td?.torneoId) setSavedTorneoAdmin(td); setMode("home"); }}
     onIniciarGrupo={(tc) => { setActiveTorneoConfig(tc); setSavedTorneoAdmin(tc); setMode("torneo-admin"); }}
     appStyle={appStyle} />;
+  if (mode === "whs") return <HandicapWHSScreen onExit={() => setMode("home")} appStyle={appStyle} />;
   if (mode === "estadisticas") return <EstadisticasScreen onExit={() => setMode("home")} appStyle={appStyle} />;
   if (mode === "torneo-unirse") return <TorneoUnirse onExit={() => setMode("home")} appStyle={appStyle} />;
   if (mode === "torneo-admin") return <AdminApp onExit={() => setMode("home")} torneoConfig={activeTorneoConfig} />;
@@ -2670,6 +2672,263 @@ export default function H19() {
 
 // ─── ADMIN APP ────────────────────────────────────
 // ─── ESTADÍSTICAS DE JUGADORES ────────────────────────────────
+
+// ════════════════════════════════════════════════════════════════
+// HANDICAP ENGINE — FASE 1 — World Handicap System (WHS)
+// Solo lectura. No modifica el HC actual de la app.
+// CR=54.9, Slope=106 para Club de Golf La Huerta (9 hoyos)
+// Stroke Index: PENDIENTE — no se inventan valores
+// ════════════════════════════════════════════════════════════════
+
+const WHS_CAMPO_CONFIG = {
+  huerta: {
+    courseRating9: 54.9,
+    slopeRating9:  106,
+    par9:          29,
+    strokeIndex:   null, // PENDIENTE
+    nHoles:        9,
+  },
+};
+
+// Tabla oficial WHS — Rules of Handicapping 2024, Section 5.2
+const WHS_TABLE = [
+  { min:3,  max:3,  use:1, adj:-2.0 },
+  { min:4,  max:4,  use:1, adj:-1.0 },
+  { min:5,  max:5,  use:1, adj:0.0  },
+  { min:6,  max:6,  use:2, adj:-1.0 },
+  { min:7,  max:8,  use:2, adj:0.0  },
+  { min:9,  max:11, use:3, adj:0.0  },
+  { min:12, max:14, use:4, adj:0.0  },
+  { min:15, max:16, use:5, adj:0.0  },
+  { min:17, max:18, use:6, adj:0.0  },
+  { min:19, max:19, use:7, adj:0.0  },
+  { min:20, max:20, use:8, adj:0.0  },
+];
+
+function whs_calcScoreDifferential9({ adjustedScore, courseRating, slopeRating, pcc = 0 }) {
+  if (adjustedScore == null || courseRating == null || slopeRating == null) return null;
+  return Math.round(((113 / slopeRating) * (adjustedScore - courseRating - pcc)) * 10) / 10;
+}
+
+function whs_calcExpectedDiff9({ handicapIndex, courseRating, slopeRating, par }) {
+  if (handicapIndex == null || courseRating == null || slopeRating == null || par == null) return null;
+  return Math.round(((handicapIndex / 2) * (slopeRating / 113) + (courseRating - par)) * 10) / 10;
+}
+
+function whs_combine9HoleDiffs(diff9, expectedDiff9) {
+  if (diff9 == null || expectedDiff9 == null) return null;
+  return Math.round((diff9 + expectedDiff9) * 10) / 10;
+}
+
+function whs_applyCapProcedure(calculatedHI, lowHI) {
+  if (calculatedHI == null) return { hi: null, softCapApplied: false, hardCapApplied: false };
+  if (lowHI == null) return { hi: Math.min(54.0, Math.round(calculatedHI * 10) / 10), softCapApplied: false, hardCapApplied: false };
+  let hi = calculatedHI;
+  let softCapApplied = false;
+  let hardCapApplied = false;
+  if (hi > lowHI + 3.0) { softCapApplied = true; hi = lowHI + 3.0 + (hi - lowHI - 3.0) * 0.5; }
+  if (hi > lowHI + 5.0) { hardCapApplied = true; hi = lowHI + 5.0; }
+  return { hi: Math.min(54.0, Math.round(hi * 10) / 10), softCapApplied, hardCapApplied };
+}
+
+function whs_applyESR(scoreDiff, handicapIndex) {
+  if (scoreDiff == null || handicapIndex == null) return 0;
+  const delta = handicapIndex - scoreDiff;
+  if (delta >= 10.0) return -2.0;
+  if (delta >= 7.0)  return -1.0;
+  return 0;
+}
+
+function whs_calculateHandicapIndex(validDiffs) {
+  const n = validDiffs.length;
+  if (n < 3) return null;
+  const row = WHS_TABLE.find(r => n >= r.min && n <= r.max);
+  if (!row) return null;
+  const sorted = [...validDiffs].sort((a, b) => a.diff18 - b.diff18);
+  const best = sorted.slice(0, row.use);
+  const avg = best.reduce((s, r) => s + r.diff18, 0) / best.length;
+  return Math.min(54.0, Math.max(0, Math.round((avg + row.adj) * 10) / 10));
+}
+
+function whs_buildScoringRecord(rondas, campoKey) {
+  const cfg = WHS_CAMPO_CONFIG[campoKey];
+  if (!cfg) return { error: "Campo no configurado", records: [], currentHI: null, lowHI: null, hiEstablecido: false, totalHoyosAcumulados: 0 };
+  const sorted = [...rondas].sort((a, b) => (a.fechaTs || 0) - (b.fechaTs || 0));
+  const records = [];
+  let currentHI = null;
+  let lowHI = null;
+  let totalHoyos = 0;
+  let hiEstablecido = false;
+  const siPendiente = cfg.strokeIndex === null;
+
+  for (const ronda of sorted) {
+    const adj = ronda.bruto;
+    if (adj == null) continue;
+    totalHoyos += (ronda.nHoles || 9);
+    const diff9 = whs_calcScoreDifferential9({ adjustedScore: adj, courseRating: cfg.courseRating9, slopeRating: cfg.slopeRating9, pcc: ronda.pcc || 0 });
+    const base = { fecha: ronda.fecha, fechaTs: ronda.fechaTs, campo: campoKey, nHoles: 9, scoreOriginal: ronda.bruto, scoreAjustado: adj, courseRating: cfg.courseRating9, slopeRating: cfg.slopeRating9, par: cfg.par9, pcc: ronda.pcc || null, diff9, strokeIndexPendiente: siPendiente };
+
+    if (!hiEstablecido) {
+      records.push({ ...base, expectedDiff9: null, diff18: null, scoreType: "9H-INICIAL", hiAntes: null, hiDespues: null, lowHI: null, esrReduction: 0, softCapApplied: false, hardCapApplied: false, nota: totalHoyos < 54 ? "Acumulando: " + totalHoyos + "/54 hoyos" : "Estableciendo HI inicial" });
+      if (totalHoyos >= 54) {
+        // Emparejar records para obtener diferenciales de 18h
+        const diffs = [];
+        for (let i = 0; i + 1 < records.length; i += 2) {
+          if (records[i].diff9 != null && records[i+1].diff9 != null) {
+            diffs.push({ diff18: Math.round((records[i].diff9 + records[i+1].diff9) * 10) / 10 });
+          }
+        }
+        if (records.length % 2 === 1 && records[records.length-1].diff9 != null) {
+          diffs.push({ diff18: Math.round(records[records.length-1].diff9 * 2 * 10) / 10 });
+        }
+        currentHI = whs_calculateHandicapIndex(diffs);
+        lowHI = currentHI;
+        hiEstablecido = true;
+        records[records.length - 1].hiDespues = currentHI;
+        records[records.length - 1].lowHI = lowHI;
+        records[records.length - 1].nota = "HI inicial establecido";
+      }
+      continue;
+    }
+
+    const expectedDiff9 = whs_calcExpectedDiff9({ handicapIndex: currentHI, courseRating: cfg.courseRating9, slopeRating: cfg.slopeRating9, par: cfg.par9 });
+    const diff18 = whs_combine9HoleDiffs(diff9, expectedDiff9);
+    const esrReduction = whs_applyESR(diff18, currentHI);
+    const validDiffs = [...records.filter(r => r.diff18 != null).map(r => ({ diff18: r.diff18 })), { diff18: diff18 + esrReduction }];
+    const rawHI = whs_calculateHandicapIndex(validDiffs.slice(-20));
+    if (rawHI != null && (lowHI == null || rawHI < lowHI)) lowHI = rawHI;
+    const { hi: hiDespues, softCapApplied, hardCapApplied } = whs_applyCapProcedure(rawHI, lowHI);
+    const hiAntes = currentHI;
+    currentHI = hiDespues;
+    records.push({ ...base, expectedDiff9, diff18, scoreType: "N", hiAntes, hiDespues, lowHI, esrReduction, softCapApplied, hardCapApplied, nota: siPendiente ? "Score ajustado = bruto (Stroke Index pendiente)" : null });
+  }
+  return { records, currentHI, lowHI, hiEstablecido, totalHoyosAcumulados: totalHoyos };
+}
+
+// ─── PANTALLA WHS ────────────────────────────────
+function HandicapWHSScreen({ onExit, appStyle }) {
+  const [jugadores, setJugadores] = useState([]);
+  const [rondas, setRondas] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [jugadorSel, setJugadorSel] = useState(null);
+  const [detailIdx, setDetailIdx] = useState(null);
+  const [whsResult, setWhsResult] = useState(null);
+
+  useEffect(() => {
+    Promise.all([get(ref(db, "historial")), get(ref(db, "directorio"))]).then(([h, d]) => {
+      setRondas(h.exists() ? Object.values(h.val()) : []);
+      const dir = d.exists() ? d.val() : [];
+      setJugadores(Array.isArray(dir) ? dir : Object.values(dir));
+      setLoading(false);
+    }).catch(() => setLoading(false));
+  }, []);
+
+  const fmt1 = (n) => n != null ? n.toFixed(1) : "--";
+
+  const seleccionar = (nombre) => {
+    setJugadorSel(nombre); setDetailIdx(null);
+    const mis = rondas.filter(r => (r.playerNames||[]).includes(nombre) && r.campo === "huerta").map(r => {
+      const pi = (r.playerNames||[]).indexOf(nombre);
+      return { fecha: r.fecha, fechaTs: r.fechaTs || 0, nHoles: r.nHoles || 9, bruto: r.jugadores?.[pi]?.bruto ?? null, pcc: null };
+    }).filter(r => r.bruto != null);
+    setWhsResult(whs_buildScoringRecord(mis, "huerta"));
+  };
+
+  return (
+    <div style={{ ...appStyle, overflowY:"auto" }}>
+      <div style={{ background:"linear-gradient(135deg,#1A2A1A,#2E3D2E)", padding:"14px 16px", display:"flex", alignItems:"center", gap:10 }}>
+        <button onClick={onExit} style={{ background:"none", border:"none", color:D.gold, fontSize:22, cursor:"pointer" }}>{"<"}</button>
+        <div>
+          <div style={{ fontSize:16, fontWeight:900, color:D.gold }}>WHS Handicap Engine</div>
+          <div style={{ fontSize:11, color:D.textSub }}>Fase 1 · Solo consulta · No afecta HC actual</div>
+        </div>
+      </div>
+      <div style={{ padding:"12px 12px 80px" }}>
+        <div style={{ background:"#1A2A1A", border:"1px solid #AA880044", borderRadius:10, padding:10, marginBottom:12, fontSize:11, color:D.textSub }}>
+          <span style={{ color:D.gold, fontWeight:700 }}>Modo consulta WHS</span> — Handicap Index calculado segun WHS oficial. Independiente del HC de la app. <span style={{ color:D.danger }}>Stroke Index pendiente</span> — score ajustado = score bruto.
+        </div>
+        {loading && <Card><div style={{ textAlign:"center", color:D.textSub, padding:24 }}>Cargando...</div></Card>}
+        {!loading && (
+          <Card>
+            <SLabel>Jugador</SLabel>
+            <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
+              {jugadores.map(j => (
+                <button key={j.id||j.name} onClick={() => seleccionar(j.name)}
+                  style={{ padding:"7px 14px", border:"1px solid "+(jugadorSel===j.name?D.gold:D.border), borderRadius:20, background:jugadorSel===j.name?D.goldDim:"transparent", color:jugadorSel===j.name?D.gold:D.textSub, fontSize:12, fontWeight:jugadorSel===j.name?700:400, cursor:"pointer" }}>
+                  {j.name}
+                </button>
+              ))}
+            </div>
+          </Card>
+        )}
+        {whsResult && jugadorSel && (
+          <>
+            <Card style={{ border:"1px solid "+D.gold+"44" }}>
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
+                <div>
+                  <div style={{ fontSize:16, fontWeight:900 }}>{jugadorSel}</div>
+                  <div style={{ fontSize:11, color:D.textSub }}>La Huerta · CR 54.9 · Slope 106 · Par 29</div>
+                </div>
+                <div style={{ textAlign:"right" }}>
+                  <div style={{ fontSize:10, color:D.textSub }}>HANDICAP INDEX WHS</div>
+                  <div style={{ fontSize:36, fontWeight:900, color:D.gold }}>{whsResult.currentHI != null ? fmt1(whsResult.currentHI) : "--"}</div>
+                </div>
+              </div>
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:8, marginBottom:8 }}>
+                {[["Low HI", fmt1(whsResult.lowHI)], ["Rondas", whsResult.records.length], ["Hoyos", whsResult.totalHoyosAcumulados]].map(([l,v]) => (
+                  <div key={l} style={{ background:D.surface, borderRadius:8, padding:"8px 10px", textAlign:"center" }}>
+                    <div style={{ fontSize:9, color:D.textSub, textTransform:"uppercase" }}>{l}</div>
+                    <div style={{ fontSize:18, fontWeight:700 }}>{v}</div>
+                  </div>
+                ))}
+              </div>
+              {!whsResult.hiEstablecido && (
+                <div style={{ padding:8, background:D.redBg, borderRadius:8, fontSize:11, color:D.danger }}>
+                  {"HI no establecido aun — se necesitan 54 hoyos (" + whsResult.totalHoyosAcumulados + "/54)"}
+                </div>
+              )}
+            </Card>
+            <Card>
+              <SLabel>Scoring Record WHS</SLabel>
+              <div style={{ fontSize:10, color:D.textSub, marginBottom:8 }}>Toca una ronda para ver el detalle (Audit Trail)</div>
+              {whsResult.records.slice().reverse().map((r, i) => (
+                <div key={i} onClick={() => setDetailIdx(detailIdx===i?null:i)} style={{ padding:"10px 0", borderBottom:"1px solid "+D.border, cursor:"pointer" }}>
+                  <div style={{ display:"flex", justifyContent:"space-between" }}>
+                    <div>
+                      <div style={{ fontSize:12, fontWeight:700 }}>{r.fecha || "--"}</div>
+                      <div style={{ fontSize:10, color:D.textSub }}>
+                        {"Bruto: "+r.scoreOriginal+" | Diff 9h: "+(r.diff9!=null?fmt1(r.diff9):"--")+(r.diff18!=null?" | Diff 18h: "+fmt1(r.diff18):"")+(r.esrReduction?(" | ESR: "+r.esrReduction):"")}
+                      </div>
+                      {r.nota && <div style={{ fontSize:10, color:"#DDAA00" }}>{r.nota}</div>}
+                    </div>
+                    <div style={{ textAlign:"right" }}>
+                      {r.hiDespues!=null && <div style={{ fontSize:13, fontWeight:900, color:D.gold }}>{"HI "+fmt1(r.hiDespues)}</div>}
+                      {r.softCapApplied && <div style={{ fontSize:9, color:D.danger }}>Soft Cap</div>}
+                      {r.hardCapApplied && <div style={{ fontSize:9, color:D.danger }}>Hard Cap</div>}
+                    </div>
+                  </div>
+                  {detailIdx===i && (
+                    <div style={{ marginTop:8, background:D.surface, borderRadius:8, padding:10, fontSize:11 }}>
+                      <div style={{ fontWeight:700, color:D.gold, marginBottom:6 }}>Audit Trail — Detalle WHS</div>
+                      {[["Fecha",r.fecha],["Score original",r.scoreOriginal],["Score ajustado",r.scoreAjustado+(r.strokeIndexPendiente?" (bruto — SI pendiente)":"")],["Course Rating",r.courseRating],["Slope Rating",r.slopeRating],["Par",r.par],["PCC",r.pcc!=null?r.pcc:"No disponible — no se inventa"],["Diff 9 hoyos",r.diff9!=null?fmt1(r.diff9):"--"],["Expected Diff 9h",r.expectedDiff9!=null?fmt1(r.expectedDiff9):r.scoreType==="9H-INICIAL"?"N/A (fase inicial)":"--"],["Diff 18 hoyos",r.diff18!=null?fmt1(r.diff18):r.scoreType==="9H-INICIAL"?"N/A (fase inicial)":"--"],["Tipo score",r.scoreType],["HI antes",r.hiAntes!=null?fmt1(r.hiAntes):"No establecido"],["HI despues",r.hiDespues!=null?fmt1(r.hiDespues):"No calculado"],["Low HI",r.lowHI!=null?fmt1(r.lowHI):"--"],["ESR",r.esrReduction!==0?r.esrReduction:"Ninguno"],["Soft Cap",r.softCapApplied?"Si":"No"],["Hard Cap",r.hardCapApplied?"Si":"No"],["Stroke Index",r.strokeIndexPendiente?"PENDIENTE":"Configurado"]].map(([l,v])=>(
+                        <div key={l} style={{ display:"flex", justifyContent:"space-between", padding:"3px 0", borderBottom:"1px solid "+D.border+"44" }}>
+                          <span style={{ color:D.textSub }}>{l}</span>
+                          <span style={{ fontWeight:600 }}>{v??"--"}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </Card>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+
 function EstadisticasScreen({ onExit, appStyle }) {
   const [rondas, setRondas] = useState([]);
   const [loading, setLoading] = useState(true);
