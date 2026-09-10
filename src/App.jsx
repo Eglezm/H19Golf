@@ -2806,6 +2806,240 @@ function whs_buildScoringRecord(rondas, campoKey) {
 }
 
 // ─── PANTALLA WHS ────────────────────────────────
+
+// ════════════════════════════════════════════════════════════════
+// HANDICAP ENGINE — FASE 2A — World Handicap System (WHS)
+// Mejoras sin requerir Stroke Index
+// ════════════════════════════════════════════════════════════════
+
+/**
+ * Validaciones WHS para aceptar un score de 9 hoyos
+ * Fuente: Rules of Handicapping 2024, Section 2.1
+ * Devuelve { elegible: bool, motivos: string[] }
+ */
+function whs_validarScore(ronda, campoKey) {
+  const cfg = WHS_CAMPO_CONFIG[campoKey];
+  const motivos = [];
+
+  if (!ronda.fecha && !ronda.fechaTs) motivos.push("Fecha no disponible");
+  if (!ronda.bruto && ronda.bruto !== 0) motivos.push("Score bruto no disponible");
+  if (ronda.bruto != null && ronda.bruto < 1) motivos.push("Score bruto invalido (menor a 1)");
+  if (!campoKey || !cfg) motivos.push("Campo no configurado en WHS");
+  if (cfg && !cfg.courseRating9) motivos.push("Course Rating no disponible");
+  if (cfg && !cfg.slopeRating9) motivos.push("Slope Rating no disponible");
+  if (cfg && cfg.strokeIndex === null) motivos.push("Stroke Index pendiente — Net Double Bogey no aplicable (score ajustado = bruto)");
+  if (ronda.nHoles && ronda.nHoles !== 9) motivos.push("Ronda no es de 9 hoyos — campo configurado solo para 9 hoyos");
+  if (ronda.bruto != null && cfg && ronda.bruto < cfg.par9) motivos.push("Score menor al par del campo — verificar");
+
+  // Advertencias (no bloquean elegibilidad)
+  const advertencias = motivos.filter(m => m.includes("Stroke Index") || m.includes("verificar"));
+  const bloqueantes = motivos.filter(m => !m.includes("Stroke Index") && !m.includes("verificar"));
+
+  return {
+    elegible: bloqueantes.length === 0,
+    motivos: bloqueantes,
+    advertencias,
+    scoreAjustado: ronda.bruto, // Fase 2A: sin SI, score ajustado = bruto
+    scoreAjustadoCompleto: cfg?.strokeIndex !== null, // true cuando SI esté configurado
+  };
+}
+
+/**
+ * Proceso correcto para las primeras 54 hoyos (WHS 2024)
+ * 
+ * Las rondas de 9 hoyos en la fase inicial NO se emparejan arbitrariamente.
+ * Se procesan individualmente: cada ronda genera un diff9.
+ * Al llegar a 54 hoyos (6 rondas × 9h) se establece el HI inicial
+ * usando los diferenciales disponibles según tabla WHS.
+ * 
+ * Fuente: Rules of Handicapping 2024, Section 5.2a
+ */
+function whs_buildScoringRecordV2(rondas, campoKey) {
+  const cfg = WHS_CAMPO_CONFIG[campoKey];
+  if (!cfg) return {
+    error: "Campo no configurado",
+    records: [], currentHI: null, lowHI: null,
+    hiEstablecido: false, totalHoyosAcumulados: 0,
+  };
+
+  // Ordenar cronológicamente — MUY IMPORTANTE para WHS
+  const sorted = [...rondas]
+    .sort((a, b) => (a.fechaTs || 0) - (b.fechaTs || 0));
+
+  const records = [];
+  let currentHI = null;
+  let lowHI = null;
+  let totalHoyos = 0;
+  let hiEstablecido = false;
+
+  for (const ronda of sorted) {
+    // Validar antes de procesar
+    const validacion = whs_validarScore(ronda, campoKey);
+    if (!validacion.elegible) {
+      records.push({
+        fecha: ronda.fecha, fechaTs: ronda.fechaTs,
+        campo: campoKey, nHoles: ronda.nHoles || 9,
+        scoreOriginal: ronda.bruto, scoreAjustado: null,
+        courseRating: cfg.courseRating9, slopeRating: cfg.slopeRating9,
+        par: cfg.par9, pcc: ronda.pcc || null,
+        diff9: null, expectedDiff9: null, diff18: null,
+        scoreType: "INVALIDO",
+        hiAntes: currentHI, hiDespues: null, lowHI,
+        esrReduction: 0, softCapApplied: false, hardCapApplied: false,
+        strokeIndexPendiente: cfg.strokeIndex === null,
+        elegible: false,
+        motivos: validacion.motivos,
+        advertencias: validacion.advertencias,
+        nota: "Score no elegible: " + validacion.motivos.join(", "),
+      });
+      continue;
+    }
+
+    const adj = validacion.scoreAjustado;
+    totalHoyos += (ronda.nHoles || 9);
+
+    const diff9 = whs_calcScoreDifferential9({
+      adjustedScore: adj,
+      courseRating: cfg.courseRating9,
+      slopeRating: cfg.slopeRating9,
+      pcc: ronda.pcc || 0,
+    });
+
+    const baseRecord = {
+      fecha: ronda.fecha, fechaTs: ronda.fechaTs,
+      campo: campoKey, nHoles: 9,
+      scoreOriginal: ronda.bruto, scoreAjustado: adj,
+      courseRating: cfg.courseRating9, slopeRating: cfg.slopeRating9,
+      par: cfg.par9, pcc: ronda.pcc || null,
+      diff9,
+      strokeIndexPendiente: cfg.strokeIndex === null,
+      elegible: true,
+      motivos: [],
+      advertencias: validacion.advertencias,
+    };
+
+    if (!hiEstablecido) {
+      // ── FASE INICIAL: acumular hasta 54 hoyos ──
+      // Cada ronda se guarda con su diff9.
+      // Cuando llegamos a 54 hoyos establecemos el HI.
+      // NO emparejamos rondas arbitrariamente.
+      // Usamos los diff9 disponibles según regla WHS de scores iniciales.
+
+      const hoyosAntesDeEstaRonda = totalHoyos - (ronda.nHoles || 9);
+      const nota = totalHoyos < 54
+        ? "Fase inicial: " + totalHoyos + "/54 hoyos acumulados"
+        : "Estableciendo HI inicial con " + records.filter(r=>r.diff9!=null).length + 1 + " diferenciales de 9h";
+
+      records.push({
+        ...baseRecord,
+        expectedDiff9: null, diff18: null,
+        scoreType: "9H-INICIAL",
+        hiAntes: null, hiDespues: null, lowHI: null,
+        esrReduction: 0, softCapApplied: false, hardCapApplied: false,
+        nota,
+      });
+
+      if (totalHoyos >= 54) {
+        // Establecer HI inicial
+        // Regla WHS: para scores de 9h en fase inicial,
+        // se usan pares de diferenciales de 9h para formar diferenciales de 18h.
+        // Si el numero es impar, el ultimo se combina con el Expected basado
+        // en el diff9 mas bajo disponible como aproximacion inicial.
+        const validDiff9s = records
+          .filter(r => r.diff9 != null && r.scoreType === "9H-INICIAL")
+          .map(r => r.diff9);
+
+        const diffs18 = [];
+        for (let i = 0; i + 1 < validDiff9s.length; i += 2) {
+          diffs18.push({ diff18: Math.round((validDiff9s[i] + validDiff9s[i+1]) * 10) / 10 });
+        }
+        // Si numero impar: el ultimo se combina consigo mismo (peor caso conservador)
+        if (validDiff9s.length % 2 === 1) {
+          const last = validDiff9s[validDiff9s.length - 1];
+          diffs18.push({ diff18: Math.round(last * 2 * 10) / 10 });
+        }
+
+        currentHI = whs_calculateHandicapIndex(diffs18);
+        lowHI = currentHI;
+        hiEstablecido = true;
+
+        // Actualizar el ultimo record con el HI establecido
+        const lastIdx = records.length - 1;
+        records[lastIdx].hiDespues = currentHI;
+        records[lastIdx].lowHI = lowHI;
+        records[lastIdx].nota = "HI inicial establecido: " + (currentHI != null ? currentHI.toFixed(1) : "--");
+      }
+      continue;
+    }
+
+    // ── HI ESTABLECIDO: usar Expected Score ──
+    const expectedDiff9 = whs_calcExpectedDiff9({
+      handicapIndex: currentHI,
+      courseRating: cfg.courseRating9,
+      slopeRating: cfg.slopeRating9,
+      par: cfg.par9,
+    });
+    const diff18 = whs_combine9HoleDiffs(diff9, expectedDiff9);
+    const esrReduction = whs_applyESR(diff18, currentHI);
+
+    // Obtener los ultimos 20 diferenciales de 18h validos + el nuevo
+    const prev20 = records
+      .filter(r => r.diff18 != null)
+      .slice(-20)
+      .map(r => ({ diff18: r.diff18 }));
+    const allDiffs = [...prev20, { diff18: (diff18 || 0) + esrReduction }];
+    const rawHI = whs_calculateHandicapIndex(allDiffs.slice(-20));
+
+    // Low HI: minimo en los ultimos 365 dias
+    if (rawHI != null && (lowHI == null || rawHI < lowHI)) {
+      lowHI = rawHI;
+    }
+
+    const { hi: hiDespues, softCapApplied, hardCapApplied } = whs_applyCapProcedure(rawHI, lowHI);
+    const hiAntes = currentHI;
+    currentHI = hiDespues;
+
+    let nota = null;
+    if (esrReduction !== 0) nota = "ESR aplicado: " + esrReduction;
+    if (softCapApplied) nota = (nota ? nota + " | " : "") + "Soft Cap aplicado";
+    if (hardCapApplied) nota = (nota ? nota + " | " : "") + "Hard Cap aplicado";
+    if (cfg.strokeIndex === null) nota = (nota ? nota + " | " : "") + "SI pendiente — score bruto";
+
+    records.push({
+      ...baseRecord,
+      expectedDiff9, diff18,
+      scoreType: "N",
+      hiAntes, hiDespues, lowHI,
+      esrReduction, softCapApplied, hardCapApplied,
+      nota,
+    });
+  }
+
+  return { records, currentHI, lowHI, hiEstablecido, totalHoyosAcumulados: totalHoyos };
+}
+
+/**
+ * Resumen WHS de un jugador para mostrar en su perfil
+ */
+function whs_resumenJugador(nombre, rondas) {
+  const mis = rondas
+    .filter(r => (r.playerNames||[]).includes(nombre) && (r.campo === "huerta" || !r.campo))
+    .map(r => {
+      const pi = (r.playerNames||[]).indexOf(nombre);
+      const jugadores = Array.isArray(r.jugadores) ? r.jugadores : Object.values(r.jugadores||{});
+      return {
+        fecha: r.fecha, fechaTs: r.fechaTs || 0,
+        nHoles: r.nHoles || 9,
+        bruto: jugadores[pi]?.bruto ?? null,
+        pcc: null,
+      };
+    })
+    .filter(r => r.bruto != null);
+
+  return whs_buildScoringRecordV2(mis, "huerta");
+}
+
+
 function HandicapWHSScreen({ onExit, appStyle }) {
   const [jugadores, setJugadores] = useState([]);
   const [rondas, setRondas] = useState([]);
@@ -2838,7 +3072,7 @@ function HandicapWHSScreen({ onExit, appStyle }) {
         return { fecha: r.fecha, fechaTs: r.fechaTs || 0, nHoles: r.nHoles || 9, bruto, pcc: null };
       })
       .filter(r => r.bruto != null);
-    setWhsResult(whs_buildScoringRecord(mis, "huerta"));
+    setWhsResult(whs_buildScoringRecordV2(mis, "huerta"));
   };
 
   return (
@@ -2904,9 +3138,15 @@ function HandicapWHSScreen({ onExit, appStyle }) {
                     <div>
                       <div style={{ fontSize:12, fontWeight:700 }}>{r.fecha || "--"}</div>
                       <div style={{ fontSize:10, color:D.textSub }}>
-                        {"Bruto: "+r.scoreOriginal+" | Diff 9h: "+(r.diff9!=null?fmt1(r.diff9):"--")+(r.diff18!=null?" | Diff 18h: "+fmt1(r.diff18):"")+(r.esrReduction?(" | ESR: "+r.esrReduction):"")}
+                        {"Bruto: "+r.scoreOriginal+" | Diff 9h: "+(r.diff9!=null?fmt1(r.diff9):"--")+(r.diff18!=null?" | Diff 18h: "+fmt1(r.diff18):"")+(r.esrReduction?" | ESR: "+r.esrReduction:"")}
                       </div>
-                      {r.nota && <div style={{ fontSize:10, color:"#DDAA00" }}>{r.nota}</div>}
+                      {r.advertencias && r.advertencias.length > 0 && (
+                        <div style={{ fontSize:10, color:"#DDAA00" }}>{"⚠ "+r.advertencias.join(" | ")}</div>
+                      )}
+                      {!r.elegible && r.motivos && (
+                        <div style={{ fontSize:10, color:D.danger }}>{"✗ "+r.motivos.join(" | ")}</div>
+                      )}
+                      {r.nota && r.elegible && <div style={{ fontSize:10, color:D.textSub, fontStyle:"italic" }}>{r.nota}</div>}
                     </div>
                     <div style={{ textAlign:"right" }}>
                       {r.hiDespues!=null && <div style={{ fontSize:13, fontWeight:900, color:D.gold }}>{"HI "+fmt1(r.hiDespues)}</div>}
@@ -2917,7 +3157,7 @@ function HandicapWHSScreen({ onExit, appStyle }) {
                   {detailIdx===i && (
                     <div style={{ marginTop:8, background:D.surface, borderRadius:8, padding:10, fontSize:11 }}>
                       <div style={{ fontWeight:700, color:D.gold, marginBottom:6 }}>Audit Trail — Detalle WHS</div>
-                      {[["Fecha",r.fecha],["Score original",r.scoreOriginal],["Score ajustado",r.scoreAjustado+(r.strokeIndexPendiente?" (bruto — SI pendiente)":"")],["Course Rating",r.courseRating],["Slope Rating",r.slopeRating],["Par",r.par],["PCC",r.pcc!=null?r.pcc:"No disponible — no se inventa"],["Diff 9 hoyos",r.diff9!=null?fmt1(r.diff9):"--"],["Expected Diff 9h",r.expectedDiff9!=null?fmt1(r.expectedDiff9):r.scoreType==="9H-INICIAL"?"N/A (fase inicial)":"--"],["Diff 18 hoyos",r.diff18!=null?fmt1(r.diff18):r.scoreType==="9H-INICIAL"?"N/A (fase inicial)":"--"],["Tipo score",r.scoreType],["HI antes",r.hiAntes!=null?fmt1(r.hiAntes):"No establecido"],["HI despues",r.hiDespues!=null?fmt1(r.hiDespues):"No calculado"],["Low HI",r.lowHI!=null?fmt1(r.lowHI):"--"],["ESR",r.esrReduction!==0?r.esrReduction:"Ninguno"],["Soft Cap",r.softCapApplied?"Si":"No"],["Hard Cap",r.hardCapApplied?"Si":"No"],["Stroke Index",r.strokeIndexPendiente?"PENDIENTE":"Configurado"]].map(([l,v])=>(
+                      {[["Fecha",r.fecha],["Score original",r.scoreOriginal],["Score ajustado",r.scoreAjustado!=null?r.scoreAjustado+(r.strokeIndexPendiente?" (bruto — SI pendiente)":""):"No calculado"],["Course Rating",r.courseRating],["Slope Rating",r.slopeRating],["Par",r.par],["PCC",r.pcc!=null?r.pcc:"NULL — no disponible (no se inventa)"],["Diff 9 hoyos",r.diff9!=null?fmt1(r.diff9):"No calculado"],["Expected Diff 9h",r.expectedDiff9!=null?fmt1(r.expectedDiff9):r.scoreType==="9H-INICIAL"?"N/A (fase inicial)":"--"],["Diff 18 hoyos",r.diff18!=null?fmt1(r.diff18):r.scoreType==="9H-INICIAL"?"N/A (fase inicial)":"--"],["Tipo score",r.scoreType],["Elegible WHS",r.elegible?"Si":"No — "+( r.motivos||[]).join(", ")],["HI antes",r.hiAntes!=null?fmt1(r.hiAntes):"No establecido"],["HI despues",r.hiDespues!=null?fmt1(r.hiDespues):"No calculado"],["Low HI",r.lowHI!=null?fmt1(r.lowHI):"--"],["ESR",r.esrReduction!==0?r.esrReduction:"Ninguno"],["Soft Cap",r.softCapApplied?"Si":"No"],["Hard Cap",r.hardCapApplied?"Si":"No"],["Stroke Index",r.strokeIndexPendiente?"PENDIENTE — Net Double Bogey no aplicado":"Configurado"]].map(([l,v])=>(
                         <div key={l} style={{ display:"flex", justifyContent:"space-between", padding:"3px 0", borderBottom:"1px solid "+D.border+"44" }}>
                           <span style={{ color:D.textSub }}>{l}</span>
                           <span style={{ fontWeight:600 }}>{v??"--"}</span>
