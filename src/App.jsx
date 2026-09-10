@@ -2817,8 +2817,9 @@ function HandicapWHSScreen({ onExit, appStyle }) {
   useEffect(() => {
     Promise.all([get(ref(db, "historial")), get(ref(db, "directorio"))]).then(([h, d]) => {
       setRondas(h.exists() ? Object.values(h.val()) : []);
-      const dir = d.exists() ? d.val() : [];
-      setJugadores(Array.isArray(dir) ? dir : Object.values(dir));
+      const dirVal = d.exists() ? d.val() : null;
+      const players = dirVal?.players ? (Array.isArray(dirVal.players) ? dirVal.players : Object.values(dirVal.players)) : [];
+      setJugadores(players);
       setLoading(false);
     }).catch(() => setLoading(false));
   }, []);
@@ -2827,10 +2828,16 @@ function HandicapWHSScreen({ onExit, appStyle }) {
 
   const seleccionar = (nombre) => {
     setJugadorSel(nombre); setDetailIdx(null);
-    const mis = rondas.filter(r => (r.playerNames||[]).includes(nombre) && r.campo === "huerta").map(r => {
-      const pi = (r.playerNames||[]).indexOf(nombre);
-      return { fecha: r.fecha, fechaTs: r.fechaTs || 0, nHoles: r.nHoles || 9, bruto: r.jugadores?.[pi]?.bruto ?? null, pcc: null };
-    }).filter(r => r.bruto != null);
+    // Filtrar rondas del jugador en La Huerta (incluye rondas sin campo si es el único)
+    const mis = rondas
+      .filter(r => (r.playerNames||[]).includes(nombre) && (r.campo === "huerta" || !r.campo))
+      .map(r => {
+        const pi = (r.playerNames||[]).indexOf(nombre);
+        const jugador = Array.isArray(r.jugadores) ? r.jugadores[pi] : (r.jugadores ? Object.values(r.jugadores)[pi] : null);
+        const bruto = jugador?.bruto ?? null;
+        return { fecha: r.fecha, fechaTs: r.fechaTs || 0, nHoles: r.nHoles || 9, bruto, pcc: null };
+      })
+      .filter(r => r.bruto != null);
     setWhsResult(whs_buildScoringRecord(mis, "huerta"));
   };
 
