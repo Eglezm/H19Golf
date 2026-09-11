@@ -3336,7 +3336,7 @@ function HandicapWHSScreen({ onExit, appStyle }) {
                       {[["Fecha",r.fecha],["Score original (bruto)",r.scoreOriginal],["Score ajustado",r.scoreAjustado!=null?r.scoreAjustado+(r.strokeIndexPendiente?" (bruto — SI configurado ahora)":""):"No calculado"],["Course Handicap 9h",r.ch9!=null?r.ch9:"--"],["Score neto total",r.scoreNetoTotal!=null?r.scoreNetoTotal:"--"],["Course Rating",r.courseRating],["Slope Rating",r.slopeRating],["Par",r.par],["PCC",r.pcc!=null?r.pcc:"NULL — no disponible (no se inventa)"],["Diff 9 hoyos",r.diff9!=null?fmt1(r.diff9):"No calculado"],["Expected Diff 9h",r.expectedDiff9!=null?fmt1(r.expectedDiff9):r.scoreType==="9H-INICIAL"?"N/A (fase inicial)":"--"],["Diff 18 hoyos",r.diff18!=null?fmt1(r.diff18):r.scoreType==="9H-INICIAL"?"N/A (fase inicial)":"--"],["Tipo score",r.scoreType],["Elegible WHS",r.elegible?"Si":"No — "+(r.motivos||[]).join(", ")],["HI antes",r.hiAntes!=null?fmt1(r.hiAntes):"No establecido"],["HI despues",r.hiDespues!=null?fmt1(r.hiDespues):"No calculado"],["Low HI",r.lowHI!=null?fmt1(r.lowHI):"--"],["ESR",r.esrReduction!==0?r.esrReduction:"Ninguno"],["Soft Cap",r.softCapApplied?"Si":"No"],["Hard Cap",r.hardCapApplied?"Si":"No"],["Stroke Index","Configurado"]].map(([l,v])=>(
                         <div key={l} style={{ display:"flex", justifyContent:"space-between", padding:"3px 0", borderBottom:"1px solid "+D.border+"44" }}>
                           <span style={{ color:D.textSub }}>{l}</span>
-                          <span style={{ fontWeight:600 }}>{v??\"--\"}</span>
+                          <span style={{ fontWeight:600 }}>{v??"--"}</span>
                         </div>
                       ))}
                       {r.detalleHoyos && (
