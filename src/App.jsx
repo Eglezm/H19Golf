@@ -2682,11 +2682,15 @@ export default function H19() {
 
 const WHS_CAMPO_CONFIG = {
   huerta: {
-    courseRating9: 54.9,
-    slopeRating9:  106,
-    par9:          29,
-    strokeIndex:   null, // PENDIENTE
-    nHoles:        9,
+    courseRating9:  54.9,
+    slopeRating9:   106,
+    par9:           29,
+    par18:          58,
+    nHoles:         9,
+    // Stroke Index oficial (18 hoyos). Fuente: configuracion oficial proporcionada.
+    strokeIndex: [4,16,6,18,12,2,10,14,8,3,15,5,17,11,1,9,13,7],
+    // Hoyo:         1  2  3   4  5  6   7   8  9 10  11 12  13  14 15 16  17 18
+    pares: [4,3,3,3,3,4,3,3,3], // 9 hoyos — se repiten para 18
   },
 };
 
@@ -2895,7 +2899,23 @@ function whs_buildScoringRecordV2(rondas, campoKey) {
       continue;
     }
 
-    const adj = validacion.scoreAjustado;
+    // Aplicar NDB si tenemos scores por hoyo y HI establecido
+    let adj = validacion.scoreAjustado;
+    let detalleHoyos = null;
+    let ch9 = null;
+    let scoreNetoTotal = null;
+    const siDisponible = cfg.strokeIndex !== null;
+
+    if (siDisponible && ronda.scoresPorHoyo && currentHI != null) {
+      // Fase 2B: aplicar Net Double Bogey
+      const resultado = whs_procesarRonda9Hoyos(ronda.scoresPorHoyo, currentHI, campoKey);
+      if (!resultado.error) {
+        adj = resultado.scoreAjustadoTotal;
+        detalleHoyos = resultado.detalleHoyos;
+        ch9 = resultado.ch9;
+        scoreNetoTotal = resultado.scoreNetoTotal;
+      }
+    }
     totalHoyos += (ronda.nHoles || 9);
 
     const diff9 = whs_calcScoreDifferential9({
@@ -2912,6 +2932,7 @@ function whs_buildScoringRecordV2(rondas, campoKey) {
       courseRating: cfg.courseRating9, slopeRating: cfg.slopeRating9,
       par: cfg.par9, pcc: ronda.pcc || null,
       diff9,
+      ch9, scoreNetoTotal, detalleHoyos,
       strokeIndexPendiente: cfg.strokeIndex === null,
       elegible: true,
       motivos: [],
@@ -3040,6 +3061,153 @@ function whs_resumenJugador(nombre, rondas) {
 }
 
 
+
+// ════════════════════════════════════════════════════════════════
+// HANDICAP ENGINE — FASE 2B — Net Double Bogey + Score Ajustado
+// Requiere Stroke Index configurado
+// ════════════════════════════════════════════════════════════════
+
+/**
+ * Calcula el Course Handicap de un jugador para un campo/vuelta específica
+ * Fórmula WHS: HI × (Slope / 113) + (CR - Par)
+ * Fuente: Rules of Handicapping 2024, Section 6.1
+ * Devuelve entero redondeado.
+ */
+function whs_calcCourseHandicap({ handicapIndex, slopeRating, courseRating, par }) {
+  if (handicapIndex == null || slopeRating == null || courseRating == null || par == null) return null;
+  const ch = handicapIndex * (slopeRating / 113) + (courseRating - par);
+  return Math.round(ch);
+}
+
+/**
+ * Calcula los golpes de handicap recibidos en cada hoyo.
+ * Basado en Course Handicap y Stroke Index del hoyo.
+ *
+ * Regla:
+ * - El jugador recibe 1 golpe en hoyos cuyo SI <= courseHandicap (si CH <= nHoles)
+ * - Si CH > nHoles: recibe 1 golpe en todos + 1 adicional en hoyos con SI <= (CH - nHoles)
+ * - Ejemplo CH=20, 18 hoyos: 1 en todos + 1 extra en SI 1 y 2
+ *
+ * Fuente: Rules of Handicapping 2024, Section 6.1
+ *
+ * @param {number} courseHandicap
+ * @param {number[]} strokeIndexArray - SI de cada hoyo [SI_hoyo1, SI_hoyo2, ...]
+ * @returns {number[]} golpesPorHoyo
+ */
+function whs_calcStrokesPerHole(courseHandicap, strokeIndexArray) {
+  const nHoles = strokeIndexArray.length;
+  return strokeIndexArray.map(si => {
+    let golpes = 0;
+    if (courseHandicap >= si) golpes += 1;
+    // Golpes adicionales para CH > nHoles
+    if (courseHandicap > nHoles) {
+      const extra = courseHandicap - nHoles;
+      if (extra >= si) golpes += 1;
+    }
+    // Golpes adicionales para CH > 2*nHoles (casos extremos)
+    if (courseHandicap > nHoles * 2) {
+      const extra2 = courseHandicap - nHoles * 2;
+      if (extra2 >= si) golpes += 1;
+    }
+    return golpes;
+  });
+}
+
+/**
+ * Calcula el Net Double Bogey (NDB) por hoyo.
+ * NDB = Par del hoyo + 2 + golpes de handicap recibidos en ese hoyo
+ * Fuente: Rules of Handicapping 2024, Section 3.1
+ *
+ * @param {number} par - Par del hoyo
+ * @param {number} strokesReceived - Golpes de handicap recibidos en ese hoyo
+ * @returns {number} NDB score máximo para ese hoyo
+ */
+function whs_calcNDB(par, strokesReceived) {
+  return par + 2 + strokesReceived;
+}
+
+/**
+ * Ajusta el score de una ronda aplicando Net Double Bogey por hoyo.
+ * Solo aplica cuando el jugador ya tiene HI establecido.
+ *
+ * @param {number[]} scoresOriginales - Score bruto por hoyo
+ * @param {number[]} pares - Par por hoyo
+ * @param {number[]} strokeIndexArray - SI por hoyo
+ * @param {number} courseHandicap - CH del jugador
+ * @returns {{ scoreAjustado: number, detalleHoyos: array }}
+ */
+function whs_ajustarScoreNDB(scoresOriginales, pares, strokeIndexArray, courseHandicap) {
+  const golpesPorHoyo = whs_calcStrokesPerHole(courseHandicap, strokeIndexArray);
+  const detalleHoyos = scoresOriginales.map((s, i) => {
+    const par = pares[i];
+    const golpes = golpesPorHoyo[i];
+    const ndb = whs_calcNDB(par, golpes);
+    const scoreOriginal = s;
+    const scoreAjustado = Math.min(s, ndb); // NDB es el máximo
+    const scoreNeto = s - golpes;
+    return {
+      hoyo: i + 1,
+      par,
+      strokeIndex: strokeIndexArray[i],
+      scoreOriginal,
+      golpesHC: golpes,
+      ndb,
+      scoreAjustado,
+      scoreNeto,
+      ndbAplicado: s > ndb,
+    };
+  });
+
+  const scoreAjustadoTotal = detalleHoyos.reduce((a, h) => a + h.scoreAjustado, 0);
+  const scoreNetoTotal = detalleHoyos.reduce((a, h) => a + h.scoreNeto, 0);
+
+  return { scoreAjustadoTotal, scoreNetoTotal, detalleHoyos, golpesPorHoyo };
+}
+
+/**
+ * Procesa una ronda de 9 hoyos con NDB y Expected Score (Fase 2B completa)
+ * Para un campo de 9 hoyos: el SI de los hoyos 1-9 se usa directamente.
+ * El Expected Score usa el CH para 9 hoyos (CH9 = CH18 / 2, redondeado).
+ */
+function whs_procesarRonda9Hoyos(scores9, handicapIndex, campoKey) {
+  const cfg = WHS_CAMPO_CONFIG[campoKey];
+  if (!cfg || !cfg.strokeIndex) return { error: "Campo o Stroke Index no configurado" };
+
+  // Para 9 hoyos usamos los SI de los hoyos 1-9
+  const si9 = cfg.strokeIndex.slice(0, 9);
+  const pares9 = cfg.pares; // [4,3,3,3,3,4,3,3,3]
+
+  // Course Handicap para 9 hoyos
+  const ch18 = whs_calcCourseHandicap({
+    handicapIndex,
+    slopeRating: cfg.slopeRating9,
+    courseRating: cfg.courseRating9,
+    par: cfg.par9,
+  });
+  // CH para 9 hoyos = CH18 / 2 redondeado
+  const ch9 = ch18 != null ? Math.round(ch18 / 2) : null;
+
+  // Ajuste NDB
+  const ajuste = whs_ajustarScoreNDB(scores9, pares9, si9, ch9 || 0);
+
+  // Score Differential de 9 hoyos con score ajustado
+  const diff9 = whs_calcScoreDifferential9({
+    adjustedScore: ajuste.scoreAjustadoTotal,
+    courseRating: cfg.courseRating9,
+    slopeRating: cfg.slopeRating9,
+    pcc: 0,
+  });
+
+  return {
+    ch18, ch9,
+    scoreAjustadoTotal: ajuste.scoreAjustadoTotal,
+    scoreNetoTotal: ajuste.scoreNetoTotal,
+    detalleHoyos: ajuste.detalleHoyos,
+    diff9,
+  };
+}
+
+
 function HandicapWHSScreen({ onExit, appStyle }) {
   const [jugadores, setJugadores] = useState([]);
   const [rondas, setRondas] = useState([]);
@@ -3062,14 +3230,22 @@ function HandicapWHSScreen({ onExit, appStyle }) {
 
   const seleccionar = (nombre) => {
     setJugadorSel(nombre); setDetailIdx(null);
-    // Filtrar rondas del jugador en La Huerta (incluye rondas sin campo si es el único)
     const mis = rondas
       .filter(r => (r.playerNames||[]).includes(nombre) && (r.campo === "huerta" || !r.campo))
       .map(r => {
         const pi = (r.playerNames||[]).indexOf(nombre);
-        const jugador = Array.isArray(r.jugadores) ? r.jugadores[pi] : (r.jugadores ? Object.values(r.jugadores)[pi] : null);
-        const bruto = jugador?.bruto ?? null;
-        return { fecha: r.fecha, fechaTs: r.fechaTs || 0, nHoles: r.nHoles || 9, bruto, pcc: null };
+        const jugs = Array.isArray(r.jugadores) ? r.jugadores : Object.values(r.jugadores||{});
+        const bruto = jugs[pi]?.bruto ?? null;
+        const sphs = r.scoresPorHoyo
+          ? (Array.isArray(r.scoresPorHoyo) ? r.scoresPorHoyo : Object.values(r.scoresPorHoyo))
+          : null;
+        const sph = sphs ? sphs[pi] : null;
+        return {
+          fecha: r.fecha, fechaTs: r.fechaTs || 0,
+          nHoles: r.nHoles || 9, bruto,
+          scoresPorHoyo: Array.isArray(sph) ? sph.map(v => v ?? null) : null,
+          pcc: null,
+        };
       })
       .filter(r => r.bruto != null);
     setWhsResult(whs_buildScoringRecordV2(mis, "huerta"));
@@ -3157,7 +3333,43 @@ function HandicapWHSScreen({ onExit, appStyle }) {
                   {detailIdx===i && (
                     <div style={{ marginTop:8, background:D.surface, borderRadius:8, padding:10, fontSize:11 }}>
                       <div style={{ fontWeight:700, color:D.gold, marginBottom:6 }}>Audit Trail — Detalle WHS</div>
-                      {[["Fecha",r.fecha],["Score original",r.scoreOriginal],["Score ajustado",r.scoreAjustado!=null?r.scoreAjustado+(r.strokeIndexPendiente?" (bruto — SI pendiente)":""):"No calculado"],["Course Rating",r.courseRating],["Slope Rating",r.slopeRating],["Par",r.par],["PCC",r.pcc!=null?r.pcc:"NULL — no disponible (no se inventa)"],["Diff 9 hoyos",r.diff9!=null?fmt1(r.diff9):"No calculado"],["Expected Diff 9h",r.expectedDiff9!=null?fmt1(r.expectedDiff9):r.scoreType==="9H-INICIAL"?"N/A (fase inicial)":"--"],["Diff 18 hoyos",r.diff18!=null?fmt1(r.diff18):r.scoreType==="9H-INICIAL"?"N/A (fase inicial)":"--"],["Tipo score",r.scoreType],["Elegible WHS",r.elegible?"Si":"No — "+( r.motivos||[]).join(", ")],["HI antes",r.hiAntes!=null?fmt1(r.hiAntes):"No establecido"],["HI despues",r.hiDespues!=null?fmt1(r.hiDespues):"No calculado"],["Low HI",r.lowHI!=null?fmt1(r.lowHI):"--"],["ESR",r.esrReduction!==0?r.esrReduction:"Ninguno"],["Soft Cap",r.softCapApplied?"Si":"No"],["Hard Cap",r.hardCapApplied?"Si":"No"],["Stroke Index",r.strokeIndexPendiente?"PENDIENTE — Net Double Bogey no aplicado":"Configurado"]].map(([l,v])=>(
+                      {[["Fecha",r.fecha],["Score original (bruto)",r.scoreOriginal],["Score ajustado",r.scoreAjustado!=null?r.scoreAjustado+(r.strokeIndexPendiente?" (bruto — SI configurado ahora)":""):"No calculado"],["Course Handicap 9h",r.ch9!=null?r.ch9:"--"],["Score neto total",r.scoreNetoTotal!=null?r.scoreNetoTotal:"--"],["Course Rating",r.courseRating],["Slope Rating",r.slopeRating],["Par",r.par],["PCC",r.pcc!=null?r.pcc:"NULL — no disponible (no se inventa)"],["Diff 9 hoyos",r.diff9!=null?fmt1(r.diff9):"No calculado"],["Expected Diff 9h",r.expectedDiff9!=null?fmt1(r.expectedDiff9):r.scoreType==="9H-INICIAL"?"N/A (fase inicial)":"--"],["Diff 18 hoyos",r.diff18!=null?fmt1(r.diff18):r.scoreType==="9H-INICIAL"?"N/A (fase inicial)":"--"],["Tipo score",r.scoreType],["Elegible WHS",r.elegible?"Si":"No — "+(r.motivos||[]).join(", ")],["HI antes",r.hiAntes!=null?fmt1(r.hiAntes):"No establecido"],["HI despues",r.hiDespues!=null?fmt1(r.hiDespues):"No calculado"],["Low HI",r.lowHI!=null?fmt1(r.lowHI):"--"],["ESR",r.esrReduction!==0?r.esrReduction:"Ninguno"],["Soft Cap",r.softCapApplied?"Si":"No"],["Hard Cap",r.hardCapApplied?"Si":"No"],["Stroke Index","Configurado"]].map(([l,v])=>(
+                        <div key={l} style={{ display:"flex", justifyContent:"space-between", padding:"3px 0", borderBottom:"1px solid "+D.border+"44" }}>
+                          <span style={{ color:D.textSub }}>{l}</span>
+                          <span style={{ fontWeight:600 }}>{v??\"--\"}</span>
+                        </div>
+                      ))}
+                      {r.detalleHoyos && (
+                        <div style={{ marginTop:8 }}>
+                          <div style={{ fontSize:10, fontWeight:700, color:D.gold, marginBottom:4 }}>Detalle por hoyo (NDB aplicado)</div>
+                          <div style={{ overflowX:"auto" }}>
+                            <table style={{ width:"100%", borderCollapse:"collapse", fontSize:10 }}>
+                              <thead>
+                                <tr style={{ borderBottom:"1px solid "+D.border }}>
+                                  {["Hoyo","SI","Par","Bruto","HC","NDB","Ajust","Neto","NDB?"].map(h=>(
+                                    <td key={h} style={{ padding:"3px 4px", textAlign:"center", color:D.textSub, fontWeight:700 }}>{h}</td>
+                                  ))}
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {r.detalleHoyos.map((h,i)=>(
+                                  <tr key={i} style={{ background:h.ndbAplicado?"#C6282822":"transparent" }}>
+                                    <td style={{ padding:"3px 4px", textAlign:"center" }}>{h.hoyo}</td>
+                                    <td style={{ padding:"3px 4px", textAlign:"center", color:D.textSub }}>{h.strokeIndex}</td>
+                                    <td style={{ padding:"3px 4px", textAlign:"center" }}>{h.par}</td>
+                                    <td style={{ padding:"3px 4px", textAlign:"center", fontWeight:700 }}>{h.scoreOriginal}</td>
+                                    <td style={{ padding:"3px 4px", textAlign:"center", color:D.gold }}>{h.golpesHC>0?"+"+h.golpesHC:"-"}</td>
+                                    <td style={{ padding:"3px 4px", textAlign:"center", color:D.danger }}>{h.ndb}</td>
+                                    <td style={{ padding:"3px 4px", textAlign:"center", color:h.ndbAplicado?D.danger:D.text }}>{h.scoreAjustado}</td>
+                                    <td style={{ padding:"3px 4px", textAlign:"center", color:D.success }}>{h.scoreNeto}</td>
+                                    <td style={{ padding:"3px 4px", textAlign:"center" }}>{h.ndbAplicado?"✓":""}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      )}
                         <div key={l} style={{ display:"flex", justifyContent:"space-between", padding:"3px 0", borderBottom:"1px solid "+D.border+"44" }}>
                           <span style={{ color:D.textSub }}>{l}</span>
                           <span style={{ fontWeight:600 }}>{v??"--"}</span>
