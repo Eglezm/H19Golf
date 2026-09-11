@@ -2685,7 +2685,8 @@ const WHS_CAMPO_CONFIG = {
     courseRating18: 54.9,   // CR oficial para 18 hoyos (campo de 9 jugado 2 veces)
     courseRating9:  27.45,  // CR para 9 hoyos reales = 54.9 / 2
     slopeRating9:   106,    // Slope (mismo para 9h y 18h)
-    par18:          58,
+    par9:           29,     // Par total 9 hoyos
+    par18:          58,     // Par total 18 hoyos
     nHoles:         9,
     // Stroke Index oficial (18 hoyos). Fuente: configuracion oficial proporcionada.
     strokeIndex: [4,16,6,18,12,2,10,14,8,3,15,5,17,11,1,9,13,7],
@@ -3033,7 +3034,9 @@ function whs_buildScoringRecordV2(rondas, campoKey) {
 
     const { hi: hiDespues, softCapApplied, hardCapApplied } = whs_applyCapProcedure(rawHI, lowHI);
     const hiAntes = currentHI;
-    currentHI = hiDespues;
+    const hiAntes = currentHI;
+    // Solo actualizar currentHI si se calculó uno nuevo valido
+    if (hiDespues != null) currentHI = hiDespues;
 
     let nota = null;
     if (esrReduction !== 0) nota = "ESR aplicado: " + esrReduction;
