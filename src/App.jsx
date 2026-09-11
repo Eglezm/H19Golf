@@ -2981,19 +2981,34 @@ function whs_buildScoringRecordV2(rondas, campoKey) {
         }
 
         currentHI = whs_calculateHandicapIndex(diffs18);
-        lowHI = currentHI;
-        hiEstablecido = true;
+        lowHI = currentHI != null ? currentHI : null;
+        // Solo marcar como establecido si se pudo calcular el HI
+        hiEstablecido = currentHI != null;
 
         // Actualizar el ultimo record con el HI establecido
         const lastIdx = records.length - 1;
         records[lastIdx].hiDespues = currentHI;
         records[lastIdx].lowHI = lowHI;
-        records[lastIdx].nota = "HI inicial establecido: " + (currentHI != null ? currentHI.toFixed(1) : "--");
+        records[lastIdx].nota = currentHI != null
+          ? "HI inicial establecido: " + currentHI.toFixed(1)
+          : "54 hoyos acumulados pero no hay suficientes diferenciales validos aun";
       }
       continue;
     }
 
     // ── HI ESTABLECIDO: usar Expected Score ──
+    // Si currentHI es null por alguna razón, tratar como inicial
+    if (currentHI == null) {
+      records.push({
+        ...baseRecord,
+        expectedDiff9: null, diff18: null,
+        scoreType: "9H-SIN-HI",
+        hiAntes: null, hiDespues: null, lowHI: null,
+        esrReduction: 0, softCapApplied: false, hardCapApplied: false,
+        nota: "HI no calculado aun — se necesitan mas rondas validas",
+      });
+      continue;
+    }
     const expectedDiff9 = whs_calcExpectedDiff9({
       handicapIndex: currentHI,
       courseRating: cfg.courseRating9,
