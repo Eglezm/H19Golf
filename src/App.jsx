@@ -3034,7 +3034,6 @@ function whs_buildScoringRecordV2(rondas, campoKey) {
 
     const { hi: hiDespues, softCapApplied, hardCapApplied } = whs_applyCapProcedure(rawHI, lowHI);
     const hiAntes = currentHI;
-    const hiAntes = currentHI;
     // Solo actualizar currentHI si se calculó uno nuevo valido
     if (hiDespues != null) currentHI = hiDespues;
 
