@@ -3646,6 +3646,30 @@ function HandicapWHSScreen({ onExit, appStyle }) {
                 </div>
               ))}
             </Card>
+            <button onClick={() => {
+              const fecha = new Date().toLocaleDateString('es-MX', {day:'2-digit',month:'2-digit',year:'numeric'});
+              const conHI = ranking.filter(p => p.hi != null);
+              const sinHI = ranking.filter(p => p.hi == null);
+              const rows = conHI.map((p, i) => {
+                const diff = p.hi - p.hcActual;
+                const difStr = Math.abs(diff) >= 0.5
+                  ? " (" + (diff > 0 ? "+" : "") + diff.toFixed(1) + " vs HC)"
+                  : "";
+                return (i+1) + ". " + p.name + " — HC " + p.hcActual + "  — HI " + fmt1(p.hi) + difStr;
+              });
+              const lines = [
+                "🏌️ *H19 Golf — Clasificación WHS*",
+                "_" + fecha + " · La Huerta · CR 27.45 · Slope 106_",
+                "",
+                ...rows,
+                ...(sinHI.length > 0 ? ["", "*En progreso:*", ...sinHI.map(p => "⏳ " + p.name + " — " + p.totalHoyos + "/54 hoyos")] : []),
+                "",
+                "📱 h19golf.netlify.app",
+              ].join("\n");
+              window.open("https://wa.me/?text=" + encodeURIComponent(lines), "_blank");
+            }} style={{ width:"100%", padding:"12px", border:"none", borderRadius:12, background:"#25D366", color:"#fff", fontSize:13, fontWeight:700, cursor:"pointer", marginTop:10 }}>
+              💬 Compartir clasificación WHS
+            </button>
           );
         })()}
 
