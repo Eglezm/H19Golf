@@ -3330,53 +3330,71 @@ function HandicapWHSScreen({ onExit, appStyle }) {
                       {r.hardCapApplied && <div style={{ fontSize:9, color:D.danger }}>Hard Cap</div>}
                     </div>
                   </div>
-                  {detailIdx===i && (
-                    <div style={{ marginTop:8, background:D.surface, borderRadius:8, padding:10, fontSize:11 }}>
-                      <div style={{ fontWeight:700, color:D.gold, marginBottom:6 }}>Audit Trail — Detalle WHS</div>
-                      {[["Fecha",r.fecha],["Score original (bruto)",r.scoreOriginal],["Score ajustado",r.scoreAjustado!=null?r.scoreAjustado+(r.strokeIndexPendiente?" (bruto — SI configurado ahora)":""):"No calculado"],["Course Handicap 9h",r.ch9!=null?r.ch9:"--"],["Score neto total",r.scoreNetoTotal!=null?r.scoreNetoTotal:"--"],["Course Rating",r.courseRating],["Slope Rating",r.slopeRating],["Par",r.par],["PCC",r.pcc!=null?r.pcc:"NULL — no disponible (no se inventa)"],["Diff 9 hoyos",r.diff9!=null?fmt1(r.diff9):"No calculado"],["Expected Diff 9h",r.expectedDiff9!=null?fmt1(r.expectedDiff9):r.scoreType==="9H-INICIAL"?"N/A (fase inicial)":"--"],["Diff 18 hoyos",r.diff18!=null?fmt1(r.diff18):r.scoreType==="9H-INICIAL"?"N/A (fase inicial)":"--"],["Tipo score",r.scoreType],["Elegible WHS",r.elegible?"Si":"No — "+(r.motivos||[]).join(", ")],["HI antes",r.hiAntes!=null?fmt1(r.hiAntes):"No establecido"],["HI despues",r.hiDespues!=null?fmt1(r.hiDespues):"No calculado"],["Low HI",r.lowHI!=null?fmt1(r.lowHI):"--"],["ESR",r.esrReduction!==0?r.esrReduction:"Ninguno"],["Soft Cap",r.softCapApplied?"Si":"No"],["Hard Cap",r.hardCapApplied?"Si":"No"],["Stroke Index","Configurado"]].map(([l,v])=>(
-                        <div key={l} style={{ display:"flex", justifyContent:"space-between", padding:"3px 0", borderBottom:"1px solid "+D.border+"44" }}>
-                          <span style={{ color:D.textSub }}>{l}</span>
-                          <span style={{ fontWeight:600 }}>{v??"--"}</span>
-                        </div>
-                      ))}
-                      {r.detalleHoyos && (
-                        <div style={{ marginTop:8 }}>
-                          <div style={{ fontSize:10, fontWeight:700, color:D.gold, marginBottom:4 }}>Detalle por hoyo (NDB aplicado)</div>
-                          <div style={{ overflowX:"auto" }}>
-                            <table style={{ width:"100%", borderCollapse:"collapse", fontSize:10 }}>
-                              <thead>
-                                <tr style={{ borderBottom:"1px solid "+D.border }}>
-                                  {["Hoyo","SI","Par","Bruto","HC","NDB","Ajust","Neto","NDB?"].map(h=>(
-                                    <td key={h} style={{ padding:"3px 4px", textAlign:"center", color:D.textSub, fontWeight:700 }}>{h}</td>
-                                  ))}
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {r.detalleHoyos.map((h,i)=>(
-                                  <tr key={i} style={{ background:h.ndbAplicado?"#C6282822":"transparent" }}>
-                                    <td style={{ padding:"3px 4px", textAlign:"center" }}>{h.hoyo}</td>
-                                    <td style={{ padding:"3px 4px", textAlign:"center", color:D.textSub }}>{h.strokeIndex}</td>
-                                    <td style={{ padding:"3px 4px", textAlign:"center" }}>{h.par}</td>
-                                    <td style={{ padding:"3px 4px", textAlign:"center", fontWeight:700 }}>{h.scoreOriginal}</td>
-                                    <td style={{ padding:"3px 4px", textAlign:"center", color:D.gold }}>{h.golpesHC>0?"+"+h.golpesHC:"-"}</td>
-                                    <td style={{ padding:"3px 4px", textAlign:"center", color:D.danger }}>{h.ndb}</td>
-                                    <td style={{ padding:"3px 4px", textAlign:"center", color:h.ndbAplicado?D.danger:D.text }}>{h.scoreAjustado}</td>
-                                    <td style={{ padding:"3px 4px", textAlign:"center", color:D.success }}>{h.scoreNeto}</td>
-                                    <td style={{ padding:"3px 4px", textAlign:"center" }}>{h.ndbAplicado?"✓":""}</td>
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
-                          </div>
-                        </div>
-                      )}
-                        <div key={l} style={{ display:"flex", justifyContent:"space-between", padding:"3px 0", borderBottom:"1px solid "+D.border+"44" }}>
-                          <span style={{ color:D.textSub }}>{l}</span>
-                          <span style={{ fontWeight:600 }}>{v??"--"}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
+                   {detailIdx===i && (
+                     <div style={{ marginTop:8, background:D.surface, borderRadius:8, padding:10, fontSize:11 }}>
+                       <div style={{ fontWeight:700, color:D.gold, marginBottom:6 }}>Audit Trail — Detalle WHS</div>
+                       {[
+                         ["Fecha", r.fecha || "--"],
+                         ["Score original", r.scoreOriginal != null ? r.scoreOriginal : "--"],
+                         ["Score ajustado", r.scoreAjustado != null ? String(r.scoreAjustado) : "No calculado"],
+                         ["Course Handicap 9h", r.ch9 != null ? r.ch9 : "--"],
+                         ["Score neto total", r.scoreNetoTotal != null ? r.scoreNetoTotal : "--"],
+                         ["Course Rating", r.courseRating || "--"],
+                         ["Slope Rating", r.slopeRating || "--"],
+                         ["Par", r.par || "--"],
+                         ["PCC", r.pcc != null ? r.pcc : "NULL - no disponible"],
+                         ["Diff 9 hoyos", r.diff9 != null ? fmt1(r.diff9) : "No calculado"],
+                         ["Expected Diff 9h", r.expectedDiff9 != null ? fmt1(r.expectedDiff9) : r.scoreType === "9H-INICIAL" ? "N/A (inicial)" : "--"],
+                         ["Diff 18 hoyos", r.diff18 != null ? fmt1(r.diff18) : r.scoreType === "9H-INICIAL" ? "N/A (inicial)" : "--"],
+                         ["Tipo score", r.scoreType || "--"],
+                         ["Elegible WHS", r.elegible === false ? "No" : "Si"],
+                         ["HI antes", r.hiAntes != null ? fmt1(r.hiAntes) : "No establecido"],
+                         ["HI despues", r.hiDespues != null ? fmt1(r.hiDespues) : "No calculado"],
+                         ["Low HI", r.lowHI != null ? fmt1(r.lowHI) : "--"],
+                         ["ESR", r.esrReduction ? String(r.esrReduction) : "Ninguno"],
+                         ["Soft Cap", r.softCapApplied ? "Si" : "No"],
+                         ["Hard Cap", r.hardCapApplied ? "Si" : "No"],
+                         ["Stroke Index", "Configurado"],
+                       ].map(([label, val]) => (
+                         <div key={label} style={{ display:"flex", justifyContent:"space-between", padding:"3px 0", borderBottom:"1px solid "+D.border+"44" }}>
+                           <span style={{ color:D.textSub }}>{label}</span>
+                           <span style={{ fontWeight:600 }}>{val}</span>
+                         </div>
+                       ))}
+                       {r.nota && <div style={{ marginTop:6, padding:6, background:"#1A1A00", borderRadius:6, fontSize:10, color:"#DDAA00" }}>{r.nota}</div>}
+                       {r.detalleHoyos && r.detalleHoyos.length > 0 && (
+                         <div style={{ marginTop:8 }}>
+                           <div style={{ fontSize:10, fontWeight:700, color:D.gold, marginBottom:4 }}>Detalle por hoyo</div>
+                           <div style={{ overflowX:"auto" }}>
+                             <table style={{ width:"100%", borderCollapse:"collapse", fontSize:10 }}>
+                               <thead>
+                                 <tr style={{ borderBottom:"1px solid "+D.border }}>
+                                   {["Hoyo","SI","Par","Bruto","HC","NDB","Ajust","Neto","Cap"].map(h => (
+                                     <td key={h} style={{ padding:"3px 4px", textAlign:"center", color:D.textSub, fontWeight:700 }}>{h}</td>
+                                   ))}
+                                 </tr>
+                               </thead>
+                               <tbody>
+                                 {r.detalleHoyos.map((h, hi) => (
+                                   <tr key={hi} style={{ background: h.ndbAplicado ? "#C6282822" : "transparent" }}>
+                                     <td style={{ padding:"3px 4px", textAlign:"center" }}>{h.hoyo}</td>
+                                     <td style={{ padding:"3px 4px", textAlign:"center", color:D.textSub }}>{h.strokeIndex}</td>
+                                     <td style={{ padding:"3px 4px", textAlign:"center" }}>{h.par}</td>
+                                     <td style={{ padding:"3px 4px", textAlign:"center", fontWeight:700 }}>{h.scoreOriginal}</td>
+                                     <td style={{ padding:"3px 4px", textAlign:"center", color:D.gold }}>{h.golpesHC > 0 ? "+"+h.golpesHC : "-"}</td>
+                                     <td style={{ padding:"3px 4px", textAlign:"center", color:D.danger }}>{h.ndb}</td>
+                                     <td style={{ padding:"3px 4px", textAlign:"center", color: h.ndbAplicado ? D.danger : D.text }}>{h.scoreAjustado}</td>
+                                     <td style={{ padding:"3px 4px", textAlign:"center", color:D.success }}>{h.scoreNeto}</td>
+                                     <td style={{ padding:"3px 4px", textAlign:"center" }}>{h.ndbAplicado ? "✓" : ""}</td>
+                                   </tr>
+                                 ))}
+                               </tbody>
+                             </table>
+                           </div>
+                         </div>
+                       )}
+                     </div>
+                   )}
                 </div>
               ))}
             </Card>
