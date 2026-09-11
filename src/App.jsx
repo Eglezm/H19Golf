@@ -3232,13 +3232,22 @@ function HandicapWHSScreen({ onExit, appStyle }) {
   const [jugadorSel, setJugadorSel] = useState(null);
   const [detailIdx, setDetailIdx] = useState(null);
   const [whsResult, setWhsResult] = useState(null);
+  const [tab, setTab] = useState("perfil"); // "perfil" | "grafica" | "comparativa"
+  const [allResults, setAllResults] = useState({}); // nombre -> whsResult para comparativa
 
   useEffect(() => {
     Promise.all([get(ref(db, "historial")), get(ref(db, "directorio"))]).then(([h, d]) => {
-      setRondas(h.exists() ? Object.values(h.val()) : []);
+      const rondasData = h.exists() ? Object.values(h.val()) : [];
+      setRondas(rondasData);
       const dirVal = d.exists() ? d.val() : null;
       const players = dirVal?.players ? (Array.isArray(dirVal.players) ? dirVal.players : Object.values(dirVal.players)) : [];
       setJugadores(players);
+      // Calcular WHS para todos los jugadores (para comparativa)
+      const allRes = {};
+      players.forEach(p => {
+        allRes[p.name] = whs_resumenJugador(p.name, rondasData);
+      });
+      setAllResults(allRes);
       setLoading(false);
     }).catch(() => setLoading(false));
   }, []);
@@ -3274,15 +3283,24 @@ function HandicapWHSScreen({ onExit, appStyle }) {
         <button onClick={onExit} style={{ background:"none", border:"none", color:D.gold, fontSize:22, cursor:"pointer" }}>{"<"}</button>
         <div>
           <div style={{ fontSize:16, fontWeight:900, color:D.gold }}>WHS Handicap Engine</div>
-          <div style={{ fontSize:11, color:D.textSub }}>Fase 1 · Solo consulta · No afecta HC actual</div>
+          <div style={{ fontSize:11, color:D.textSub }}>Fases 1-4 · Solo consulta · No afecta HC actual</div>
         </div>
       </div>
+      {/* Tabs */}
+      <div style={{ display:"flex", borderBottom:`1px solid ${D.border}`, background:D.surface }}>
+        {[["perfil","👤 Perfil"],["grafica","📈 Evolución"],["comparativa","🏆 Clasificación"]].map(([k,l]) => (
+          <button key={k} onClick={() => setTab(k)}
+            style={{ flex:1, padding:"10px 4px", border:"none", borderBottom:tab===k?`2px solid ${D.gold}`:"2px solid transparent", background:"transparent", color:tab===k?D.gold:D.textSub, fontSize:11, fontWeight:tab===k?700:400, cursor:"pointer" }}>
+            {l}
+          </button>
+        ))}
+      </div>
       <div style={{ padding:"12px 12px 80px" }}>
-        <div style={{ background:"#1A2A1A", border:"1px solid #AA880044", borderRadius:10, padding:10, marginBottom:12, fontSize:11, color:D.textSub }}>
-          <span style={{ color:D.gold, fontWeight:700 }}>Modo consulta WHS</span> — Handicap Index calculado segun WHS oficial. Independiente del HC de la app. <span style={{ color:D.danger }}>Stroke Index pendiente</span> — score ajustado = score bruto.
+        <div style={{ background:"#1A2A1A", border:"1px solid #AA880044", borderRadius:10, padding:8, marginBottom:10, fontSize:10, color:D.textSub }}>
+          <span style={{ color:D.gold, fontWeight:700 }}>WHS oficial</span> · CR 27.45 · Slope 106 · Par 29 · SI configurado · No modifica HC actual
         </div>
-        {loading && <Card><div style={{ textAlign:"center", color:D.textSub, padding:24 }}>Cargando...</div></Card>}
-        {!loading && (
+        {loading && <Card><div style={{ textAlign:"center", color:D.textSub, padding:24 }}>Calculando HI WHS para {jugadores.length} jugadores...</div></Card>}
+        {!loading && tab === "perfil" && (
           <Card>
             <SLabel>Jugador</SLabel>
             <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
@@ -3295,8 +3313,7 @@ function HandicapWHSScreen({ onExit, appStyle }) {
             </div>
           </Card>
         )}
-        {whsResult && jugadorSel && (
-          <>
+        {tab === "perfil" && whsResult && jugadorSel && (<>
             <Card style={{ border:"1px solid "+D.gold+"44" }}>
               <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
                 <div>
@@ -3417,6 +3434,221 @@ function HandicapWHSScreen({ onExit, appStyle }) {
             </Card>
           </>
         )}
+
+        {/* ── TAB: EVOLUCIÓN ── */}
+        {tab === "grafica" && !loading && (() => {
+          const jugadorActivo = jugadorSel;
+          return (
+            <>
+              {!jugadorActivo && (
+                <Card>
+                  <SLabel>Seleccionar jugador</SLabel>
+                  <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
+                    {jugadores.map(j => (
+                      <button key={j.id||j.name} onClick={() => seleccionar(j.name)}
+                        style={{ padding:"7px 14px", border:"1px solid "+(jugadorSel===j.name?D.gold:D.border), borderRadius:20, background:jugadorSel===j.name?D.goldDim:"transparent", color:jugadorSel===j.name?D.gold:D.textSub, fontSize:12, fontWeight:jugadorSel===j.name?700:400, cursor:"pointer" }}>
+                        {j.name}
+                      </button>
+                    ))}
+                  </div>
+                </Card>
+              )}
+              {jugadorActivo && whsResult && (() => {
+                // Datos para la gráfica: rondas con HI calculado
+                const puntos = whsResult.records
+                  .filter(r => r.hiDespues != null)
+                  .map(r => ({ fecha: r.fecha || "", hi: r.hiDespues, lowHI: r.lowHI }));
+                if (puntos.length < 2) return (
+                  <Card><div style={{ textAlign:"center", color:D.textSub, padding:24, fontSize:12 }}>
+                    Se necesitan más rondas para mostrar la evolución del HI
+                  </div></Card>
+                );
+                // SVG chart
+                const W = 340, H = 200, padL = 40, padR = 12, padT = 20, padB = 36;
+                const hiVals = puntos.map(p => p.hi);
+                const minV = Math.max(0, Math.min(...hiVals) - 2);
+                const maxV = Math.min(54, Math.max(...hiVals) + 2);
+                const xStep = (W - padL - padR) / Math.max(puntos.length - 1, 1);
+                const yScale = (H - padT - padB) / (maxV - minV);
+                const px = i => padL + i * xStep;
+                const py = v => H - padB - (v - minV) * yScale;
+                const polyline = puntos.map((p, i) => px(i) + "," + py(p.hi)).join(" ");
+                const lowLine = puntos.filter(p => p.lowHI != null);
+                const polyLow = lowLine.map((p, i) => {
+                  const orig = puntos.indexOf(p);
+                  return px(orig) + "," + py(p.lowHI);
+                }).join(" ");
+                const current = whsResult.currentHI;
+                const low = whsResult.lowHI;
+                const trend = puntos.length >= 3
+                  ? puntos[puntos.length-1].hi - puntos[puntos.length-3].hi
+                  : 0;
+                return (
+                  <>
+                    <Card style={{ border:"1px solid "+D.gold+"44" }}>
+                      <div style={{ display:"flex", justifyContent:"space-between", marginBottom:12 }}>
+                        <div>
+                          <div style={{ fontSize:15, fontWeight:900 }}>{jugadorActivo}</div>
+                          <div style={{ fontSize:11, color:D.textSub }}>
+                            {trend > 0.5 ? "📈 Subiendo" : trend < -0.5 ? "📉 Bajando" : "➡️ Estable"}
+                            {" · " + puntos.length + " actualizaciones de HI"}
+                          </div>
+                        </div>
+                        <div style={{ textAlign:"right" }}>
+                          <div style={{ fontSize:28, fontWeight:900, color:D.gold }}>{fmt1(current)}</div>
+                          <div style={{ fontSize:10, color:D.textSub }}>{"Low: " + fmt1(low)}</div>
+                        </div>
+                      </div>
+                      <div style={{ overflowX:"auto" }}>
+                        <svg width={W} height={H} style={{ display:"block" }}>
+                          {/* Grid */}
+                          {[0,1,2,3,4].map(i => {
+                            const v = minV + (maxV - minV) * i / 4;
+                            return (
+                              <g key={i}>
+                                <line x1={padL} y1={py(v)} x2={W-padR} y2={py(v)} stroke={D.border} strokeWidth="1" />
+                                <text x={padL-4} y={py(v)+4} textAnchor="end" fontSize="9" fill={D.textSub}>{v.toFixed(0)}</text>
+                              </g>
+                            );
+                          })}
+                          {/* Low HI line */}
+                          {lowLine.length > 1 && (
+                            <polyline points={polyLow} fill="none" stroke={D.gold} strokeWidth="1" strokeDasharray="4,3" opacity="0.5" />
+                          )}
+                          {/* HI line */}
+                          <polyline points={polyline} fill="none" stroke="#4CAF50" strokeWidth="2.5" strokeLinejoin="round" />
+                          {/* Dots */}
+                          {puntos.map((p, i) => (
+                            <g key={i}>
+                              <circle cx={px(i)} cy={py(p.hi)} r="3.5" fill="#4CAF50" stroke={D.surface} strokeWidth="1.5" />
+                              {(i === 0 || i === puntos.length-1 || i % Math.max(1, Math.floor(puntos.length/5)) === 0) && (
+                                <text x={px(i)} y={H-padB+14} textAnchor="middle" fontSize="8" fill={D.textSub}>
+                                  {p.fecha ? p.fecha.split("/").slice(0,2).join("/") : i+1}
+                                </text>
+                              )}
+                            </g>
+                          ))}
+                          {/* Labels */}
+                          <text x={padL+4} y={padT-4} fontSize="9" fill="#4CAF50">HI WHS</text>
+                          <text x={W-padR-4} y={padT-4} textAnchor="end" fontSize="9" fill={D.gold} opacity="0.7">Low HI</text>
+                        </svg>
+                      </div>
+                      <div style={{ display:"flex", gap:12, marginTop:4, fontSize:10, color:D.textSub }}>
+                        <span style={{ display:"flex", alignItems:"center", gap:4 }}>
+                          <span style={{ display:"inline-block", width:16, height:2, background:"#4CAF50" }}></span>HI WHS
+                        </span>
+                        <span style={{ display:"flex", alignItems:"center", gap:4 }}>
+                          <span style={{ display:"inline-block", width:16, height:1, background:D.gold, opacity:0.7 }}></span>Low HI
+                        </span>
+                      </div>
+                    </Card>
+                    {/* Historial numérico */}
+                    <Card>
+                      <SLabel>Historial de HI</SLabel>
+                      <div style={{ overflowX:"auto" }}>
+                        <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11 }}>
+                          <thead>
+                            <tr style={{ borderBottom:"1px solid "+D.border }}>
+                              {["Fecha","Score","Diff 9h","Diff 18h","HI","Low HI","Cap"].map(h => (
+                                <td key={h} style={{ padding:"5px 4px", textAlign:"center", color:D.textSub, fontWeight:700, fontSize:10 }}>{h}</td>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {whsResult.records.slice().reverse().map((r, i) => (
+                              <tr key={i} style={{ borderBottom:"1px solid "+D.border+"44", background:i===0?D.goldDim+"22":"transparent" }}>
+                                <td style={{ padding:"4px", textAlign:"center", fontSize:10 }}>{r.fecha || "--"}</td>
+                                <td style={{ padding:"4px", textAlign:"center", fontWeight:700 }}>{r.scoreOriginal ?? "--"}</td>
+                                <td style={{ padding:"4px", textAlign:"center", color:D.textSub }}>{r.diff9 != null ? fmt1(r.diff9) : "--"}</td>
+                                <td style={{ padding:"4px", textAlign:"center" }}>{r.diff18 != null ? fmt1(r.diff18) : "--"}</td>
+                                <td style={{ padding:"4px", textAlign:"center", fontWeight:900, color:r.hiDespues != null ? D.gold : D.textDim }}>
+                                  {r.hiDespues != null ? fmt1(r.hiDespues) : "--"}
+                                </td>
+                                <td style={{ padding:"4px", textAlign:"center", color:D.textSub, fontSize:10 }}>{r.lowHI != null ? fmt1(r.lowHI) : "--"}</td>
+                                <td style={{ padding:"4px", textAlign:"center", fontSize:10, color:D.danger }}>
+                                  {r.softCapApplied ? "S" : r.hardCapApplied ? "H" : ""}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </Card>
+                  </>
+                );
+              })()}
+            </>
+          );
+        })()}
+
+        {/* ── TAB: CLASIFICACIÓN WHS ── */}
+        {tab === "comparativa" && !loading && (() => {
+          const ranking = jugadores
+            .map(j => {
+              const r = allResults[j.name];
+              return {
+                name: j.name,
+                hcActual: j.hc,
+                hi: r?.currentHI ?? null,
+                lowHI: r?.lowHI ?? null,
+                hiEstablecido: r?.hiEstablecido ?? false,
+                totalHoyos: r?.totalHoyosAcumulados ?? 0,
+                rondas: r?.records?.length ?? 0,
+              };
+            })
+            .sort((a, b) => {
+              // Primero los que tienen HI, ordenados por HI ascendente
+              if (a.hi != null && b.hi != null) return a.hi - b.hi;
+              if (a.hi != null) return -1;
+              if (b.hi != null) return 1;
+              return b.totalHoyos - a.totalHoyos;
+            });
+
+          return (
+            <Card>
+              <SLabel>🏆 Clasificación WHS — La Huerta</SLabel>
+              <div style={{ fontSize:10, color:D.textSub, marginBottom:10 }}>
+                Ordenado por Handicap Index WHS (menor = mejor). HC actual en gris.
+              </div>
+              {ranking.map((p, pos) => (
+                <div key={p.name} style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 0", borderBottom:"1px solid "+D.border }}>
+                  <div style={{ width:24, height:24, borderRadius:"50%",
+                    background: p.hi != null ? (pos===0?D.goldDim:D.surface) : "transparent",
+                    border:"1px solid "+(p.hi != null ? (pos===0?D.gold:D.border) : D.border),
+                    display:"flex", alignItems:"center", justifyContent:"center",
+                    fontSize:11, fontWeight:900, color:pos===0?D.gold:D.textSub }}>
+                    {p.hi != null ? pos+1 : "-"}
+                  </div>
+                  <Avatar name={p.name} id={p.name} size={30} />
+                  <div style={{ flex:1 }}>
+                    <div style={{ fontSize:13, fontWeight:700 }}>{p.name}</div>
+                    <div style={{ fontSize:10, color:D.textSub }}>
+                      {p.hiEstablecido
+                        ? ("HC app: " + p.hcActual + " · Low WHS: " + (p.lowHI != null ? fmt1(p.lowHI) : "--") + " · " + p.rondas + " rondas")
+                        : ("Acumulando: " + p.totalHoyos + "/54 hoyos")}
+                    </div>
+                  </div>
+                  <div style={{ textAlign:"right" }}>
+                    {p.hi != null ? (
+                      <>
+                        <div style={{ fontSize:20, fontWeight:900, color:pos===0?D.gold:"#4CAF50" }}>{fmt1(p.hi)}</div>
+                        <div style={{ fontSize:9, color:D.textSub }}>HI WHS</div>
+                      </>
+                    ) : (
+                      <div style={{ fontSize:11, color:D.textDim }}>Sin HI</div>
+                    )}
+                  </div>
+                  {p.hi != null && Math.abs(p.hi - p.hcActual) > 1 && (
+                    <div style={{ fontSize:9, padding:"2px 6px", borderRadius:8, background: p.hi > p.hcActual ? D.redBg : "#1A2A1A", color: p.hi > p.hcActual ? D.danger : "#4CAF50", fontWeight:700 }}>
+                      {p.hi > p.hcActual ? "+" : ""}{(p.hi - p.hcActual).toFixed(1)}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </Card>
+          );
+        })()}
+
       </div>
     </div>
   );
