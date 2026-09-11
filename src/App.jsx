@@ -3881,6 +3881,28 @@ function AdminApp({ onExit, torneoConfig = null }) {
     return () => unsub();
   }, []);
 
+  // Cargar HI WHS para todos los jugadores
+  const [whsHIMap, setWhsHIMap] = useState({});
+  useEffect(() => {
+    get(ref(db, "historial")).then(snap => {
+      if (!snap.exists()) return;
+      const rondas = Object.values(snap.val());
+      // Obtener todos los nombres únicos
+      const nombres = [...new Set(rondas.flatMap(r => r.playerNames || []))];
+      const hiMap = {};
+      nombres.forEach(nombre => {
+        const result = whs_resumenJugador(nombre, rondas);
+        hiMap[nombre] = {
+          hi: result.currentHI,
+          lowHI: result.lowHI,
+          hiEstablecido: result.hiEstablecido,
+          totalHoyos: result.totalHoyosAcumulados,
+        };
+      });
+      setWhsHIMap(hiMap);
+    }).catch(() => {});
+  }, []);
+
   // Check localStorage for saved ronda
   useEffect(() => {
     try {
@@ -4454,6 +4476,27 @@ function AdminApp({ onExit, torneoConfig = null }) {
       </div>
       <div style={{ padding:"12px 12px" }}>
         <TabBar tabs={[{key:"dir",label:"👥 Jugadores"},{key:"hist",label:"📋 Historial"},{key:"sel",label:"⛳ Nueva ronda"}]} active="dir" onChange={k => { if(k==="sel") setScreen("sel"); if(k==="hist") setScreen("hist"); }} />
+        {Object.keys(whsHIMap).length > 0 && (() => {
+          const conHI = Object.values(whsHIMap).filter(w => w.hiEstablecido && w.hi != null);
+          const sinHI = Object.values(whsHIMap).filter(w => !w.hiEstablecido);
+          const difieren = dir.filter(p => {
+            const w = whsHIMap[p.name];
+            return w?.hiEstablecido && w.hi != null && Math.abs(w.hi - p.hc) > 1;
+          });
+          return (
+            <div style={{ background:"#1A2A1A", border:"1px solid #4CAF5044", borderRadius:10, padding:"10px 12px", marginBottom:10 }}>
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:6 }}>
+                <div style={{ fontSize:11, fontWeight:700, color:"#4CAF50" }}>WHS Handicap Engine</div>
+                <div style={{ fontSize:10, color:D.textSub }}>{conHI.length} con HI · {sinHI.length} en progreso</div>
+              </div>
+              {difieren.length > 0 && (
+                <div style={{ fontSize:10, color:"#DDAA00" }}>
+                  {"⚠ " + difieren.length + " jugador" + (difieren.length>1?"es":"") + " con diferencia HC actual vs WHS HI"}
+                </div>
+              )}
+            </div>
+          );
+        })()}
         {torneoConfig && (
           <div style={{ background:D.goldDim, border:`1px solid ${D.gold}`, borderRadius:12, padding:"12px 16px", marginBottom:12 }}>
             <div style={{ fontSize:13, fontWeight:700, color:D.gold, marginBottom:4 }}>🏆 Modo Torneo</div>
@@ -4494,14 +4537,46 @@ function AdminApp({ onExit, torneoConfig = null }) {
                     <span style={{ fontSize:11, color:D.textSub }}>Enter para guardar</span>
                   </div>
                 ) : (
-                  <div style={{ fontSize:11, color:D.gold, marginTop:1, cursor:"pointer" }} onClick={() => setEditingHC(p.id)}>
-                    Handicap {p.hc} <span style={{ color:D.textDim, fontSize:10 }}>· toca para editar</span>
+                  <div style={{ display:"flex", alignItems:"center", gap:8, marginTop:2, flexWrap:"wrap" }}>
+                    <div style={{ fontSize:11, color:D.gold, cursor:"pointer" }} onClick={() => setEditingHC(p.id)}>
+                      HC {p.hc} <span style={{ color:D.textDim, fontSize:10 }}>· toca para editar</span>
+                    </div>
+                    {whsHIMap[p.name] && (
+                      <div style={{ display:"flex", alignItems:"center", gap:4 }}>
+                        <div style={{ width:1, height:10, background:D.border }} />
+                        {whsHIMap[p.name].hiEstablecido && whsHIMap[p.name].hi != null ? (
+                          <div style={{ fontSize:11, color:"#4CAF50", fontWeight:700 }}>
+                            {"WHS " + whsHIMap[p.name].hi.toFixed(1)}
+                            {whsHIMap[p.name].lowHI != null && whsHIMap[p.name].lowHI < whsHIMap[p.name].hi && (
+                              <span style={{ fontSize:9, color:D.textSub }}>{" · Low " + whsHIMap[p.name].lowHI.toFixed(1)}</span>
+                            )}
+                          </div>
+                        ) : (
+                          <div style={{ fontSize:10, color:D.textSub }}>
+                            {"WHS: " + (whsHIMap[p.name].totalHoyos || 0) + "/54 hoyos"}
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
               <button onClick={() => setEditingHC(editingHC===p.id?null:p.id)} style={{ padding:"5px 10px", border:`1px solid ${editingHC===p.id?D.gold:D.border}`, borderRadius:8, background:editingHC===p.id?D.goldDim:"transparent", color:editingHC===p.id?D.gold:D.textSub, fontSize:11, cursor:"pointer" }}>
                 {editingHC===p.id ? "✓ Listo" : "Editar HC"}
               </button>
+              {/* Botón aplicar WHS HI si difiere del HC actual */}
+              {(() => {
+                const w = whsHIMap[p.name];
+                if (!w?.hiEstablecido || w.hi == null) return null;
+                const whsRound = Math.round(w.hi);
+                if (whsRound === p.hc) return null;
+                return (
+                  <button onClick={() => saveDir(dir.map(d=>d.id===p.id?{...d,hc:whsRound}:d))}
+                    style={{ padding:"5px 8px", border:"1px solid #4CAF5044", borderRadius:8, background:"#1A2A1A", color:"#4CAF50", fontSize:10, fontWeight:700, cursor:"pointer", whiteSpace:"nowrap" }}>
+                    {"→ WHS " + w.hi.toFixed(1)}
+                  </button>
+                );
+              })()}
               {confirmDelete===p.id ? (
                 <div style={{ display:"flex", alignItems:"center", gap:6 }}>
                   <span style={{ fontSize:11, color:D.danger, whiteSpace:"nowrap" }}>¿Eliminar?</span>
