@@ -2682,9 +2682,9 @@ export default function H19() {
 
 const WHS_CAMPO_CONFIG = {
   huerta: {
-    courseRating9:  54.9,
-    slopeRating9:   106,
-    par9:           29,
+    courseRating18: 54.9,   // CR oficial para 18 hoyos (campo de 9 jugado 2 veces)
+    courseRating9:  27.45,  // CR para 9 hoyos reales = 54.9 / 2
+    slopeRating9:   106,    // Slope (mismo para 9h y 18h)
     par18:          58,
     nHoles:         9,
     // Stroke Index oficial (18 hoyos). Fuente: configuracion oficial proporcionada.
