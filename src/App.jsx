@@ -3605,6 +3605,7 @@ function HandicapWHSScreen({ onExit, appStyle }) {
             });
 
           return (
+            <>
             <Card>
               <SLabel>🏆 Clasificación WHS — La Huerta</SLabel>
               <div style={{ fontSize:10, color:D.textSub, marginBottom:10 }}>
@@ -3670,6 +3671,7 @@ function HandicapWHSScreen({ onExit, appStyle }) {
             }} style={{ width:"100%", padding:"12px", border:"none", borderRadius:12, background:"#25D366", color:"#fff", fontSize:13, fontWeight:700, cursor:"pointer", marginTop:10 }}>
               💬 Compartir clasificación WHS
             </button>
+            </>
           );
         })()}
 
