@@ -1206,7 +1206,7 @@ function TorneoCrear({ onExit, onIniciarGrupo, appStyle }) {
           <Card>
             <SLabel>Jugadores del grupo {grupoActivo+1} ({grupoActualPlayers.length} seleccionados)</SLabel>
             {dir.length === 0 && <div style={{ textAlign:"center", color:D.textSub, padding:12, fontSize:13 }}>No hay jugadores en el directorio</div>}
-            {dir.map((p, idx) => {
+            {dir.slice().sort((a,b)=>a.name.localeCompare(b.name)).map((p, idx) => {
               const enEsteGrupo = grupoActualPlayers.find(pl=>pl.id===p.id);
               const enOtroGrupoIdx = playerEnGrupo(p);
               const enOtroGrupo = enOtroGrupoIdx !== -1 && enOtroGrupoIdx !== grupoActivo;
@@ -2326,7 +2326,7 @@ function JugadoresPanel(props) {
             Todos estan en la ronda
           </div>
         )}
-        {disponibles.map(p => (
+        {disponibles.slice().sort((a,b)=>a.name.localeCompare(b.name)).map(p => (
           <div key={p.id}
             onClick={() => onAgregar(p)}
             style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 0", borderBottom:"1px solid "+D.border, cursor:"pointer" }}>
@@ -3687,6 +3687,7 @@ function EstadisticasScreen({ onExit, appStyle }) {
   const [jugadorSel, setJugadorSel] = useState(null);
   const [nRondas, setNRondas] = useState(10);
   const [campoFiltro, setCampoFiltro] = useState("todos");
+  const [whsHI, setWhsHI] = useState(null); // HI WHS del jugador seleccionado
 
   useEffect(() => {
     const r = ref(db, "historial");
@@ -3780,7 +3781,16 @@ function EstadisticasScreen({ onExit, appStyle }) {
               <SLabel>Seleccionar jugador</SLabel>
               <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
                 {todosJugadores.map(n => (
-                  <button key={n} onClick={() => setJugadorSel(jugadorSel===n?null:n)}
+                  <button key={n} onClick={() => {
+                    const nuevo = jugadorSel===n ? null : n;
+                    setJugadorSel(nuevo);
+                    if (nuevo) {
+                      const res = whs_resumenJugador(nuevo, rondas);
+                      setWhsHI(res?.currentHI ?? null);
+                    } else {
+                      setWhsHI(null);
+                    }
+                  }}
                     style={{ padding:"7px 14px", border:"1px solid "+(jugadorSel===n?D.gold:D.border), borderRadius:20, background:jugadorSel===n?D.goldDim:"transparent", color:jugadorSel===n?D.gold:D.textSub, fontSize:12, fontWeight:jugadorSel===n?700:400, cursor:"pointer" }}>
                     {n}
                   </button>
@@ -3846,17 +3856,24 @@ function EstadisticasScreen({ onExit, appStyle }) {
                           <div style={{ fontSize:10, color:D.textSub, marginBottom:4 }}>HC actual</div>
                           <div style={{ fontSize:32, fontWeight:900, color:D.text }}>{stats.hcActual ?? "--"}</div>
                         </div>
-                        <div style={{ flex:1, background:D.goldDim, border:"1px solid "+D.gold+"44", borderRadius:10, padding:"12px", textAlign:"center" }}>
-                          <div style={{ fontSize:10, color:D.gold, marginBottom:4 }}>HC sugerido</div>
-                          <div style={{ fontSize:32, fontWeight:900, color:D.gold }}>{stats.hcSugerido ?? "--"}</div>
-                          <div style={{ fontSize:9, color:D.textSub, marginTop:2 }}>40% mejores rondas</div>
+                        <div style={{ flex:1, background:"#1A2A1A", border:"1px solid #4CAF5044", borderRadius:10, padding:"12px", textAlign:"center" }}>
+                          <div style={{ fontSize:10, color:"#4CAF50", marginBottom:4 }}>HI WHS</div>
+                          <div style={{ fontSize:32, fontWeight:900, color:"#4CAF50" }}>
+                            {whsHI != null ? whsHI.toFixed(1) : "--"}
+                          </div>
+                          <div style={{ fontSize:9, color:D.textSub, marginTop:2 }}>World Handicap System</div>
                         </div>
                       </div>
-                      {stats.hcSugerido !== null && stats.hcActual !== null && stats.hcSugerido !== stats.hcActual && (
+                      {whsHI != null && stats.hcActual != null && Math.abs(whsHI - stats.hcActual) > 0.5 && (
                         <div style={{ marginTop:8, padding:"8px 12px", background:D.surface, borderRadius:8, fontSize:12, color:D.textSub }}>
-                          {stats.hcSugerido < stats.hcActual
-                            ? "⬇️ Sugerimos bajar HC de "+stats.hcActual+" a "+stats.hcSugerido
-                            : "⬆️ Sugerimos subir HC de "+stats.hcActual+" a "+stats.hcSugerido}
+                          {whsHI < stats.hcActual
+                            ? "⬇️ WHS sugiere bajar HC de "+stats.hcActual+" a "+Math.round(whsHI)
+                            : "⬆️ WHS sugiere subir HC de "+stats.hcActual+" a "+Math.round(whsHI)}
+                        </div>
+                      )}
+                      {whsHI == null && (
+                        <div style={{ marginTop:8, padding:"8px 12px", background:D.surface, borderRadius:8, fontSize:11, color:D.textSub }}>
+                          HI WHS no establecido aún — se necesitan 54 hoyos en La Huerta
                         </div>
                       )}
                     </Card>
@@ -4775,7 +4792,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
         <Card>
           <SLabel>Miembros del grupo</SLabel>
           {dir.length===0 && <div style={{ textAlign:"center", color:D.textSub, padding:24, fontSize:13 }}>No hay jugadores aún</div>}
-          {dir.map((p, idx) => {
+          {dir.slice().sort((a,b)=>a.name.localeCompare(b.name)).map((p, idx) => {
             const ultimosNombres = new Set((historial[0]?.jugadores||[]).map(j=>j.name));
             const jugoUltima = ultimosNombres.has(p.name);
             return (
@@ -5250,7 +5267,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
               🏆 Premio <span style={{ color:D.gold, fontWeight:700 }}>{"$"+String(pot)}</span> · {n>=10?`1er ${"$"+String(Math.round(pot*0.6))} (60%) · 2do ${"$"+String(Math.round(pot*0.4))} (40%)`:"Todo para el 1er lugar"}
             </div>
           )}
-          {dir.map((p, idx) => (
+          {dir.slice().sort((a,b)=>a.name.localeCompare(b.name)).map((p, idx) => (
             <div key={p.id} onClick={() => toggleSel(p.id)} style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 0", borderBottom:idx<dir.length-1?`1px solid ${D.border}`:"none", cursor:"pointer", userSelect:"none" }}>
               <div style={{ width:22,height:22,borderRadius:6,border:`2px solid ${sel.has(p.id)?D.gold:D.border}`,background:sel.has(p.id)?D.goldDim:"transparent",color:D.gold,display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:700,flexShrink:0 }}>
                 {sel.has(p.id)?"✓":""}
@@ -5268,7 +5285,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
               <div style={{ flex:1 }}></div>
               {["Score","Marcas","Tarjetas"].map(o => <div key={o} style={{ width:56,textAlign:"center",fontSize:10,color:D.gold,fontWeight:700 }}>{o}</div>)}
             </div>
-            {dir.filter(p=>sel.has(p.id)).map(p => {
+            {dir.filter(p=>sel.has(p.id)).slice().sort((a,b)=>a.name.localeCompare(b.name)).map(p => {
               const opts = playerOpts[p.id] || {score:true,marcas:true,tarjetas:true};
               const toggle = (key) => setPlayerOpts(prev=>({...prev,[p.id]:{...opts,[key]:!opts[key]}}));
               return (
