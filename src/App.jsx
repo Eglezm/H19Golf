@@ -3304,7 +3304,7 @@ function HandicapWHSScreen({ onExit, appStyle }) {
           <Card>
             <SLabel>Jugador</SLabel>
             <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
-              {jugadores.map(j => (
+              {jugadores.slice().sort((a,b)=>a.name.localeCompare(b.name)).map(j => (
                 <button key={j.id||j.name} onClick={() => seleccionar(j.name)}
                   style={{ padding:"7px 14px", border:"1px solid "+(jugadorSel===j.name?D.gold:D.border), borderRadius:20, background:jugadorSel===j.name?D.goldDim:"transparent", color:jugadorSel===j.name?D.gold:D.textSub, fontSize:12, fontWeight:jugadorSel===j.name?700:400, cursor:"pointer" }}>
                   {j.name}
@@ -3444,7 +3444,7 @@ function HandicapWHSScreen({ onExit, appStyle }) {
                 <Card>
                   <SLabel>Seleccionar jugador</SLabel>
                   <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
-                    {jugadores.map(j => (
+                    {jugadores.slice().sort((a,b)=>a.name.localeCompare(b.name)).map(j => (
                       <button key={j.id||j.name} onClick={() => seleccionar(j.name)}
                         style={{ padding:"7px 14px", border:"1px solid "+(jugadorSel===j.name?D.gold:D.border), borderRadius:20, background:jugadorSel===j.name?D.goldDim:"transparent", color:jugadorSel===j.name?D.gold:D.textSub, fontSize:12, fontWeight:jugadorSel===j.name?700:400, cursor:"pointer" }}>
                         {j.name}
