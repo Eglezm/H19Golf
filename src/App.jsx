@@ -1054,6 +1054,53 @@ function TorneoCrear({ onExit, onIniciarGrupo, appStyle }) {
   const [creando, setCreando] = useState(false);
   const [dir, setDir] = useState([]);
   const [grupoActivo, setGrupoActivo] = useState(0);
+  // Grupos aleatorios
+  const [modoGrupos, setModoGrupos] = useState("manual"); // "manual" | "aleatorio"
+  const [selAleatorio, setSelAleatorio] = useState(new Set()); // jugadores seleccionados para sorteo
+  const [nGruposAleatorio, setNGruposAleatorio] = useState(3);
+  const [previewAleatorio, setPreviewAleatorio] = useState(null); // grupos generados para preview
+
+  // Fisher-Yates shuffle — sorteo verdaderamente aleatorio
+  const shuffleArray = (arr) => {
+    const a = [...arr];
+    for (let i = a.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [a[i], a[j]] = [a[j], a[i]];
+    }
+    return a;
+  };
+
+  // Distribuir jugadores en grupos equilibrados
+  const distribuirEnGrupos = (jugadores, nG) => {
+    const shuffled = shuffleArray(jugadores);
+    const base = Math.floor(shuffled.length / nG);
+    const extra = shuffled.length % nG; // primeros 'extra' grupos tienen uno más
+    const grupos = [];
+    let idx = 0;
+    for (let i = 0; i < nG; i++) {
+      const size = base + (i < extra ? 1 : 0);
+      grupos.push(shuffled.slice(idx, idx + size));
+      idx += size;
+    }
+    return grupos;
+  };
+
+  const generarPreview = () => {
+    const jugadores = dir.filter(p => selAleatorio.has(p.id));
+    if (jugadores.length < nGruposAleatorio) return;
+    const grupos = distribuirEnGrupos(jugadores, nGruposAleatorio);
+    setPreviewAleatorio(grupos.map((ps, i) => ({
+      nombre: `Grupo ${i+1}`, id: null,
+      players: ps, hoyoSalida: i+1,
+    })));
+  };
+
+  const confirmarAleatorio = () => {
+    if (!previewAleatorio) return;
+    setGrupos(previewAleatorio.map(g => ({ ...g })));
+    setModoGrupos("manual"); // pasa a vista manual para editar hoyos si quiere
+    setPreviewAleatorio(null);
+  };
 
   useEffect(() => {
     onValue(ref(db, "directorio"), snap => {
@@ -1161,6 +1208,7 @@ function TorneoCrear({ onExit, onIniciarGrupo, appStyle }) {
   // ── PASO 2: Definir grupos y asignar jugadores ──
   if (paso === 2) {
     const grupoActualPlayers = grupos[grupoActivo]?.players || [];
+    const totalJugadoresAsignados = [...new Set(grupos.flatMap(g => g.players.map(p=>p.id)))].length;
     return (
       <div style={appStyle}>
         <div style={{ background:D.surface, borderBottom:`1px solid ${D.border}`, padding:"14px 16px 12px", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
@@ -1168,6 +1216,127 @@ function TorneoCrear({ onExit, onIniciarGrupo, appStyle }) {
           <button onClick={() => setPaso(1)} style={{ fontSize:12, color:D.textSub, background:"none", border:`1px solid ${D.border}`, borderRadius:8, padding:"5px 10px", cursor:"pointer" }}>Atrás</button>
         </div>
         <div style={{ padding:"12px" }}>
+
+          {/* Selector de modo */}
+          <Card>
+            <SLabel>Forma de crear grupos</SLabel>
+            <div style={{ display:"flex", gap:8 }}>
+              {[["manual","✋ Manual"],["aleatorio","🎲 Grupos Aleatorios"]].map(([k,l]) => (
+                <button key={k} onClick={() => setModoGrupos(k)}
+                  style={{ flex:1, padding:"10px", border:`1px solid ${modoGrupos===k?D.gold:D.border}`, borderRadius:10, background:modoGrupos===k?D.goldDim:"transparent", color:modoGrupos===k?D.gold:D.textSub, fontSize:12, fontWeight:700, cursor:"pointer" }}>
+                  {l}
+                </button>
+              ))}
+            </div>
+          </Card>
+
+          {/* ── MODO ALEATORIO ── */}
+          {modoGrupos === "aleatorio" && (<>
+            <Card>
+              <SLabel>Seleccionar jugadores participantes</SLabel>
+              <div style={{ fontSize:11, color:D.textSub, marginBottom:8 }}>
+                {"Seleccionados: " + selAleatorio.size + " de " + dir.length}
+              </div>
+              <div style={{ display:"flex", gap:6, marginBottom:8 }}>
+                <button onClick={() => setSelAleatorio(new Set(dir.map(p=>p.id)))}
+                  style={{ fontSize:11, padding:"5px 10px", border:`1px solid ${D.gold}`, borderRadius:8, background:D.goldDim, color:D.gold, cursor:"pointer" }}>
+                  Todos
+                </button>
+                <button onClick={() => setSelAleatorio(new Set())}
+                  style={{ fontSize:11, padding:"5px 10px", border:`1px solid ${D.border}`, borderRadius:8, background:"transparent", color:D.textSub, cursor:"pointer" }}>
+                  Ninguno
+                </button>
+              </div>
+              <div style={{ maxHeight:240, overflowY:"auto" }}>
+                {dir.slice().sort((a,b)=>a.name.localeCompare(b.name)).map(p => {
+                  const sel = selAleatorio.has(p.id);
+                  return (
+                    <div key={p.id} onClick={() => {
+                      const s = new Set(selAleatorio);
+                      sel ? s.delete(p.id) : s.add(p.id);
+                      setSelAleatorio(s);
+                      setPreviewAleatorio(null);
+                    }} style={{ display:"flex", alignItems:"center", gap:10, padding:"8px 0", borderBottom:`1px solid ${D.border}`, cursor:"pointer" }}>
+                      <div style={{ width:22, height:22, borderRadius:6, border:`2px solid ${sel?D.gold:D.border}`, background:sel?D.goldDim:"transparent", display:"flex", alignItems:"center", justifyContent:"center", fontSize:12, color:D.gold, fontWeight:700 }}>
+                        {sel ? "✓" : ""}
+                      </div>
+                      <Avatar name={p.name} id={p.id} size={26} />
+                      <div style={{ flex:1, fontSize:13, fontWeight:600 }}>{p.name}</div>
+                      <div style={{ fontSize:11, color:D.textSub }}>HC {p.hc}</div>
+                    </div>
+                  );
+                })}
+              </div>
+            </Card>
+
+            {selAleatorio.size >= 2 && (
+              <Card>
+                <SLabel>Número de grupos</SLabel>
+                {selAleatorio.size < nGruposAleatorio && (
+                  <div style={{ padding:8, background:D.redBg, borderRadius:8, fontSize:11, color:D.danger, marginBottom:8 }}>
+                    ⚠️ No hay suficientes jugadores ({selAleatorio.size}) para {nGruposAleatorio} grupos
+                  </div>
+                )}
+                <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:12 }}>
+                  <button onClick={() => { setNGruposAleatorio(n=>Math.max(2,n-1)); setPreviewAleatorio(null); }}
+                    style={{ width:36,height:36,borderRadius:"50%",border:`1px solid ${D.border}`,background:D.surface,color:D.text,fontSize:20,cursor:"pointer",fontWeight:700 }}>-</button>
+                  <div style={{ flex:1, textAlign:"center" }}>
+                    <div style={{ fontSize:36, fontWeight:900, color:D.gold }}>{nGruposAleatorio}</div>
+                    <div style={{ fontSize:10, color:D.textSub }}>grupos</div>
+                  </div>
+                  <button onClick={() => { setNGruposAleatorio(n=>Math.min(selAleatorio.size,n+1)); setPreviewAleatorio(null); }}
+                    style={{ width:36,height:36,borderRadius:"50%",border:`1px solid ${D.gold}`,background:D.goldDim,color:D.gold,fontSize:20,cursor:"pointer",fontWeight:700 }}>+</button>
+                </div>
+                {/* Vista previa de distribución */}
+                <div style={{ background:D.surface, borderRadius:8, padding:"8px 12px", marginBottom:12, fontSize:11, color:D.textSub }}>
+                  {selAleatorio.size + " jugadores → " + nGruposAleatorio + " grupos"}
+                  {Array.from({length:nGruposAleatorio}).map((_,i) => {
+                    const base = Math.floor(selAleatorio.size/nGruposAleatorio);
+                    const extra = selAleatorio.size % nGruposAleatorio;
+                    const size = base + (i < extra ? 1 : 0);
+                    return <div key={i} style={{ color:D.text }}>{"Grupo "+(i+1)+" — "+size+" jugadores"}</div>;
+                  })}
+                </div>
+                <div style={{ display:"flex", gap:8 }}>
+                  <button onClick={generarPreview} disabled={selAleatorio.size < nGruposAleatorio}
+                    style={{ flex:1, padding:"10px", border:`1px solid ${D.gold}`, borderRadius:10, background:D.goldDim, color:D.gold, fontSize:13, fontWeight:700, cursor:"pointer", opacity:selAleatorio.size<nGruposAleatorio?0.5:1 }}>
+                    🎲 Sortear grupos
+                  </button>
+                </div>
+              </Card>
+            )}
+
+            {/* Preview del sorteo */}
+            {previewAleatorio && (
+              <Card style={{ border:`1px solid ${D.gold}44` }}>
+                <SLabel>Vista previa del sorteo</SLabel>
+                {previewAleatorio.map((g, i) => (
+                  <div key={i} style={{ padding:"8px 0", borderBottom:`1px solid ${D.border}` }}>
+                    <div style={{ fontSize:12, fontWeight:700, color:D.gold, marginBottom:4 }}>
+                      {g.nombre} — {g.players.length} jugadores
+                    </div>
+                    {g.players.map(p => (
+                      <div key={p.id} style={{ fontSize:11, color:D.textSub, paddingLeft:8 }}>
+                        {"• "+p.name+" (HC "+p.hc+")"}
+                      </div>
+                    ))}
+                  </div>
+                ))}
+                <div style={{ display:"flex", gap:8, marginTop:10 }}>
+                  <button onClick={generarPreview}
+                    style={{ flex:1, padding:"10px", border:`1px solid ${D.border}`, borderRadius:10, background:"transparent", color:D.textSub, fontSize:12, cursor:"pointer" }}>
+                    🔄 Volver a sortear
+                  </button>
+                  <button onClick={confirmarAleatorio}
+                    style={{ flex:1, padding:"10px", border:"none", borderRadius:10, background:D.gold, color:"#000", fontSize:12, fontWeight:700, cursor:"pointer" }}>
+                    ✓ Confirmar sorteo
+                  </button>
+                </div>
+              </Card>
+            )}
+          </>)}
+          {/* ── MODO MANUAL ── */}
+          {modoGrupos === "manual" && (<>
           {/* Tabs de grupos */}
           <div style={{ display:"flex", gap:6, marginBottom:12, overflowX:"auto" }}>
             {grupos.map((g, i) => (
@@ -1230,6 +1399,14 @@ function TorneoCrear({ onExit, onIniciarGrupo, appStyle }) {
           <Btn onClick={crearTorneo} disabled={creando || grupos.some(g=>g.players.length < 2)}>
             {creando ? "Creando..." : grupos.some(g=>g.players.length < 2) ? "Cada grupo necesita al menos 2 jugadores" : `🏆 Crear torneo con ${grupos.length} grupos`}
           </Btn>
+          </>)}
+
+          {/* Botón crear torneo siempre visible cuando hay grupos válidos */}
+          {modoGrupos === "aleatorio" && grupos.length >= 2 && !grupos.some(g=>g.players.length < 2) && (
+            <Btn onClick={crearTorneo} disabled={creando}>
+              {creando ? "Creando..." : `🏆 Crear torneo con ${grupos.length} grupos`}
+            </Btn>
+          )}
         </div>
       </div>
     );
@@ -2093,6 +2270,8 @@ function TorneoSpectator({ torneoId, appStyle, isAdmin = false }) {
 function TorneoCodigosView({ torneoAdmin, onExit, appStyle }) {
   const [grupos, setGrupos] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [cambioHoyo, setCambioHoyo] = useState(null); // { grupoId, hoyoActual, hoyoNuevo }
+  const [guardandoHoyo, setGuardandoHoyo] = useState(false);
 
   const cargarGrupos = () => {
     get(ref(db, `torneos/${torneoAdmin.torneoId}`)).then(snap => {
@@ -2116,10 +2295,31 @@ function TorneoCodigosView({ torneoAdmin, onExit, appStyle }) {
 
   useEffect(() => {
     cargarGrupos();
-    // Recargar cada 30 segundos para ver jugadores que van entrando
     const interval = setInterval(cargarGrupos, 30000);
     return () => clearInterval(interval);
   }, [torneoAdmin.torneoId]);
+
+  const cambiarHoyoSalida = async (grupoId, nuevoHoyo) => {
+    setGuardandoHoyo(true);
+    try {
+      const tid = torneoAdmin.torneoId;
+      // Actualizar en gruposConfig (estructura del torneo)
+      const snap = await get(ref(db, `torneos/${tid}/gruposConfig`));
+      if (snap.exists()) {
+        const gc = Array.isArray(snap.val()) ? snap.val() : Object.values(snap.val());
+        const updated = gc.map(g => g.id === grupoId ? { ...g, hoyoSalida: nuevoHoyo } : g);
+        await set(ref(db, `torneos/${tid}/gruposConfig`), updated);
+      }
+      // Actualizar en grupos/{gid}/hoyoSalida si el grupo ya está activo
+      await set(ref(db, `torneos/${tid}/grupos/${grupoId}/hoyoSalida`), nuevoHoyo);
+      // Actualizar estado local sin recargar todo
+      setGrupos(gs => gs.map(g => g.id === grupoId ? { ...g, hoyoSalida: nuevoHoyo } : g));
+      setCambioHoyo(null);
+    } catch(e) {
+      console.error("Error cambiando hoyo:", e);
+    }
+    setGuardandoHoyo(false);
+  };
 
   const torneoUrl = `${window.location.origin}${window.location.pathname}?torneo=${torneoAdmin.torneoId}`;
 
@@ -2168,7 +2368,12 @@ function TorneoCodigosView({ torneoAdmin, onExit, appStyle }) {
               </div>
             </div>
             <div style={{ fontSize:30, fontWeight:900, letterSpacing:4, color:D.gold, textAlign:"center", padding:"10px 0" }}>{g.id}</div>
-            <div style={{ textAlign:"center", marginBottom:8 }}><span style={{ fontSize:12, color:D.gold, fontWeight:700, background:D.goldDim, padding:"3px 10px", borderRadius:20 }}>{"Sale del hoyo "+(g.hoyoSalida||1)}</span></div>
+            <div style={{ textAlign:"center", marginBottom:8 }}><span style={{ fontSize:12, color:D.gold, fontWeight:700, background:D.goldDim, padding:"3px 10px", borderRadius:20 }}>{"Sale del hoyo "+(g.hoyoSalida||1)}</span>
+              <button onClick={() => setCambioHoyo({ grupoId: g.id, hoyoActual: g.hoyoSalida||1, hoyoNuevo: g.hoyoSalida||1 })}
+                style={{ marginLeft:8, fontSize:11, color:D.textSub, background:"transparent", border:`1px solid ${D.border}`, borderRadius:8, padding:"2px 8px", cursor:"pointer" }}>
+                ✏️ Cambiar hoyo
+              </button>
+            </div>
             {/* Jugadores del grupo */}
             {(g.players||[]).length > 0 ? (
               <div style={{ marginBottom:10, background:D.surface, borderRadius:10, padding:"8px 10px" }}>
@@ -2202,6 +2407,36 @@ function TorneoCodigosView({ torneoAdmin, onExit, appStyle }) {
           </Card>
         ))}
       </div>
+
+      {/* Modal cambiar hoyo de salida */}
+      {cambioHoyo && (
+        <div style={{ position:"fixed", inset:0, background:"#000a", zIndex:1000, display:"flex", alignItems:"flex-end" }}>
+          <div style={{ background:D.card, borderRadius:"16px 16px 0 0", padding:20, width:"100%", maxHeight:"70vh", overflowY:"auto" }}>
+            <div style={{ fontSize:15, fontWeight:900, color:D.gold, marginBottom:4 }}>Cambiar hoyo de salida</div>
+            <div style={{ fontSize:11, color:D.textSub, marginBottom:16 }}>
+              {"Hoyo actual: " + cambioHoyo.hoyoActual + " → Selecciona el nuevo hoyo"}
+            </div>
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(6,1fr)", gap:8, marginBottom:16 }}>
+              {Array.from({length:18},(_,i)=>i+1).map(h => (
+                <button key={h} onClick={() => setCambioHoyo(c=>({...c,hoyoNuevo:h}))}
+                  style={{ padding:"10px 4px", border:"2px solid "+(cambioHoyo.hoyoNuevo===h?D.gold:D.border), borderRadius:10, background:cambioHoyo.hoyoNuevo===h?D.goldDim:"transparent", color:cambioHoyo.hoyoNuevo===h?D.gold:D.text, fontSize:13, fontWeight:cambioHoyo.hoyoNuevo===h?900:400, cursor:"pointer" }}>
+                  {h}
+                </button>
+              ))}
+            </div>
+            <div style={{ display:"flex", gap:8 }}>
+              <button onClick={() => setCambioHoyo(null)}
+                style={{ flex:1, padding:"12px", border:"1px solid "+D.border, borderRadius:10, background:"transparent", color:D.textSub, fontSize:13, cursor:"pointer" }}>
+                Cancelar
+              </button>
+              <button onClick={() => cambiarHoyoSalida(cambioHoyo.grupoId, cambioHoyo.hoyoNuevo)} disabled={guardandoHoyo}
+                style={{ flex:2, padding:"12px", border:"none", borderRadius:10, background:D.gold, color:"#000", fontSize:13, fontWeight:700, cursor:"pointer", opacity:guardandoHoyo?0.7:1 }}>
+                {guardandoHoyo ? "Guardando..." : "Cambiar al hoyo " + cambioHoyo.hoyoNuevo}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
