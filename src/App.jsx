@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import React, { useState, useEffect } from "react";
 import { initializeApp } from "firebase/app";
 import { getDatabase, ref, set, onValue, remove, get } from "firebase/database";
 
@@ -1767,6 +1767,28 @@ function CerrarTorneoPanel({ torneoId, torneo, grupos, allPlayers, ranked, pars,
 }
 
 // ─── TORNEO: SPECTATOR ────────────────────────────────
+// ─── ERROR BOUNDARY ────────────────────────────────
+class ErrorBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { error: null }; }
+  static getDerivedStateFromError(e) { return { error: e }; }
+  componentDidCatch(e) { console.error("ErrorBoundary:", e); }
+  render() {
+    if (this.state.error) return (
+      <div style={{ padding:24, textAlign:"center" }}>
+        <div style={{ fontSize:28, marginBottom:8 }}>⚠️</div>
+        <div style={{ color:"#C62828", fontWeight:700, marginBottom:8 }}>Error en la aplicación</div>
+        <div style={{ fontSize:11, color:"#666", background:"#f5f5f5", padding:12, borderRadius:8, textAlign:"left", wordBreak:"break-all", marginBottom:12 }}>
+          {this.state.error.message || String(this.state.error)}
+        </div>
+        <button onClick={() => window.location.reload()} style={{ padding:"10px 20px", background:"#1A5C24", color:"#fff", border:"none", borderRadius:8, cursor:"pointer", fontWeight:700 }}>
+          🔄 Recargar
+        </button>
+      </div>
+    );
+    return this.props.children;
+  }
+}
+
 function TorneoSpectator({ torneoId, appStyle, isAdmin = false }) {
   const [torneo, setTorneo] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -2855,7 +2877,7 @@ export default function H19() {
     );
   }
 
-  if (mode === "torneo-spectator" && rondaId) return <TorneoSpectator torneoId={rondaId} appStyle={appStyle} isAdmin={torneoIsAdmin} />;
+  if (mode === "torneo-spectator" && rondaId) return <ErrorBoundary><TorneoSpectator torneoId={rondaId} appStyle={appStyle} isAdmin={torneoIsAdmin} /></ErrorBoundary>;
 
   if (mode === "pin") {
     return (
