@@ -1805,14 +1805,16 @@ function TorneoSpectator({ torneoId, appStyle, isAdmin = false }) {
 
   // Combinar todos los grupos
   const grupos = Object.entries(torneo.grupos || {});
-  const pars = (CAMPOS[torneo.campo]?.pares || []).slice(0, torneo.nHoles);
+  const campoConfig = CAMPOS[torneo.campo] || CAMPOS["huerta"] || { pares: Array(9).fill(3) };
+  const nHolesSafe = torneo.nHoles || 9;
+  const pars = (campoConfig.pares || Array(nHolesSafe).fill(3)).slice(0, nHolesSafe);
   const parTotal = pars.reduce((a,b)=>a+b,0);
 
   // Todos los jugadores de todos los grupos con su grupo de origen
   const allPlayers = grupos.flatMap(([gid, g]) => {
+    if (!g || !g.players) return [];
     const gPlayers = Array.isArray(g.players) ? g.players : Object.values(g.players||{});
     const gScoresRaw = Array.isArray(g.scores) ? g.scores : Object.values(g.scores||{});
-    // hoyoSalida: del grupo en Firebase, o del gruposConfig del torneo
     const grupoConfig = torneo.gruposConfig
       ? (Array.isArray(torneo.gruposConfig) ? torneo.gruposConfig : Object.values(torneo.gruposConfig)).find(gc => gc.id === gid)
       : null;
@@ -1820,7 +1822,7 @@ function TorneoSpectator({ torneoId, appStyle, isAdmin = false }) {
     return gPlayers.map((p, pi) => {
       const rowRaw = gScoresRaw[pi];
       const row = Array.isArray(rowRaw) ? rowRaw : Object.values(rowRaw||{});
-      const scores = Array(torneo.nHoles).fill(null).map((_, h) => row[h] ?? null);
+      const scores = Array(nHolesSafe).fill(null).map((_, h) => row[h] ?? null);
       return { ...p, grupoId:gid, grupoNombre: g.nombre || `Grupo ${gid.slice(-3)}`, scores, marcas: g.marcas, tarjetas: g.tarjetas, grupoStatus: g.status, hoyoSalida };
     });
   });
@@ -1931,9 +1933,10 @@ function TorneoSpectator({ torneoId, appStyle, isAdmin = false }) {
 
   const rankedWithMoney = ranked.map((p) => {
     const scoreM = moneyGlobal[allPlayers.findIndex(ap => ap.grupoId===p.grupoId && ap.id===p.id)] || 0;
-    const gPlayers = Array.isArray(torneo.grupos[p.grupoId]?.players)
-      ? torneo.grupos[p.grupoId].players
-      : Object.values(torneo.grupos[p.grupoId]?.players||{});
+    const grupoData = torneo.grupos?.[p.grupoId];
+    const gPlayers = grupoData
+      ? (Array.isArray(grupoData.players) ? grupoData.players : Object.values(grupoData.players||{}))
+      : [];
     const piInGrupo = gPlayers.findIndex(gp => gp.id === p.id);
     const marcasM = marcasMoneyMap[`${p.grupoId}-${piInGrupo}`] || 0;
     // Tarjetas locales del grupo (excluyendo peor score global que se calcula aparte)
@@ -1944,6 +1947,14 @@ function TorneoSpectator({ torneoId, appStyle, isAdmin = false }) {
     const castigoM = gananciaXCastigoGlobal; // ganancia por tarjeta de abandono
     return { ...p, scoreM, marcasM, tarjetasM, castigoM, totalM: scoreM + marcasM + tarjetasM + castigoM };
   });
+
+  if (!pars || pars.length === 0) return (
+    <div style={{ ...appStyle, display:"flex", alignItems:"center", justifyContent:"center", flexDirection:"column", gap:12, padding:24 }}>
+      <div style={{ fontSize:32 }}>⚠️</div>
+      <div style={{ color:D.danger, fontWeight:700 }}>Error cargando configuración del torneo</div>
+      <div style={{ color:D.textSub, fontSize:12, textAlign:"center" }}>Campo: {torneo.campo || "desconocido"} · Hoyos: {torneo.nHoles || "?"}</div>
+    </div>
+  );
 
   return (
     <div style={appStyle}>
@@ -4397,17 +4408,20 @@ function AdminApp({ onExit, torneoConfig = null }) {
     get(ref(db, "historial")).then(snap => {
       if (!snap.exists()) return;
       const rondas = Object.values(snap.val());
-      // Obtener todos los nombres únicos
       const nombres = [...new Set(rondas.flatMap(r => r.playerNames || []))];
       const hiMap = {};
       nombres.forEach(nombre => {
-        const result = whs_resumenJugador(nombre, rondas);
-        hiMap[nombre] = {
-          hi: result.currentHI,
-          lowHI: result.lowHI,
-          hiEstablecido: result.hiEstablecido,
-          totalHoyos: result.totalHoyosAcumulados,
-        };
+        try {
+          const result = whs_resumenJugador(nombre, rondas);
+          hiMap[nombre] = {
+            hi: result.currentHI,
+            lowHI: result.lowHI,
+            hiEstablecido: result.hiEstablecido,
+            totalHoyos: result.totalHoyosAcumulados,
+          };
+        } catch(e) {
+          hiMap[nombre] = { hi: null, lowHI: null, hiEstablecido: false, totalHoyos: 0 };
+        }
       });
       setWhsHIMap(hiMap);
     }).catch(() => {});
