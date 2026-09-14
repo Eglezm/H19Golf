@@ -122,6 +122,14 @@ const emptyMarca = (n) => ({
 const emptyTarjetas = () => { const t = {}; TARJETAS.forEach(tj => { t[tj.key] = null; }); t["threeput_hole"] = null; t["doblepar_hole"] = null; return t; };
 
 // Firebase convierte arrays a objetos — normalizar al leer
+// Helper: Firebase puede devolver arrays como objetos {0:x,1:y} — siempre convertir
+const toArr = (x) => {
+  if (!x) return [];
+  if (Array.isArray(x)) return x;
+  if (typeof x === 'object') return Object.values(x);
+  return [];
+};
+
 const normalizeTarjetas = (t) => {
   if (!t) return emptyTarjetas();
   const result = { ...emptyTarjetas(), ...t };
@@ -635,8 +643,8 @@ function SpectatorView({ rondaId }) {
   const scores = Array.isArray(_scores) ? _scores : Object.values(_scores||{});
   // nHoles: de ronda activa, de historial, o inferir de pars
   const svNHoles = ronda.nHoles || histData?.nHoles || (pars ? (Array.isArray(pars)?pars:Object.values(pars)).length : 18);
-  const nets = players.map((p, i) => (scores[i]||[]).reduce((a,v)=>a+(v||0),0) - hcEf(p.hc, svNHoles));
-  const ranked = players.map((p, i) => ({ ...p, net:nets[i], gross:(scores[i]||[]).reduce((a,v)=>a+(v||0),0) })).sort((a,b)=>a.net-b.net);
+  const nets = players.map((p, i) => (toArr(scores[i])).reduce((a,v)=>a+(v||0),0) - hcEf(p.hc, svNHoles));
+  const ranked = players.map((p, i) => ({ ...p, net:nets[i], gross:(toArr(scores[i])).reduce((a,v)=>a+(v||0),0) })).sort((a,b)=>a.net-b.net);
   const campoNombre = CAMPOS[campo]?.nombre || campo;
 
   const medirDistancia = () => {
@@ -668,7 +676,7 @@ function SpectatorView({ rondaId }) {
   const liveMoney = (() => {
     if (!pars || !apuesta) return null;
     const fullSc = players.map((_, i) => pars.map((par, h) => {
-      const v = (scores[i]||[])[h];
+      const v = toArr(scores[i])[h];
       return v===null||v===undefined ? par : v;
     }));
     const r = calcMoney(players, fullSc, apuesta, 0, svNHoles);
@@ -922,7 +930,7 @@ function SpectatorView({ rondaId }) {
             const vsColor = (v) => v === null ? D.textDim : v < 0 ? D.success : v > 0 ? D.danger : D.text;
             const tablaData = players.map((pl, pi) => {
               const rowScores = scores[pi] || [];
-              const jugados = rowScores.filter(s => s !== null && s !== undefined);
+              const jugados = toArr(rowScores).filter(s => s !== null && s !== undefined);
               const total = jugados.length > 0 ? jugados.reduce((a,b)=>a+b,0) : null;
               const lastIdx = rowScores.reduce((last,s,i) => s!==null&&s!==undefined ? i+1 : last, 0);
               const parJugados = (pars||[]).slice(0, lastIdx).reduce((a,b)=>a+b,0);
@@ -1614,7 +1622,7 @@ function CerrarTorneoPanel({ torneoId, torneo, grupos, allPlayers, ranked, pars,
         const gScRaw = Array.isArray(g.scores)?g.scores:Object.values(g.scores||{});
         return gPs.map((p,pi) => {
           const rowRaw = gScRaw[pi];
-          const row = Array.isArray(rowRaw)?rowRaw:Object.values(rowRaw||{});
+          const row = toArr(rowRaw);
           const fullRow = pars.map((par,h)=>{ const v=row[h]; return (v===null||v===undefined)?par:v; });
           return { ...p, grupoId:gid, grupoNombre:g.nombre||`Grupo ${gid.slice(-3)}`,
             fullScores:fullRow, marcas:g.marcas, tarjetas:g.tarjetas };
@@ -1847,7 +1855,7 @@ function TorneoSpectator({ torneoId, appStyle, isAdmin = false }) {
     const hoyoSalida = g.hoyoSalida || grupoConfig?.hoyoSalida || 1;
     return gPlayers.map((p, pi) => {
       const rowRaw = gScoresRaw[pi];
-      const row = Array.isArray(rowRaw) ? rowRaw : Object.values(rowRaw||{});
+      const row = toArr(rowRaw);
       const scores = Array(nHolesSafe).fill(null).map((_, h) => row[h] ?? null);
       return { ...p, grupoId:gid, grupoNombre: g.nombre || `Grupo ${gid.slice(-3)}`, scores, marcas: g.marcas, tarjetas: g.tarjetas, grupoStatus: g.status, hoyoSalida };
     });
@@ -1859,7 +1867,7 @@ function TorneoSpectator({ torneoId, appStyle, isAdmin = false }) {
   const moneyColor = (n) => n > 0 ? D.success : n < 0 ? D.danger : D.textSub;
 
   const ranked = allPlayers.map(p => {
-    const jugados = p.scores.filter(s => s !== null && s !== undefined);
+    const jugados = toArr(p.scores).filter(s => s !== null && s !== undefined);
     const bruto = jugados.length > 0 ? jugados.reduce((a,b)=>a+b,0) : null;
     const lastIdx = p.scores.reduce((last,s,i) => s!==null&&s!==undefined ? i+1 : last, 0);
     const parJugados = pars.slice(0, lastIdx).reduce((a,b)=>a+b,0);
@@ -2138,7 +2146,7 @@ function TorneoSpectator({ torneoId, appStyle, isAdmin = false }) {
               {/* Score por jugador */}
               {gPlayers.map((p, pi) => {
                 const sc = gScores[pi] || [];
-                const jugados = sc.filter(s=>s!==null&&s!==undefined);
+                const jugados = toArr(sc).filter(s=>s!==null&&s!==undefined);
                 const bruto = jugados.length > 0 ? jugados.reduce((a,b)=>a+b,0) : null;
                 return (
                   <div key={pi} style={{ display:"flex", alignItems:"center", gap:8, padding:"7px 0", borderBottom:pi<gPlayers.length-1?`1px solid ${D.border}`:"none" }}>
@@ -4808,7 +4816,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
 
   const getDisplay = (pi, h) => scores[pi]?.[h]===null ? pars[h] : scores[pi]?.[h];
   const hcEf = (p) => nHoles <= 9 ? Math.ceil(p.hc/2) : p.hc;
-  const liveNets = players.map((p,i) => (scores[i]||[]).reduce((a,v,j)=>a+(v===null?pars[j]:v),0) - hcEf(p));
+  const liveNets = players.map((p,i) => (toArr(scores[i])).reduce((a,v,j)=>a+(v===null?pars[j]:v),0) - hcEf(p));
   const par = pars[hole] || 4;
   const n = sel.size, pot = apuesta * n;
 
@@ -5397,17 +5405,17 @@ function AdminApp({ onExit, torneoConfig = null }) {
                                       <thead>
                                         <tr>
                                           <td style={{ padding:"3px 4px", color:D.textDim, position:"sticky", left:0, background:D.bg }}>Par</td>
-                                          {rf.pars.map((par,h) => <td key={h} style={{ textAlign:"center", padding:"2px 2px", color:D.textDim }}>{par}</td>)}
+                                          {toArr(rf.pars).map((par,h) => <td key={h} style={{ textAlign:"center", padding:"2px 2px", color:D.textDim }}>{par}</td>)}
                                           <td style={{ textAlign:"center", padding:"2px 4px", color:D.textSub, fontWeight:700 }}>Tot</td>
                                         </tr>
                                       </thead>
                                       <tbody>
                                         {(rf.playerNames||[]).map((name,pi) => {
-                                          const row = rf.scoresPorHoyo[pi]||[];
+                                          const row = toArr(rf.scoresPorHoyo[pi]);
                                           return (
                                             <tr key={name} style={{ borderTop:`1px solid ${D.border}` }}>
                                               <td style={{ padding:"4px 4px", fontWeight:600, position:"sticky", left:0, background:D.bg, whiteSpace:"nowrap" }}>{name}</td>
-                                              {rf.pars.map((par,h) => <td key={h} style={{ textAlign:"center", padding:"2px 1px" }}><ScoreCell s={row[h]??null} par={par} size={18} /></td>)}
+                                              {toArr(rf.pars).map((par,h) => <td key={h} style={{ textAlign:"center", padding:"2px 1px" }}><ScoreCell s={row[h]??null} par={par} size={18} /></td>)}
                                               <td style={{ textAlign:"center", padding:"4px 4px", fontWeight:900, color:D.gold }}>{row.filter(s=>s!=null).reduce((a,b)=>a+b,0)||'-'}</td>
                                             </tr>
                                           );
@@ -5824,7 +5832,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
           const parTotal = pars.reduce((a,b)=>a+b,0);
           const tablaData = players.map((pl, pi) => {
             const rowScores = scores[pi];
-            const jugados = rowScores.filter(s => s !== null && s !== undefined);
+            const jugados = toArr(rowScores).filter(s => s !== null && s !== undefined);
             const total = jugados.reduce((a,b)=>a+b,0);
             const parJugados = pars.slice(0, rowScores.filter((s,i) => s!==null&&s!==undefined ? true : false).length > 0
               ? rowScores.reduce((last,s,i)=>s!==null&&s!==undefined?i+1:last,0) : 0).reduce((a,b)=>a+b,0);
@@ -5922,7 +5930,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
             <div style={{ width:40, textAlign:"center", fontSize:10, fontWeight:700, color:D.gold }}>NETO</div>
           </div>
           {players.map((p,i) => {
-            const jugados = (scores[i]||[]).filter(v => v !== null && v !== undefined);
+            const jugados = (toArr(scores[i])).filter(v => v !== null && v !== undefined);
             const bruto = jugados.length > 0 ? jugados.reduce((a,b)=>a+b,0) : null;
             const neto = bruto !== null ? bruto - hcEf(p.hc, nHoles) : null;
             return { name:p.name, id:p.id, bruto, hc:hcEf(p.hc, nHoles), hcReal:p.hc, neto };
