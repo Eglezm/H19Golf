@@ -1772,7 +1772,6 @@ function TorneoSpectator({ torneoId, appStyle, isAdmin = false }) {
   const [loading, setLoading] = useState(true);
   const [showSplash, setShowSplash] = useState(true);
   const [splashPhase, setSplashPhase] = useState(0);
-  const [renderError, setRenderError] = useState(null);
 
   useEffect(() => {
     const unsub = onValue(ref(db, `torneos/${torneoId}`), snap => {
@@ -1804,9 +1803,29 @@ function TorneoSpectator({ torneoId, appStyle, isAdmin = false }) {
     </div>
   );
 
-  // Combinar todos los grupos
+  // ── COMPUTAR DATOS ──
+  const grupos = Object.entries(torneo.grupos || {});
+  const campoConfig = CAMPOS[torneo.campo] || CAMPOS["huerta"] || { pares: Array(9).fill(3) };
+  const nHolesSafe = torneo.nHoles || 9;
+  const pars = (campoConfig.pares || Array(nHolesSafe).fill(3)).slice(0, nHolesSafe);
+  const parTotal = pars.reduce((a,b)=>a+b,0);
 
-  // Calcular netos y clasificación global
+  const allPlayers = grupos.flatMap(([gid, g]) => {
+    if (!g || !g.players) return [];
+    const gPlayers = Array.isArray(g.players) ? g.players : Object.values(g.players||{});
+    const gScoresRaw = Array.isArray(g.scores) ? g.scores : Object.values(g.scores||{});
+    const grupoConfig = torneo.gruposConfig
+      ? (Array.isArray(torneo.gruposConfig) ? torneo.gruposConfig : Object.values(torneo.gruposConfig)).find(gc => gc.id === gid)
+      : null;
+    const hoyoSalida = g.hoyoSalida || grupoConfig?.hoyoSalida || 1;
+    return gPlayers.map((p, pi) => {
+      const rowRaw = gScoresRaw[pi];
+      const row = Array.isArray(rowRaw) ? rowRaw : Object.values(rowRaw||{});
+      const scores = Array(nHolesSafe).fill(null).map((_, h) => row[h] ?? null);
+      return { ...p, grupoId:gid, grupoNombre: g.nombre || `Grupo ${gid.slice(-3)}`, scores, marcas: g.marcas, tarjetas: g.tarjetas, grupoStatus: g.status, hoyoSalida };
+    });
+  });
+
   const fmtVs = (v) => v === null ? "-" : v === 0 ? "E" : v > 0 ? `+${v}` : `${v}`;
   const vsColor = (v) => v === null ? D.textDim : v < 0 ? D.success : v > 0 ? D.danger : D.text;
   const fmtMoney = (n) => n >= 0 ? `+$${n}` : `-$${Math.abs(n)}`;
@@ -1818,7 +1837,7 @@ function TorneoSpectator({ torneoId, appStyle, isAdmin = false }) {
     const lastIdx = p.scores.reduce((last,s,i) => s!==null&&s!==undefined ? i+1 : last, 0);
     const parJugados = pars.slice(0, lastIdx).reduce((a,b)=>a+b,0);
     const vsPar = bruto !== null ? bruto - parJugados : null;
-    const vsParHC = vsPar !== null ? vsPar - hcEf(p.hc, torneo.nHoles||18) : null;
+    const vsParHC = vsPar !== null ? vsPar - hcEf(p.hc, nHolesSafe) : null;
     return { ...p, bruto, vsPar, vsParHC };
   }).sort((a,b) => {
     if (a.vsParHC===null && b.vsParHC===null) return 0;
@@ -1827,7 +1846,6 @@ function TorneoSpectator({ torneoId, appStyle, isAdmin = false }) {
     return a.vsParHC - b.vsParHC;
   });
 
-  // Recolectar todos los abandonos de todos los grupos
   const todosAbandonos = [];
   grupos.forEach(([gid, g]) => {
     const abs = g.abandonos ? (Array.isArray(g.abandonos) ? g.abandonos : Object.values(g.abandonos)) : [];
@@ -1837,17 +1855,15 @@ function TorneoSpectator({ torneoId, appStyle, isAdmin = false }) {
   const totalTarjetaAbandonos = todosAbandonos.filter(a=>a.conCastigo).reduce((a,c)=>a+c.tarjetaPago,0);
   const gananciaXCastigoGlobal = allPlayers.length > 0 ? Math.round(totalTarjetaAbandonos / allPlayers.length) : 0;
 
-  // Calcular dinero global (score) incluyendo el pozo de abandonos
   const playersForCalc = allPlayers.map(p => ({ ...p, opts:{score:true,marcas:true,tarjetas:true} }));
   const fullScoresForCalc = allPlayers.map(p => pars.map((par,h) => {
     const v = p.scores[h];
     return (v===null||v===undefined) ? par : v;
   }));
   const moneyGlobal = allPlayers.length >= 2
-    ? calcMoney(playersForCalc, fullScoresForCalc, torneo.apuesta || 50, extraPotAbandonos, torneo.nHoles||18).money
+    ? calcMoney(playersForCalc, fullScoresForCalc, torneo.apuesta || 50, extraPotAbandonos, nHolesSafe).money
     : allPlayers.map(() => 0);
 
-  // Marcas y tarjetas por grupo (excluyendo peorscore que se calcula globalmente)
   const TARJETAS_SIN_PEORSCORE = TARJETAS.filter(t => t.key !== "peorscore");
   const marcasMoneyMap = {};
   const tarjetasMoneyMap = {};
@@ -1883,100 +1899,35 @@ function TorneoSpectator({ torneoId, appStyle, isAdmin = false }) {
     }
   });
 
-  // ── PEOR SCORE GLOBAL: aplica sobre todos los jugadores del torneo ──
-  // Identificar quién(es) tienen el peor VS Par-HC entre TODOS los jugadores
   const conScoreGlobal = ranked.filter(p => p.vsParHC !== null);
   const peorVsParHCGlobal = conScoreGlobal.length > 0 ? Math.max(...conScoreGlobal.map(p => p.vsParHC)) : null;
-  const peoresGlobal = peorVsParHCGlobal !== null
-    ? conScoreGlobal.filter(p => p.vsParHC === peorVsParHCGlobal)
-    : [];
+  const peoresGlobal = peorVsParHCGlobal !== null ? conScoreGlobal.filter(p => p.vsParHC === peorVsParHCGlobal) : [];
   const totalJugadoresConScore = conScoreGlobal.length;
-  const peorScoreMoneyGlobal = {}; // key: `${grupoId}-${id}`
+  const peorScoreMoneyGlobal = {};
   if (peoresGlobal.length > 0 && totalJugadoresConScore > peoresGlobal.length) {
     const tv = torneo.tarjetaVal || 10;
     peoresGlobal.forEach(peor => {
-      // El peor paga a todos los demás (fracción si hay empate)
       const pagoTotal = (totalJugadoresConScore - peoresGlobal.length) * tv;
       peorScoreMoneyGlobal[`${peor.grupoId}-${peor.id}`] = -(pagoTotal / peoresGlobal.length);
     });
-    // Los que no son el peor cobran
     conScoreGlobal.forEach(p => {
       const key = `${p.grupoId}-${p.id}`;
-      if (!peorScoreMoneyGlobal[key]) {
-        peorScoreMoneyGlobal[key] = tv; // cobra $tarjetaVal de cada peor (fraccionado)
-        // Ajuste: si hay varios peores, cada uno paga tv/peoresGlobal.length
-        peorScoreMoneyGlobal[key] = (tv * peoresGlobal.length) / peoresGlobal.length; // = tv
-      }
+      if (!peorScoreMoneyGlobal[key]) peorScoreMoneyGlobal[key] = tv;
     });
   }
 
   const rankedWithMoney = ranked.map((p) => {
     const scoreM = moneyGlobal[allPlayers.findIndex(ap => ap.grupoId===p.grupoId && ap.id===p.id)] || 0;
     const grupoData = torneo.grupos?.[p.grupoId];
-    const gPlayers = grupoData
-      ? (Array.isArray(grupoData.players) ? grupoData.players : Object.values(grupoData.players||{}))
-      : [];
+    const gPlayers = grupoData ? (Array.isArray(grupoData.players) ? grupoData.players : Object.values(grupoData.players||{})) : [];
     const piInGrupo = gPlayers.findIndex(gp => gp.id === p.id);
     const marcasM = marcasMoneyMap[`${p.grupoId}-${piInGrupo}`] || 0;
-    // Tarjetas locales del grupo (excluyendo peor score global que se calcula aparte)
     const tarjetasLocalesM = tarjetasMoneyMap[`${p.grupoId}-${piInGrupo}`] || 0;
-    // Peor score global
     const peorM = peorScoreMoneyGlobal[`${p.grupoId}-${p.id}`] || 0;
     const tarjetasM = tarjetasLocalesM + peorM;
-    const castigoM = gananciaXCastigoGlobal; // ganancia por tarjeta de abandono
+    const castigoM = gananciaXCastigoGlobal;
     return { ...p, scoreM, marcasM, tarjetasM, castigoM, totalM: scoreM + marcasM + tarjetasM + castigoM };
   });
-
-  if (renderError) return (
-    <div style={{ ...appStyle, padding:24, display:"flex", flexDirection:"column", gap:12, alignItems:"center", justifyContent:"center" }}>
-      <div style={{ fontSize:28 }}>⚠️</div>
-      <div style={{ color:D.danger, fontWeight:700, fontSize:14 }}>Error al cargar el torneo</div>
-      <div style={{ color:D.textSub, fontSize:11, textAlign:"center", background:D.surface, padding:12, borderRadius:8, maxWidth:300, wordBreak:"break-all" }}>
-        {renderError}
-      </div>
-      <button onClick={() => window.location.reload()} style={{ padding:"10px 20px", border:`1px solid ${D.gold}`, borderRadius:10, background:D.goldDim, color:D.gold, cursor:"pointer", fontWeight:700 }}>
-        🔄 Recargar
-      </button>
-    </div>
-  );
-
-  // Wrap all render logic in try-catch
-  let grupos, campoConfig, nHolesSafe, pars, parTotal, allPlayers;
-  try {
-    grupos = Object.entries(torneo.grupos || {});
-    campoConfig = CAMPOS[torneo.campo] || CAMPOS["huerta"] || { pares: Array(9).fill(3) };
-    nHolesSafe = torneo.nHoles || 9;
-    pars = (campoConfig.pares || Array(nHolesSafe).fill(3)).slice(0, nHolesSafe);
-    parTotal = pars.reduce((a,b)=>a+b,0);
-    allPlayers = grupos.flatMap(([gid, g]) => {
-      if (!g || !g.players) return [];
-      const gPlayers = Array.isArray(g.players) ? g.players : Object.values(g.players||{});
-      const gScoresRaw = Array.isArray(g.scores) ? g.scores : Object.values(g.scores||{});
-      const grupoConfig = torneo.gruposConfig
-        ? (Array.isArray(torneo.gruposConfig) ? torneo.gruposConfig : Object.values(torneo.gruposConfig)).find(gc => gc.id === gid)
-        : null;
-      const hoyoSalida = g.hoyoSalida || grupoConfig?.hoyoSalida || 1;
-      return gPlayers.map((p, pi) => {
-        const rowRaw = gScoresRaw[pi];
-        const row = Array.isArray(rowRaw) ? rowRaw : Object.values(rowRaw||{});
-        const scores = Array(nHolesSafe).fill(null).map((_, h) => row[h] ?? null);
-        return { ...p, grupoId:gid, grupoNombre: g.nombre || `Grupo ${gid.slice(-3)}`, scores, marcas: g.marcas, tarjetas: g.tarjetas, grupoStatus: g.status, hoyoSalida };
-      });
-    });
-  } catch(e) {
-    return (
-      <div style={{ ...appStyle, padding:24, display:"flex", flexDirection:"column", gap:12, alignItems:"center", justifyContent:"center" }}>
-        <div style={{ fontSize:28 }}>⚠️</div>
-        <div style={{ color:D.danger, fontWeight:700 }}>Error procesando datos del torneo</div>
-        <div style={{ color:D.textSub, fontSize:11, background:D.surface, padding:12, borderRadius:8, maxWidth:300, wordBreak:"break-all" }}>
-          {e.message || String(e)}
-        </div>
-        <button onClick={() => window.location.reload()} style={{ padding:"10px 20px", border:`1px solid ${D.gold}`, borderRadius:10, background:D.goldDim, color:D.gold, cursor:"pointer", fontWeight:700 }}>
-          🔄 Recargar
-        </button>
-      </div>
-    );
-  }
 
   return (
     <div style={appStyle}>
