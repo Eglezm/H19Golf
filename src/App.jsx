@@ -932,8 +932,8 @@ function SpectatorView({ rondaId }) {
               const rowScores = scores[pi] || [];
               const jugados = toArr(rowScores).filter(s => s !== null && s !== undefined);
               const total = jugados.length > 0 ? jugados.reduce((a,b)=>a+b,0) : null;
-              const lastIdx = rowScores.reduce((last,s,i) => s!==null&&s!==undefined ? i+1 : last, 0);
-              const parJugados = (pars||[]).slice(0, lastIdx).reduce((a,b)=>a+b,0);
+              // Solo sumar par de hoyos jugados (no null)
+              const parJugados = (rowScores||[]).reduce((sum,s,i) => s!==null&&s!==undefined ? sum+((pars||[])[i]||0) : sum, 0);
               const vsPar = total !== null ? total - parJugados : null;
               const vsParHC = vsPar !== null ? vsPar - hcEf(pl.hc, svNHoles) : null;
               return { pl, pi, rowScores, total, vsPar, vsParHC };
@@ -1869,8 +1869,8 @@ function TorneoSpectator({ torneoId, appStyle, isAdmin = false }) {
   const ranked = allPlayers.map(p => {
     const jugados = toArr(p.scores).filter(s => s !== null && s !== undefined);
     const bruto = jugados.length > 0 ? jugados.reduce((a,b)=>a+b,0) : null;
-    const lastIdx = p.scores.reduce((last,s,i) => s!==null&&s!==undefined ? i+1 : last, 0);
-    const parJugados = pars.slice(0, lastIdx).reduce((a,b)=>a+b,0);
+    // Solo sumar el par de los hoyos que realmente se jugaron (no null)
+    const parJugados = p.scores.reduce((sum, s, i) => s!==null&&s!==undefined ? sum+(pars[i]||0) : sum, 0);
     const vsPar = bruto !== null ? bruto - parJugados : null;
     const vsParHC = vsPar !== null ? vsPar - hcEf(p.hc, nHolesSafe) : null;
     return { ...p, bruto, vsPar, vsParHC };
@@ -5834,8 +5834,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
             const rowScores = scores[pi];
             const jugados = toArr(rowScores).filter(s => s !== null && s !== undefined);
             const total = jugados.reduce((a,b)=>a+b,0);
-            const parJugados = pars.slice(0, rowScores.filter((s,i) => s!==null&&s!==undefined ? true : false).length > 0
-              ? rowScores.reduce((last,s,i)=>s!==null&&s!==undefined?i+1:last,0) : 0).reduce((a,b)=>a+b,0);
+            const parJugados = (rowScores||[]).reduce((sum,s,i) => s!==null&&s!==undefined ? sum+(pars[i]||0) : sum, 0);
             const vsPar = jugados.length > 0 ? total - parJugados : null;
             const hcEf = nHoles <= 9 ? Math.ceil(pl.hc / 2) : pl.hc;
             const vsParHC = vsPar !== null ? vsPar - hcEf : null;
@@ -6070,7 +6069,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
               const raw = (rawScores||fullScores)[pi];
               const jugados = raw.filter(s => s !== null && s !== undefined);
               const brutoReal = jugados.length > 0 ? jugados.reduce((a,b)=>a+b,0) : null;
-              const parJugados = pars.slice(0, raw.reduce((last,s,i)=>s!==null&&s!==undefined?i+1:last, 0)).reduce((a,b)=>a+b,0);
+              const parJugados = (raw||[]).reduce((sum,s,i) => s!==null&&s!==undefined ? sum+(pars[i]||0) : sum, 0);
               const vsPar = brutoReal !== null ? brutoReal - parJugados : null;
               const vsParHC = vsPar !== null ? vsPar - (nHoles<=9?Math.ceil(p.hc/2):p.hc) : null;
               return { ...p, pi, raw, brutoReal, vsPar, vsParHC };
