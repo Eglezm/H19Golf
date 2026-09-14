@@ -1772,6 +1772,7 @@ function TorneoSpectator({ torneoId, appStyle, isAdmin = false }) {
   const [loading, setLoading] = useState(true);
   const [showSplash, setShowSplash] = useState(true);
   const [splashPhase, setSplashPhase] = useState(0);
+  const [renderError, setRenderError] = useState(null);
 
   useEffect(() => {
     const unsub = onValue(ref(db, `torneos/${torneoId}`), snap => {
@@ -1804,28 +1805,6 @@ function TorneoSpectator({ torneoId, appStyle, isAdmin = false }) {
   );
 
   // Combinar todos los grupos
-  const grupos = Object.entries(torneo.grupos || {});
-  const campoConfig = CAMPOS[torneo.campo] || CAMPOS["huerta"] || { pares: Array(9).fill(3) };
-  const nHolesSafe = torneo.nHoles || 9;
-  const pars = (campoConfig.pares || Array(nHolesSafe).fill(3)).slice(0, nHolesSafe);
-  const parTotal = pars.reduce((a,b)=>a+b,0);
-
-  // Todos los jugadores de todos los grupos con su grupo de origen
-  const allPlayers = grupos.flatMap(([gid, g]) => {
-    if (!g || !g.players) return [];
-    const gPlayers = Array.isArray(g.players) ? g.players : Object.values(g.players||{});
-    const gScoresRaw = Array.isArray(g.scores) ? g.scores : Object.values(g.scores||{});
-    const grupoConfig = torneo.gruposConfig
-      ? (Array.isArray(torneo.gruposConfig) ? torneo.gruposConfig : Object.values(torneo.gruposConfig)).find(gc => gc.id === gid)
-      : null;
-    const hoyoSalida = g.hoyoSalida || grupoConfig?.hoyoSalida || 1;
-    return gPlayers.map((p, pi) => {
-      const rowRaw = gScoresRaw[pi];
-      const row = Array.isArray(rowRaw) ? rowRaw : Object.values(rowRaw||{});
-      const scores = Array(nHolesSafe).fill(null).map((_, h) => row[h] ?? null);
-      return { ...p, grupoId:gid, grupoNombre: g.nombre || `Grupo ${gid.slice(-3)}`, scores, marcas: g.marcas, tarjetas: g.tarjetas, grupoStatus: g.status, hoyoSalida };
-    });
-  });
 
   // Calcular netos y clasificación global
   const fmtVs = (v) => v === null ? "-" : v === 0 ? "E" : v > 0 ? `+${v}` : `${v}`;
@@ -1948,20 +1927,63 @@ function TorneoSpectator({ torneoId, appStyle, isAdmin = false }) {
     return { ...p, scoreM, marcasM, tarjetasM, castigoM, totalM: scoreM + marcasM + tarjetasM + castigoM };
   });
 
-  if (!pars || pars.length === 0) return (
-    <div style={{ ...appStyle, display:"flex", alignItems:"center", justifyContent:"center", flexDirection:"column", gap:12, padding:24 }}>
-      <div style={{ fontSize:32 }}>⚠️</div>
-      <div style={{ color:D.danger, fontWeight:700 }}>Error cargando configuración del torneo</div>
-      <div style={{ color:D.textSub, fontSize:12, textAlign:"center" }}>Campo: {torneo.campo || "desconocido"} · Hoyos: {torneo.nHoles || "?"}</div>
+  if (renderError) return (
+    <div style={{ ...appStyle, padding:24, display:"flex", flexDirection:"column", gap:12, alignItems:"center", justifyContent:"center" }}>
+      <div style={{ fontSize:28 }}>⚠️</div>
+      <div style={{ color:D.danger, fontWeight:700, fontSize:14 }}>Error al cargar el torneo</div>
+      <div style={{ color:D.textSub, fontSize:11, textAlign:"center", background:D.surface, padding:12, borderRadius:8, maxWidth:300, wordBreak:"break-all" }}>
+        {renderError}
+      </div>
+      <button onClick={() => window.location.reload()} style={{ padding:"10px 20px", border:`1px solid ${D.gold}`, borderRadius:10, background:D.goldDim, color:D.gold, cursor:"pointer", fontWeight:700 }}>
+        🔄 Recargar
+      </button>
     </div>
   );
+
+  // Wrap all render logic in try-catch
+  let grupos, campoConfig, nHolesSafe, pars, parTotal, allPlayers;
+  try {
+    grupos = Object.entries(torneo.grupos || {});
+    campoConfig = CAMPOS[torneo.campo] || CAMPOS["huerta"] || { pares: Array(9).fill(3) };
+    nHolesSafe = torneo.nHoles || 9;
+    pars = (campoConfig.pares || Array(nHolesSafe).fill(3)).slice(0, nHolesSafe);
+    parTotal = pars.reduce((a,b)=>a+b,0);
+    allPlayers = grupos.flatMap(([gid, g]) => {
+      if (!g || !g.players) return [];
+      const gPlayers = Array.isArray(g.players) ? g.players : Object.values(g.players||{});
+      const gScoresRaw = Array.isArray(g.scores) ? g.scores : Object.values(g.scores||{});
+      const grupoConfig = torneo.gruposConfig
+        ? (Array.isArray(torneo.gruposConfig) ? torneo.gruposConfig : Object.values(torneo.gruposConfig)).find(gc => gc.id === gid)
+        : null;
+      const hoyoSalida = g.hoyoSalida || grupoConfig?.hoyoSalida || 1;
+      return gPlayers.map((p, pi) => {
+        const rowRaw = gScoresRaw[pi];
+        const row = Array.isArray(rowRaw) ? rowRaw : Object.values(rowRaw||{});
+        const scores = Array(nHolesSafe).fill(null).map((_, h) => row[h] ?? null);
+        return { ...p, grupoId:gid, grupoNombre: g.nombre || `Grupo ${gid.slice(-3)}`, scores, marcas: g.marcas, tarjetas: g.tarjetas, grupoStatus: g.status, hoyoSalida };
+      });
+    });
+  } catch(e) {
+    return (
+      <div style={{ ...appStyle, padding:24, display:"flex", flexDirection:"column", gap:12, alignItems:"center", justifyContent:"center" }}>
+        <div style={{ fontSize:28 }}>⚠️</div>
+        <div style={{ color:D.danger, fontWeight:700 }}>Error procesando datos del torneo</div>
+        <div style={{ color:D.textSub, fontSize:11, background:D.surface, padding:12, borderRadius:8, maxWidth:300, wordBreak:"break-all" }}>
+          {e.message || String(e)}
+        </div>
+        <button onClick={() => window.location.reload()} style={{ padding:"10px 20px", border:`1px solid ${D.gold}`, borderRadius:10, background:D.goldDim, color:D.gold, cursor:"pointer", fontWeight:700 }}>
+          🔄 Recargar
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div style={appStyle}>
       <div style={{ background:D.surface, borderBottom:`1px solid ${D.border}`, padding:"16px 16px 12px", textAlign:"center" }}>
         <div style={{ fontSize:24, fontWeight:900, color:D.gold }}>H19 - Torneo</div>
         <div style={{ fontSize:13, color:D.textSub, marginTop:2 }}>{torneo.nombre}</div>
-        <div style={{ fontSize:11, color:D.textSub, marginTop:2 }}>{CAMPOS[torneo.campo]?.nombre} · {torneo.nHoles} hoyos · {grupos.length} grupos · {allPlayers.length} jugadores</div>
+        <div style={{ fontSize:11, color:D.textSub, marginTop:2 }}>{CAMPOS[torneo.campo]?.nombre} · {nHolesSafe} hoyos · {grupos.length} grupos · {allPlayers.length} jugadores</div>
       </div>
       <div style={{ padding:"12px 12px 32px" }}>
         {/* Marcador global */}
