@@ -355,10 +355,13 @@ function Pill({ active, danger, onClick, children }) {
 }
 
 function calcMarcasPts(players, marcas) {
+  const marcasArr = Array.isArray(marcas) ? marcas : Object.values(marcas||{});
   return players.map((p, pi) => {
     let pts = 0;
-    marcas.forEach(h => {
-      MARCAS_MULTI.forEach(m => { if (h.multi[pi][m.key]) pts += m.pts; });
+    marcasArr.forEach(h => {
+      if (!h) return;
+      const multi = Array.isArray(h.multi) ? h.multi : Object.values(h.multi||{});
+      MARCAS_MULTI.forEach(m => { if (multi[pi]?.[m.key]) pts += m.pts; });
       if (h.oyes === pi) pts += 1;
       if (h.regulation === pi) pts += 1;
     });
@@ -367,13 +370,15 @@ function calcMarcasPts(players, marcas) {
 }
 
 function calcMarcasResumen(players, marcas) {
-  // Devuelve lista de eventos: { hole, label, playerName }, excluyendo jugadores que no participan en Marcas
   const playsMarcas = (p) => p ? (p.opts ? p.opts.marcas !== false : true) : false;
   const eventos = [];
-  marcas.forEach((h, hi) => {
+  const marcasArr = Array.isArray(marcas) ? marcas : Object.values(marcas||{});
+  marcasArr.forEach((h, hi) => {
+    if (!h) return;
+    const multi = Array.isArray(h.multi) ? h.multi : Object.values(h.multi||{});
     MARCAS_MULTI.forEach(m => {
       players.forEach((p, pi) => {
-        if (h.multi[pi]?.[m.key] && playsMarcas(p)) eventos.push({ hole:hi+1, label:m.label, playerName:p.name });
+        if (multi[pi]?.[m.key] && playsMarcas(p)) eventos.push({ hole:hi+1, label:m.label, playerName:p.name });
       });
     });
     if (h.oyes !== null && h.oyes !== undefined && playsMarcas(players[h.oyes])) eventos.push({ hole:hi+1, label:"⛳ O'Yes", playerName:players[h.oyes]?.name||"—" });
@@ -1638,7 +1643,7 @@ function CerrarTorneoPanel({ torneoId, torneo, grupos, allPlayers, ranked, pars,
       grupos.forEach(([gid,g]) => {
         const gPs = (Array.isArray(g.players)?g.players:Object.values(g.players||{}))
           .map(p=>({...p,opts:{score:true,marcas:true,tarjetas:true}}));
-        const gMarcas = g.marcas?(Array.isArray(g.marcas)?g.marcas:Object.values(g.marcas)):null;
+        const gMarcas = g.marcas?(Array.isArray(g.marcas)?g.marcas:Object.values(g.marcas)).map(h=>h?({...h,multi:Array.isArray(h.multi)?h.multi:Object.values(h.multi||{})}):h):null;
         const gTarjetas = g.tarjetas||null;
         if (gMarcas) {
           const mm = calcMarcasMoney(gPs, gMarcas, torneo.marcaVal||10);
@@ -1687,7 +1692,7 @@ function CerrarTorneoPanel({ torneoId, torneo, grupos, allPlayers, ranked, pars,
         try {
           const gPs = (Array.isArray(g.players)?g.players:Object.values(g.players||{}));
           const gScRaw = Array.isArray(g.scores)?g.scores:Object.values(g.scores||{});
-          const gMarcas = g.marcas?(Array.isArray(g.marcas)?g.marcas:Object.values(g.marcas)):null;
+          const gMarcas = g.marcas?(Array.isArray(g.marcas)?g.marcas:Object.values(g.marcas)).map(h=>h?({...h,multi:Array.isArray(h.multi)?h.multi:Object.values(h.multi||{})}):h):null;
           const gFullScores = gPs.map((_,pi)=>{ const r=Array.isArray(gScRaw[pi])?gScRaw[pi]:Object.values(gScRaw[pi]||{}); return pars.map((par,h)=>{const v=r[h];return(v===null||v===undefined)?par:v;}); });
           await set(ref(db, `torneos/${torneoId}/grupos/${gid}/resumenFinal`), {
             ganador: calcMoney(gPs.map(p=>({...p,opts:{score:true,marcas:true,tarjetas:true}})),gFullScores,torneo.apuesta||50).fi.map(i=>gPs[i].name).join(" · "),
@@ -1891,7 +1896,7 @@ function TorneoSpectator({ torneoId, appStyle, isAdmin = false }) {
   const tarjetasMoneyMap = {};
   grupos.forEach(([gid, g]) => {
     const gPlayers = (Array.isArray(g.players) ? g.players : Object.values(g.players||{})).map(p=>({...p,opts:{score:true,marcas:true,tarjetas:true}}));
-    const gMarcas = g.marcas ? (Array.isArray(g.marcas) ? g.marcas : Object.values(g.marcas)) : null;
+    const gMarcas = g.marcas ? (Array.isArray(g.marcas) ? g.marcas : Object.values(g.marcas)).map(h=>h?({...h,multi:Array.isArray(h.multi)?h.multi:Object.values(h.multi||{})}):h) : null;
     const gTarjetas = normalizeTarjetas(g.tarjetas);
     if (gMarcas && gPlayers.length > 0) {
       const mm = calcMarcasMoney(gPlayers, gMarcas, torneo.marcaVal || 10);
@@ -2126,7 +2131,7 @@ function TorneoSpectator({ torneoId, appStyle, isAdmin = false }) {
         {grupos.map(([gid, g]) => {
           const gPlayers = Array.isArray(g.players) ? g.players : Object.values(g.players||{});
           const gScores = Array.isArray(g.scores) ? g.scores : Object.values(g.scores||{});
-          const gMarcas = g.marcas ? (Array.isArray(g.marcas) ? g.marcas : Object.values(g.marcas)) : null;
+          const gMarcas = g.marcas ? (Array.isArray(g.marcas) ? g.marcas : Object.values(g.marcas)).map(h=>h?({...h,multi:Array.isArray(h.multi)?h.multi:Object.values(h.multi||{})}):h) : null;
           return (
             <Card key={gid}>
               <SLabel>🏌️ {g.nombre || `Grupo ${gid.slice(-3)}`} · Hoyo {(g.hole||0)+1}</SLabel>
