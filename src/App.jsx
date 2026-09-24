@@ -2722,6 +2722,279 @@ function AbandonoModal({ player, pi, players, apuesta, tarjetaVal, castigos, set
   );
 }
 
+// ─── BAR ADMIN SCREEN ─────────────────────────────
+function BarAdminScreen({ onExit }) {
+  const D_BAR = { bg:"#0A0A0A", surface:"#161616", border:"#2A2A2A", text:"#F5F5F5", textSub:"#888", gold:"#D4A843", goldDim:"rgba(212,168,67,0.12)", danger:"#C62828", success:"#4CAF50" };
+  const [whatsapp, setWhatsapp] = useState("");
+  const [menu, setMenu] = useState({ bebidas:[], comida:[], snacks:[] });
+  const [newItem, setNewItem] = useState({ bebidas:"", comida:"", snacks:"" });
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [tab, setTab] = useState("bebidas");
+
+  const toArr = (x) => {
+    if (!x) return [];
+    if (Array.isArray(x)) return x;
+    if (typeof x === 'object') return Object.values(x);
+    return [];
+  };
+
+  useEffect(() => {
+    const r = ref(db, "bar");
+    const unsub = onValue(r, snap => {
+      const val = snap.val() || {};
+      const rawMenu = val.menu || {};
+      setMenu({
+        bebidas: toArr(rawMenu.bebidas),
+        comida:  toArr(rawMenu.comida),
+        snacks:  toArr(rawMenu.snacks),
+      });
+      setWhatsapp(val.config?.whatsapp || "");
+      setLoading(false);
+    });
+    return () => unsub();
+  }, []);
+
+  const saveWhatsapp = async () => {
+    setSaving(true);
+    await set(ref(db, "bar/config/whatsapp"), whatsapp.replace(/\s/g,""));
+    setSaving(false);
+  };
+
+  const addItem = async (cat) => {
+    const val = newItem[cat].trim();
+    if (!val) return;
+    const updated = [...menu[cat], val];
+    await set(ref(db, `bar/menu/${cat}`), updated);
+    setNewItem(prev => ({ ...prev, [cat]: "" }));
+  };
+
+  const removeItem = async (cat, idx) => {
+    const updated = menu[cat].filter((_,i) => i !== idx);
+    await set(ref(db, `bar/menu/${cat}`), updated.length > 0 ? updated : null);
+  };
+
+  const tabLabels = { bebidas:"🍺 Bebidas", comida:"🍽 Comida", snacks:"🍿 Snacks" };
+
+  if (loading) return (
+    <div style={{ minHeight:"100vh", background:D_BAR.bg, display:"flex", alignItems:"center", justifyContent:"center" }}>
+      <div style={{ color:D_BAR.textSub }}>Cargando...</div>
+    </div>
+  );
+
+  return (
+    <div style={{ fontFamily:"-apple-system,sans-serif", background:D_BAR.bg, minHeight:"100vh", maxWidth:420, margin:"0 auto" }}>
+      <div style={{ background:D_BAR.surface, borderBottom:`1px solid ${D_BAR.border}`, padding:"16px 16px 12px", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+        <div>
+          <div style={{ fontSize:20, fontWeight:900, color:D_BAR.gold }}>🍹 Admin · BAR</div>
+          <div style={{ fontSize:11, color:D_BAR.textSub }}>Configuración del menú y contacto</div>
+        </div>
+        <button onClick={onExit} style={{ fontSize:12, color:D_BAR.textSub, background:"none", border:`1px solid ${D_BAR.border}`, borderRadius:8, padding:"5px 10px", cursor:"pointer" }}>Salir</button>
+      </div>
+
+      <div style={{ padding:"12px 16px" }}>
+        {/* WhatsApp del bar */}
+        <div style={{ background:D_BAR.surface, borderRadius:12, padding:"14px", marginBottom:14, border:`1px solid ${D_BAR.border}` }}>
+          <div style={{ fontSize:12, fontWeight:700, color:D_BAR.gold, marginBottom:8 }}>💬 WhatsApp del BAR</div>
+          <div style={{ fontSize:11, color:D_BAR.textSub, marginBottom:8 }}>Número al que se enviarán los pedidos (incluir código de país, ej: 522221234567)</div>
+          <div style={{ display:"flex", gap:8 }}>
+            <input value={whatsapp} onChange={e => setWhatsapp(e.target.value)} placeholder="52XXXXXXXXXX" type="tel"
+              style={{ flex:1, padding:"10px 12px", border:`1px solid ${D_BAR.border}`, borderRadius:10, background:D_BAR.bg, color:D_BAR.text, fontSize:14 }} />
+            <button onClick={saveWhatsapp} disabled={saving} style={{ padding:"10px 14px", border:"none", borderRadius:10, background:"#25D366", color:"#fff", fontSize:13, fontWeight:700, cursor:"pointer" }}>
+              {saving ? "..." : "Guardar"}
+            </button>
+          </div>
+          {whatsapp && <div style={{ fontSize:11, color:D_BAR.success, marginTop:6 }}>✓ wa.me/{whatsapp.replace(/\D/g,"")}</div>}
+        </div>
+
+        {/* Tabs de categorías */}
+        <div style={{ display:"flex", borderBottom:`1px solid ${D_BAR.border}`, marginBottom:12 }}>
+          {Object.entries(tabLabels).map(([k, label]) => (
+            <button key={k} onClick={() => setTab(k)} style={{ flex:1, padding:"9px 4px", border:"none", background:"transparent", color: tab===k ? D_BAR.gold : D_BAR.textSub, fontSize:11, fontWeight: tab===k ? 700 : 400, borderBottom: tab===k ? `2px solid ${D_BAR.gold}` : "2px solid transparent", cursor:"pointer" }}>
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {/* Lista de items */}
+        <div style={{ background:D_BAR.surface, borderRadius:12, padding:"12px 14px", marginBottom:12, border:`1px solid ${D_BAR.border}` }}>
+          <div style={{ fontSize:12, fontWeight:700, color:D_BAR.gold, marginBottom:10 }}>{tabLabels[tab]}</div>
+          {menu[tab].length === 0 && <div style={{ fontSize:12, color:D_BAR.textSub, textAlign:"center", padding:12 }}>Sin productos. Agrega el primero.</div>}
+          {menu[tab].map((item, i) => (
+            <div key={i} style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"8px 0", borderBottom:`1px solid ${D_BAR.border}` }}>
+              <span style={{ fontSize:13, color:D_BAR.text }}>{item}</span>
+              <button onClick={() => removeItem(tab, i)} style={{ padding:"4px 10px", border:`1px solid ${D_BAR.danger}44`, borderRadius:8, background:"transparent", color:D_BAR.danger, fontSize:12, cursor:"pointer" }}>✕</button>
+            </div>
+          ))}
+          <div style={{ display:"flex", gap:8, marginTop:12 }}>
+            <input value={newItem[tab]} onChange={e => setNewItem(prev => ({...prev,[tab]:e.target.value}))} placeholder={`Nuevo ${tab.slice(0,-1)}...`} onKeyDown={e => e.key==="Enter" && addItem(tab)}
+              style={{ flex:1, padding:"10px 12px", border:`1px solid ${D_BAR.border}`, borderRadius:10, background:D_BAR.bg, color:D_BAR.text, fontSize:13 }} />
+            <button onClick={() => addItem(tab)} style={{ padding:"10px 14px", border:`1px solid ${D_BAR.gold}`, borderRadius:10, background:D_BAR.goldDim, color:D_BAR.gold, fontSize:13, fontWeight:700, cursor:"pointer" }}>+ Agregar</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── BAR VIEW ─────────────────────────────────────
+function BarView({ onExit, appStyle }) {
+  const D_BAR = { bg:"#0A0A0A", surface:"#161616", border:"#2A2A2A", text:"#F5F5F5", textSub:"#888", gold:"#D4A843", goldDim:"rgba(212,168,67,0.12)", danger:"#C62828", success:"#4CAF50" };
+  const [tab, setTab] = useState("bebidas");
+  const [menu, setMenu] = useState({ bebidas:[], comida:[], snacks:[] });
+  const [cantidades, setCantidades] = useState({});
+  const [hoyo, setHoyo] = useState("");
+  const [whatsapp, setWhatsapp] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [enviando, setEnviando] = useState(false);
+  const [enviado, setEnviado] = useState(false);
+
+  useEffect(() => {
+    const r = ref(db, "bar");
+    const unsub = onValue(r, snap => {
+      const val = snap.val() || {};
+      const rawMenu = val.menu || {};
+      setMenu({
+        bebidas: toArr(rawMenu.bebidas),
+        comida:  toArr(rawMenu.comida),
+        snacks:  toArr(rawMenu.snacks),
+      });
+      setWhatsapp(val.config?.whatsapp || "");
+      setLoading(false);
+    });
+    return () => unsub();
+  }, []);
+
+  const toArr = (x) => {
+    if (!x) return [];
+    if (Array.isArray(x)) return x;
+    if (typeof x === 'object') return Object.values(x);
+    return [];
+  };
+
+  const setCantidad = (key, delta) => {
+    setCantidades(prev => {
+      const cur = prev[key] || 0;
+      const next = Math.max(0, cur + delta);
+      return { ...prev, [key]: next };
+    });
+  };
+
+  const buildMensaje = () => {
+    const cats = [
+      { label: "🍺 Bebidas", items: menu.bebidas },
+      { label: "🍽 Comida",  items: menu.comida  },
+      { label: "🍿 Snacks",  items: menu.snacks  },
+    ];
+    let lineas = [];
+    cats.forEach(({ label, items }) => {
+      items.forEach((item, i) => {
+        const key = `${label}-${i}`;
+        const qty = cantidades[key] || 0;
+        if (qty > 0) lineas.push(`  ${item}: ${qty}`);
+      });
+    });
+    if (lineas.length === 0) return null;
+    const hoyoStr = hoyo ? `\nHoyo: *${hoyo}*` : "";
+    return `🏌️ *Pedido H19 Golf*${hoyoStr}\n\n${lineas.join("\n")}`;
+  };
+
+  const handleEnviar = () => {
+    const msg = buildMensaje();
+    if (!msg) { alert("Agrega al menos un producto"); return; }
+    if (!hoyo) { alert("Indica el número de hoyo"); return; }
+    if (!whatsapp) { alert("El número de WhatsApp del bar no está configurado"); return; }
+    const num = whatsapp.replace(/\D/g, "");
+    const url = `https://wa.me/${num}?text=${encodeURIComponent(msg)}`;
+    window.open(url, "_blank");
+    setEnviando(true);
+    setTimeout(() => { setEnviado(true); setEnviando(false); }, 800);
+  };
+
+  const resetPedido = () => {
+    setCantidades({});
+    setHoyo("");
+    setEnviado(false);
+  };
+
+  const tabLabels = { bebidas:"🍺 Bebidas", comida:"🍽 Comida", snacks:"🍿 Snacks" };
+  const currentItems = menu[tab] || [];
+
+  const totalItems = Object.values(cantidades).reduce((a,b)=>a+b,0);
+
+  if (loading) return (
+    <div style={{ ...appStyle, display:"flex", alignItems:"center", justifyContent:"center", minHeight:"100vh" }}>
+      <div style={{ color:D_BAR.textSub, fontSize:14 }}>Cargando menú...</div>
+    </div>
+  );
+
+  if (enviado) return (
+    <div style={{ ...appStyle, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", minHeight:"100vh", padding:24, gap:16 }}>
+      <div style={{ fontSize:64 }}>✅</div>
+      <div style={{ fontSize:22, fontWeight:800, color:D_BAR.success }}>¡Pedido enviado!</div>
+      <div style={{ fontSize:14, color:D_BAR.textSub, textAlign:"center" }}>Tu orden fue enviada al bar vía WhatsApp. En breve te la llevarán al hoyo {hoyo}.</div>
+      <button onClick={resetPedido} style={{ marginTop:8, padding:"12px 28px", border:"none", borderRadius:12, background:D_BAR.gold, color:"#000", fontSize:15, fontWeight:700, cursor:"pointer" }}>Nuevo pedido</button>
+      <button onClick={onExit} style={{ fontSize:13, color:D_BAR.textSub, background:"none", border:"none", cursor:"pointer" }}>Volver</button>
+    </div>
+  );
+
+  return (
+    <div style={{ ...appStyle, minHeight:"100vh" }}>
+      {/* Header */}
+      <div style={{ background:D_BAR.surface, borderBottom:`1px solid ${D_BAR.border}`, padding:"16px 16px 12px", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+        <div>
+          <div style={{ fontSize:24, fontWeight:900, color:D_BAR.gold }}>🍹 BAR</div>
+          <div style={{ fontSize:11, color:D_BAR.textSub, letterSpacing:2, textTransform:"uppercase" }}>H19 Golf · Pedidos</div>
+        </div>
+        <div style={{ display:"flex", gap:8 }}>
+          {totalItems > 0 && <div style={{ background:D_BAR.gold, color:"#000", borderRadius:"50%", width:22, height:22, display:"flex", alignItems:"center", justifyContent:"center", fontSize:12, fontWeight:800 }}>{totalItems}</div>}
+          <button onClick={onExit} style={{ fontSize:12, color:D_BAR.textSub, background:"none", border:`1px solid ${D_BAR.border}`, borderRadius:8, padding:"5px 10px", cursor:"pointer" }}>Salir</button>
+        </div>
+      </div>
+
+      {/* Tabs */}
+      <div style={{ display:"flex", borderBottom:`1px solid ${D_BAR.border}`, background:D_BAR.surface }}>
+        {Object.entries(tabLabels).map(([k, label]) => (
+          <button key={k} onClick={() => setTab(k)} style={{ flex:1, padding:"10px 4px", border:"none", background:"transparent", color: tab===k ? D_BAR.gold : D_BAR.textSub, fontSize:12, fontWeight: tab===k ? 700 : 400, borderBottom: tab===k ? `2px solid ${D_BAR.gold}` : "2px solid transparent", cursor:"pointer" }}>
+            {label}
+          </button>
+        ))}
+      </div>
+
+      <div style={{ padding:"12px 16px", paddingBottom:160 }}>
+        {/* Productos */}
+        {currentItems.length === 0 ? (
+          <div style={{ textAlign:"center", color:D_BAR.textSub, padding:32, fontSize:13 }}>Sin productos en esta categoría</div>
+        ) : currentItems.map((item, i) => {
+          const key = `${tabLabels[tab]}-${i}`;
+          const qty = cantidades[key] || 0;
+          return (
+            <div key={key} style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"12px 0", borderBottom:`1px solid ${D_BAR.border}` }}>
+              <div style={{ fontSize:14, color:D_BAR.text, flex:1 }}>{item}</div>
+              <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                <button onClick={() => setCantidad(key, -1)} disabled={qty===0} style={{ width:30, height:30, borderRadius:"50%", border:`1px solid ${D_BAR.border}`, background:"transparent", color:D_BAR.text, cursor:"pointer", fontSize:18, opacity:qty===0?0.3:1 }}>−</button>
+                <span style={{ fontSize:16, fontWeight:700, color:qty>0?D_BAR.gold:D_BAR.textSub, minWidth:24, textAlign:"center" }}>{qty}</span>
+                <button onClick={() => setCantidad(key, 1)} style={{ width:30, height:30, borderRadius:"50%", border:`1px solid ${D_BAR.gold}`, background:D_BAR.goldDim, color:D_BAR.gold, cursor:"pointer", fontSize:18, fontWeight:700 }}>+</button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Footer fijo */}
+      <div style={{ position:"fixed", bottom:0, left:"50%", transform:"translateX(-50%)", width:"100%", maxWidth:420, background:D_BAR.surface, borderTop:`1px solid ${D_BAR.border}`, padding:"12px 16px", zIndex:100 }}>
+        <div style={{ display:"flex", gap:8, marginBottom:10 }}>
+          <div style={{ fontSize:13, color:D_BAR.textSub, display:"flex", alignItems:"center", gap:6, minWidth:"fit-content" }}>⛳ Hoyo:</div>
+          <input type="number" min="1" max="18" value={hoyo} onChange={e => setHoyo(e.target.value)} placeholder="# Hoyo" style={{ flex:1, padding:"8px 12px", border:`1px solid ${D_BAR.border}`, borderRadius:10, background:D_BAR.bg, color:D_BAR.text, fontSize:15, fontWeight:700, textAlign:"center" }} />
+        </div>
+        <button onClick={handleEnviar} disabled={enviando || totalItems===0} style={{ width:"100%", padding:"13px", border:"none", borderRadius:12, background: totalItems===0 ? D_BAR.border : `linear-gradient(135deg,#25D366,#128C7E)`, color:"#fff", fontSize:15, fontWeight:700, cursor: totalItems===0 ? "default" : "pointer", opacity: totalItems===0 ? 0.5 : 1, display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}>
+          {enviando ? "Enviando..." : `💬 Enviar pedido por WhatsApp${totalItems>0 ? ` (${totalItems} items)` : ""}`}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ─── APP PRINCIPAL ────────────────────────────────
 export default function H19() {
   const [mode, setMode] = useState(null);
@@ -2734,6 +3007,7 @@ export default function H19() {
   const [activeTorneoConfig, setActiveTorneoConfig] = useState(null);
   const [torneoIsAdmin, setTorneoIsAdmin] = useState(false);
   const [savedTorneoAdmin, setSavedTorneoAdmin] = useState(null);
+  const [barOpen, setBarOpen] = useState(false);
 
   useEffect(() => {
     try {
@@ -2775,6 +3049,12 @@ export default function H19() {
     return <SplashScreen phase={splashPhase} appStyle={appStyle} />;
   }
 
+  const BarBtn = () => (
+    <button onClick={() => setBarOpen(true)} style={{ position:"fixed", bottom:20, right:16, zIndex:9999, background:"linear-gradient(135deg,#5C4200,#8B6914)", color:"#D4A843", border:"none", borderRadius:28, padding:"10px 18px", fontSize:14, fontWeight:800, cursor:"pointer", boxShadow:"0 4px 16px rgba(0,0,0,0.6)", letterSpacing:1 }}>🍹 BAR</button>
+  );
+
+  if (barOpen) return <BarView onExit={() => setBarOpen(false)} appStyle={appStyle} />;
+
   if (mode === "spectator" && rondaId) return <SpectatorView rondaId={rondaId} />;
 
   if (mode === "home") {
@@ -2806,12 +3086,15 @@ export default function H19() {
         <div style={{ width:"100%", borderTop:`1px solid ${D.border}`, margin:"4px 0" }} />
         <Btn outline onClick={() => setMode("estadisticas")}>📈 Estadísticas de jugadores</Btn>
         <Btn outline onClick={() => setMode("whs")}>🏌️ Handicap WHS (Fase 1)</Btn>
+        <div style={{ width:"100%", borderTop:`1px solid ${D.border}`, margin:"4px 0" }} />
+        <button onClick={() => setBarOpen(true)} style={{ width:"100%", padding:"14px", border:"none", borderRadius:14, background:"linear-gradient(135deg,#5C4200,#8B6914)", color:"#D4A843", fontSize:16, fontWeight:800, cursor:"pointer", letterSpacing:2 }}>🍹 BAR</button>
       </div>
     );
   }
 
   if (mode === "pin-torneo") {
     return (
+      <>
       <div style={{ ...appStyle, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:24, gap:14 }}>
         <div style={{ fontSize:40, fontWeight:900, color:D.gold }}>H19</div>
         <div style={{ fontSize:14, color:D.textSub, marginBottom:8 }}>PIN de administrador</div>
@@ -2821,11 +3104,14 @@ export default function H19() {
         <Btn onClick={() => { if (pinInput===ADMIN_PIN) { setMode("torneo-menu"); setPinError(false); } else setPinError(true); }}>Entrar</Btn>
         <button onClick={() => { setMode("home"); setPinInput(""); setPinError(false); }} style={{ fontSize:13, color:D.textSub, background:"none", border:"none", cursor:"pointer" }}>Volver</button>
       </div>
+      <BarBtn />
+      </>
     );
   }
 
   if (mode === "pin-torneo-ver") {
     return (
+      <>
       <div style={{ ...appStyle, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:24, gap:14 }}>
         <div style={{ fontSize:40, fontWeight:900, color:D.gold }}>H19</div>
         <div style={{ fontSize:14, color:D.textSub, marginBottom:4, textAlign:"center", fontWeight:700 }}>Panel Admin General</div>
@@ -2836,11 +3122,14 @@ export default function H19() {
         <Btn onClick={() => { if (pinInput===ADMIN_PIN) { setRondaId(savedTorneoAdmin.torneoId); setTorneoIsAdmin(true); setMode("torneo-spectator"); setPinError(false); setPinInput(""); } else setPinError(true); }}>Ver torneo</Btn>
         <button onClick={() => { setMode("home"); setPinInput(""); setPinError(false); }} style={{ fontSize:13, color:D.textSub, background:"none", border:"none", cursor:"pointer" }}>Volver</button>
       </div>
+      <BarBtn />
+      </>
     );
   }
 
   if (mode === "pin-torneo-codigos") {
     return (
+      <>
       <div style={{ ...appStyle, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:24, gap:14 }}>
         <div style={{ fontSize:40, fontWeight:900, color:D.gold }}>H19</div>
         <div style={{ fontSize:14, color:D.textSub, marginBottom:4, textAlign:"center", fontWeight:700 }}>Ver códigos del torneo</div>
@@ -2851,13 +3140,21 @@ export default function H19() {
         <Btn onClick={() => { if (pinInput===ADMIN_PIN) { setMode("torneo-codigos"); setPinError(false); setPinInput(""); } else setPinError(true); }}>Ver códigos</Btn>
         <button onClick={() => { setMode("home"); setPinInput(""); setPinError(false); }} style={{ fontSize:13, color:D.textSub, background:"none", border:"none", cursor:"pointer" }}>Volver</button>
       </div>
+      <BarBtn />
+      </>
     );
   }
 
-  if (mode === "torneo-codigos" && savedTorneoAdmin) return <TorneoCodigosView torneoAdmin={savedTorneoAdmin} onExit={() => setMode("home")} appStyle={appStyle} />;
+  if (mode === "torneo-codigos" && savedTorneoAdmin) return (
+    <>
+      <TorneoCodigosView torneoAdmin={savedTorneoAdmin} onExit={() => setMode("home")} appStyle={appStyle} />
+      <BarBtn />
+    </>
+  );
 
   if (mode === "torneo-menu") {
     return (
+      <>
       <div style={{ ...appStyle, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:24, gap:16 }}>
         <div style={{ fontSize:40, fontWeight:900, color:D.gold }}>H19</div>
         <div style={{ fontSize:14, color:D.textSub, marginBottom:8, textAlign:"center" }}>Modo Varias Salidas</div>
@@ -2865,6 +3162,8 @@ export default function H19() {
         <Btn outline onClick={() => setMode("torneo-unirse")}>🔗 Unirse a torneo existente</Btn>
         <button onClick={() => setMode("home")} style={{ fontSize:13, color:D.textSub, background:"none", border:"none", cursor:"pointer" }}>Volver</button>
       </div>
+      <BarBtn />
+      </>
     );
   }
 
@@ -2879,6 +3178,7 @@ export default function H19() {
 
   if (mode === "torneo-spectator-input") {
     return (
+      <>
       <div style={{ ...appStyle, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:24, gap:14 }}>
         <div style={{ fontSize:40, fontWeight:900, color:D.gold }}>H19</div>
         <div style={{ fontSize:14, color:D.textSub, marginBottom:8, textAlign:"center" }}>Ingresa el código del torneo</div>
@@ -2887,13 +3187,21 @@ export default function H19() {
         <Btn onClick={() => { if (spectatorInput.trim()) { setRondaId(spectatorInput.trim()); setTorneoIsAdmin(false); setMode("torneo-spectator"); } }}>Ver torneo</Btn>
         <button onClick={() => setMode("home")} style={{ fontSize:13, color:D.textSub, background:"none", border:"none", cursor:"pointer" }}>Volver</button>
       </div>
+      <BarBtn />
+      </>
     );
   }
 
-  if (mode === "torneo-spectator" && rondaId) return <ErrorBoundary><TorneoSpectator torneoId={rondaId} appStyle={appStyle} isAdmin={torneoIsAdmin} /></ErrorBoundary>;
+  if (mode === "torneo-spectator" && rondaId) return (
+    <>
+      <ErrorBoundary><TorneoSpectator torneoId={rondaId} appStyle={appStyle} isAdmin={torneoIsAdmin} /></ErrorBoundary>
+      <BarBtn />
+    </>
+  );
 
   if (mode === "pin") {
     return (
+      <>
       <div style={{ ...appStyle, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:24, gap:14 }}>
         <div style={{ fontSize:40, fontWeight:900, color:D.gold }}>H19</div>
         <div style={{ fontSize:14, color:D.textSub, marginBottom:8 }}>Ingresa tu PIN de administrador</div>
@@ -2903,11 +3211,14 @@ export default function H19() {
         <Btn onClick={() => { if (pinInput===ADMIN_PIN) { setMode("admin"); setPinError(false); } else setPinError(true); }}>Entrar</Btn>
         <button onClick={() => { setMode("home"); setPinInput(""); setPinError(false); }} style={{ fontSize:13, color:D.textSub, background:"none", border:"none", cursor:"pointer" }}>Volver</button>
       </div>
+      <BarBtn />
+      </>
     );
   }
 
   if (mode === "spectator-input") {
     return (
+      <>
       <div style={{ ...appStyle, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:24, gap:14 }}>
         <div style={{ fontSize:40, fontWeight:900, color:D.gold }}>H19</div>
         <div style={{ fontSize:14, color:D.textSub, marginBottom:8, textAlign:"center" }}>Ingresa el código de ronda</div>
@@ -2916,10 +3227,17 @@ export default function H19() {
         <Btn onClick={() => { if (spectatorInput.trim()) { setRondaId(spectatorInput.trim()); setMode("spectator"); } }}>Ver ronda</Btn>
         <button onClick={() => setMode("home")} style={{ fontSize:13, color:D.textSub, background:"none", border:"none", cursor:"pointer" }}>Volver</button>
       </div>
+      <BarBtn />
+      </>
     );
   }
 
-  if (mode === "admin") return <AdminApp onExit={() => setMode("home")} />;
+  if (mode === "admin") return (
+    <>
+      <AdminApp onExit={() => setMode("home")} />
+      <button onClick={() => setBarOpen(true)} style={{ position:"fixed", bottom:20, right:16, zIndex:9999, background:"linear-gradient(135deg,#5C4200,#8B6914)", color:"#D4A843", border:"none", borderRadius:28, padding:"10px 18px", fontSize:14, fontWeight:800, cursor:"pointer", boxShadow:"0 4px 16px rgba(0,0,0,0.6)", letterSpacing:1 }}>🍹 BAR</button>
+    </>
+  );
 
   return null;
 }
@@ -5146,9 +5464,13 @@ function AdminApp({ onExit, torneoConfig = null }) {
           💬 Compartir reporte de handicaps
         </button>
         <Btn onClick={() => setScreen("sel")}>⛳ Iniciar ronda</Btn>
+        <button onClick={() => setScreen("bar-config")} style={{ width:"100%", marginTop:10, padding:"12px", border:"none", borderRadius:12, background:"linear-gradient(135deg,#5C4200,#8B6914)", color:"#D4A843", fontSize:14, fontWeight:800, cursor:"pointer" }}>🍹 Configurar BAR</button>
       </div>
     </div>
   );
+
+  // ── BAR CONFIG (Admin) ──
+  if (screen==="bar-config") return <BarAdminScreen onExit={() => setScreen("dir")} />;
 
   // ── HISTORIAL ──
   if (screen==="hist") return (
