@@ -2767,16 +2767,34 @@ function BarAdminScreen({ onExit }) {
   };
 
   const addItem = async (cat) => {
-    const val = newItem[cat].trim();
-    if (!val) return;
-    const updated = [...menu[cat], val];
-    await set(ref(db, `bar/menu/${cat}`), updated);
+    const texto = newItem[cat].trim();
+    if (!texto) return;
+    // Actualizar optimistamente el estado local
+    const listaActual = menu[cat] || [];
+    const listaNueva = [...listaActual, texto];
+    setMenu(prev => ({ ...prev, [cat]: listaNueva }));
     setNewItem(prev => ({ ...prev, [cat]: "" }));
+    try {
+      await set(ref(db, `bar/menu/${cat}`), listaNueva);
+    } catch(e) {
+      console.error("Error guardando en Firebase:", e);
+      // Revertir si falla
+      setMenu(prev => ({ ...prev, [cat]: listaActual }));
+      alert("Error al guardar: " + e.message);
+    }
   };
 
   const removeItem = async (cat, idx) => {
-    const updated = menu[cat].filter((_,i) => i !== idx);
-    await set(ref(db, `bar/menu/${cat}`), updated.length > 0 ? updated : null);
+    const listaActual = menu[cat] || [];
+    const listaNueva = listaActual.filter((_,i) => i !== idx);
+    setMenu(prev => ({ ...prev, [cat]: listaNueva }));
+    try {
+      await set(ref(db, `bar/menu/${cat}`), listaNueva.length > 0 ? listaNueva : null);
+    } catch(e) {
+      console.error("Error eliminando de Firebase:", e);
+      setMenu(prev => ({ ...prev, [cat]: listaActual }));
+      alert("Error al eliminar: " + e.message);
+    }
   };
 
   const tabLabels = { bebidas:"🍺 Bebidas", comida:"🍽 Comida", snacks:"🍿 Snacks" };
