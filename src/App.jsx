@@ -2751,8 +2751,13 @@ function BarAdminScreen({ onExit }) {
       });
       setWhatsapp(val.config?.whatsapp || "");
       setLoading(false);
+    }, (err) => {
+      console.error("BarAdmin Firebase error:", err);
+      setLoading(false);
     });
-    return () => unsub();
+    // Fallback: si Firebase no responde en 5s, mostrar pantalla vacía
+    const timer = setTimeout(() => setLoading(false), 5000);
+    return () => { unsub(); clearTimeout(timer); };
   }, []);
 
   const saveWhatsapp = async () => {
@@ -2849,6 +2854,13 @@ function BarView({ onExit, appStyle }) {
   const [enviando, setEnviando] = useState(false);
   const [enviado, setEnviado] = useState(false);
 
+  const toArr = (x) => {
+    if (!x) return [];
+    if (Array.isArray(x)) return x;
+    if (typeof x === 'object') return Object.values(x);
+    return [];
+  };
+
   useEffect(() => {
     const r = ref(db, "bar");
     const unsub = onValue(r, snap => {
@@ -2861,16 +2873,13 @@ function BarView({ onExit, appStyle }) {
       });
       setWhatsapp(val.config?.whatsapp || "");
       setLoading(false);
+    }, (err) => {
+      console.error("BarView Firebase error:", err);
+      setLoading(false);
     });
-    return () => unsub();
+    const timer = setTimeout(() => setLoading(false), 5000);
+    return () => { unsub(); clearTimeout(timer); };
   }, []);
-
-  const toArr = (x) => {
-    if (!x) return [];
-    if (Array.isArray(x)) return x;
-    if (typeof x === 'object') return Object.values(x);
-    return [];
-  };
 
   const setCantidad = (key, delta) => {
     setCantidades(prev => {
