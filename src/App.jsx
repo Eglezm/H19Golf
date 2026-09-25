@@ -2726,10 +2726,12 @@ function AbandonoModal({ player, pi, players, apuesta, tarjetaVal, castigos, set
 function BarAdminScreen({ onExit }) {
   const D_BAR = { bg:"#0A0A0A", surface:"#161616", border:"#2A2A2A", text:"#F5F5F5", textSub:"#888", gold:"#D4A843", goldDim:"rgba(212,168,67,0.12)", danger:"#C62828", success:"#4CAF50" };
   const [whatsapp, setWhatsapp] = useState("");
+  const [smsNumber, setSmsNumber] = useState("");
   const [menu, setMenu] = useState({ bebidas:[], comida:[], snacks:[] });
   const [newItem, setNewItem] = useState({ bebidas:"", comida:"", snacks:"" });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [savingSms, setSavingSms] = useState(false);
   const [tab, setTab] = useState("bebidas");
 
   const toArr = (x) => {
@@ -2750,6 +2752,7 @@ function BarAdminScreen({ onExit }) {
         snacks:  toArr(rawMenu.snacks),
       });
       setWhatsapp(val.config?.whatsapp || "");
+      setSmsNumber(val.config?.sms || "");
       setLoading(false);
     }, (err) => {
       console.error("BarAdmin Firebase error:", err);
@@ -2764,6 +2767,12 @@ function BarAdminScreen({ onExit }) {
     setSaving(true);
     await set(ref(db, "bar/config/whatsapp"), whatsapp.replace(/\s/g,""));
     setSaving(false);
+  };
+
+  const saveSms = async () => {
+    setSavingSms(true);
+    await set(ref(db, "bar/config/sms"), smsNumber.replace(/\s/g,""));
+    setSavingSms(false);
   };
 
   const addItem = async (cat) => {
@@ -2830,6 +2839,20 @@ function BarAdminScreen({ onExit }) {
           {whatsapp && <div style={{ fontSize:11, color:D_BAR.success, marginTop:6 }}>✓ wa.me/{whatsapp.replace(/\D/g,"")}</div>}
         </div>
 
+        {/* SMS del bar */}
+        <div style={{ background:D_BAR.surface, borderRadius:12, padding:"14px", marginBottom:14, border:`1px solid ${D_BAR.border}` }}>
+          <div style={{ fontSize:12, fontWeight:700, color:"#4FC3F7", marginBottom:8 }}>📱 SMS del BAR</div>
+          <div style={{ fontSize:11, color:D_BAR.textSub, marginBottom:8 }}>Número para pedidos por SMS (incluir código de país, ej: 522221234567)</div>
+          <div style={{ display:"flex", gap:8 }}>
+            <input value={smsNumber} onChange={e => setSmsNumber(e.target.value)} placeholder="52XXXXXXXXXX" type="tel"
+              style={{ flex:1, padding:"10px 12px", border:`1px solid ${D_BAR.border}`, borderRadius:10, background:D_BAR.bg, color:D_BAR.text, fontSize:14 }} />
+            <button onClick={saveSms} disabled={savingSms} style={{ padding:"10px 14px", border:"none", borderRadius:10, background:"#0288D1", color:"#fff", fontSize:13, fontWeight:700, cursor:"pointer" }}>
+              {savingSms ? "..." : "Guardar"}
+            </button>
+          </div>
+          {smsNumber && <div style={{ fontSize:11, color:"#4FC3F7", marginTop:6 }}>✓ SMS a +{smsNumber.replace(/\D/g,"")}</div>}
+        </div>
+
         {/* Tabs de categorías */}
         <div style={{ display:"flex", borderBottom:`1px solid ${D_BAR.border}`, marginBottom:12 }}>
           {Object.entries(tabLabels).map(([k, label]) => (
@@ -2866,12 +2889,14 @@ function BarView({ onExit, appStyle }) {
   const [tab, setTab] = useState("bebidas");
   const [menu, setMenu] = useState({ bebidas:[], comida:[], snacks:[] });
   const [cantidades, setCantidades] = useState({});
-  const [hoyo, setHoyo] = useState("");
+  const [hoyo, setHoyo] = useState(null); // null = sin selección, número 1-9
   const [nombre, setNombre] = useState("");
   const [whatsapp, setWhatsapp] = useState("");
+  const [smsNumber, setSmsNumber] = useState("");
   const [loading, setLoading] = useState(true);
   const [enviando, setEnviando] = useState(false);
   const [enviado, setEnviado] = useState(false);
+  const [canal, setCanal] = useState("whatsapp"); // "whatsapp" | "sms"
 
   const toArr = (x) => {
     if (!x) return [];
@@ -2891,6 +2916,7 @@ function BarView({ onExit, appStyle }) {
         snacks:  toArr(rawMenu.snacks),
       });
       setWhatsapp(val.config?.whatsapp || "");
+      setSmsNumber(val.config?.sms || "");
       setLoading(false);
     }, (err) => {
       console.error("BarView Firebase error:", err);
@@ -2931,38 +2957,43 @@ function BarView({ onExit, appStyle }) {
   const handleEnviar = () => {
     const msg = buildMensaje();
     if (!msg) { alert("Agrega al menos un producto"); return; }
-    if (!hoyo) { alert("Indica el número de hoyo"); return; }
-    if (!whatsapp) { alert("El número de WhatsApp del bar no está configurado"); return; }
-    const num = whatsapp.replace(/\D/g, "");
-    const url = `https://wa.me/${num}?text=${encodeURIComponent(msg)}`;
-    window.open(url, "_blank");
+    if (!hoyo) { alert("Selecciona el número de hoyo"); return; }
+    const msgPlain = msg.replace(/\*/g, "");
+    if (canal === "whatsapp") {
+      if (!whatsapp) { alert("El número de WhatsApp del bar no está configurado"); return; }
+      const num = whatsapp.replace(/\D/g, "");
+      window.open(`https://wa.me/${num}?text=${encodeURIComponent(msg)}`, "_blank");
+    } else {
+      if (!smsNumber) { alert("El número SMS del bar no está configurado"); return; }
+      const num = smsNumber.replace(/\D/g, "");
+      window.open(`sms:+${num}?body=${encodeURIComponent(msgPlain)}`, "_blank");
+    }
     setEnviando(true);
     setTimeout(() => { setEnviado(true); setEnviando(false); }, 800);
   };
 
   const resetPedido = () => {
     setCantidades({});
-    setHoyo("");
+    setHoyo(null);
     setNombre("");
     setEnviado(false);
   };
 
   const tabLabels = { bebidas:"🍺 Bebidas", comida:"🍽 Comida", snacks:"🍿 Snacks" };
   const currentItems = menu[tab] || [];
-
   const totalItems = Object.values(cantidades).reduce((a,b)=>a+b,0);
 
   if (loading) return (
-    <div style={{ ...appStyle, display:"flex", alignItems:"center", justifyContent:"center", minHeight:"100vh" }}>
+    <div style={{ ...appStyle, display:"flex", alignItems:"center", justifyContent:"center", minHeight:"100vh", background:D_BAR.bg }}>
       <div style={{ color:D_BAR.textSub, fontSize:14 }}>Cargando menú...</div>
     </div>
   );
 
   if (enviado) return (
-    <div style={{ ...appStyle, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", minHeight:"100vh", padding:24, gap:16 }}>
+    <div style={{ ...appStyle, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", minHeight:"100vh", padding:24, gap:16, background:D_BAR.bg }}>
       <div style={{ fontSize:64 }}>✅</div>
       <div style={{ fontSize:22, fontWeight:800, color:D_BAR.success }}>¡Pedido enviado!</div>
-      <div style={{ fontSize:14, color:D_BAR.textSub, textAlign:"center" }}>Tu orden fue enviada al bar vía WhatsApp. En breve te la llevarán al hoyo {hoyo}{nombre ? `, ${nombre}` : ""}.</div>
+      <div style={{ fontSize:14, color:D_BAR.textSub, textAlign:"center" }}>Tu orden fue enviada al bar vía {canal === "whatsapp" ? "WhatsApp" : "SMS"}. En breve te la llevarán al hoyo {hoyo}{nombre ? `, ${nombre}` : ""}.</div>
       <button onClick={resetPedido} style={{ marginTop:8, padding:"12px 28px", border:"none", borderRadius:12, background:D_BAR.gold, color:"#000", fontSize:15, fontWeight:700, cursor:"pointer" }}>Nuevo pedido</button>
       <button onClick={onExit} style={{ fontSize:13, color:D_BAR.textSub, background:"none", border:"none", cursor:"pointer" }}>Volver</button>
     </div>
@@ -2991,7 +3022,7 @@ function BarView({ onExit, appStyle }) {
         ))}
       </div>
 
-      <div style={{ padding:"12px 16px", paddingBottom:160 }}>
+      <div style={{ padding:"12px 16px", paddingBottom:220 }}>
         {/* Productos */}
         {currentItems.length === 0 ? (
           <div style={{ textAlign:"center", color:D_BAR.textSub, padding:32, fontSize:13 }}>Sin productos en esta categoría</div>
@@ -3002,9 +3033,9 @@ function BarView({ onExit, appStyle }) {
             <div key={key} style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"12px 0", borderBottom:`1px solid ${D_BAR.border}` }}>
               <div style={{ fontSize:14, color:D_BAR.text, flex:1, fontWeight:500 }}>{item}</div>
               <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-                <button onClick={() => setCantidad(key, -1)} disabled={qty===0} style={{ width:32, height:32, borderRadius:"50%", border:`2px solid ${qty===0?"#aaa":D_BAR.gold}`, background: qty===0?"#ddd":D_BAR.goldDim, color: qty===0?"#aaa":D_BAR.gold, cursor: qty===0?"default":"pointer", fontSize:20, fontWeight:900, lineHeight:"1", opacity:qty===0?0.4:1, display:"flex", alignItems:"center", justifyContent:"center" }}>−</button>
-                <span style={{ fontSize:17, fontWeight:800, color:qty>0?D_BAR.gold:"#999", minWidth:28, textAlign:"center" }}>{qty}</span>
-                <button onClick={() => setCantidad(key, 1)} style={{ width:32, height:32, borderRadius:"50%", border:`2px solid ${D_BAR.gold}`, background:D_BAR.gold, color:"#000", cursor:"pointer", fontSize:20, fontWeight:900, lineHeight:"1", display:"flex", alignItems:"center", justifyContent:"center" }}>+</button>
+                <button onClick={() => setCantidad(key, -1)} disabled={qty===0} style={{ width:32, height:32, borderRadius:"50%", border:`2px solid ${qty===0?"#444":D_BAR.gold}`, background: qty===0?"transparent":D_BAR.goldDim, color: qty===0?"#444":D_BAR.gold, cursor: qty===0?"default":"pointer", fontSize:20, fontWeight:900, opacity:qty===0?0.35:1, display:"flex", alignItems:"center", justifyContent:"center" }}>−</button>
+                <span style={{ fontSize:17, fontWeight:800, color:qty>0?D_BAR.gold:"#555", minWidth:28, textAlign:"center" }}>{qty}</span>
+                <button onClick={() => setCantidad(key, 1)} style={{ width:32, height:32, borderRadius:"50%", border:`2px solid ${D_BAR.gold}`, background:D_BAR.gold, color:"#000", cursor:"pointer", fontSize:20, fontWeight:900, display:"flex", alignItems:"center", justifyContent:"center" }}>+</button>
               </div>
             </div>
           );
@@ -3013,16 +3044,39 @@ function BarView({ onExit, appStyle }) {
 
       {/* Footer fijo */}
       <div style={{ position:"fixed", bottom:0, left:"50%", transform:"translateX(-50%)", width:"100%", maxWidth:420, background:D_BAR.surface, borderTop:`1px solid ${D_BAR.border}`, padding:"12px 16px", zIndex:100 }}>
-        <div style={{ display:"flex", gap:8, marginBottom:8 }}>
-          <div style={{ fontSize:13, color:D_BAR.textSub, display:"flex", alignItems:"center", gap:6, minWidth:"fit-content" }}>👤 Nombre:</div>
-          <input type="text" value={nombre} onChange={e => setNombre(e.target.value)} placeholder="Tu nombre" style={{ flex:1, padding:"8px 12px", border:`1px solid ${D_BAR.border}`, borderRadius:10, background:D_BAR.bg, color:D_BAR.text, fontSize:14 }} />
+
+        {/* Nombre */}
+        <div style={{ display:"flex", gap:8, marginBottom:8, alignItems:"center" }}>
+          <span style={{ fontSize:13, color:D_BAR.textSub, minWidth:70 }}>👤 Nombre:</span>
+          <input type="text" value={nombre} onChange={e => setNombre(e.target.value)} placeholder="Tu nombre" style={{ flex:1, padding:"7px 10px", border:`1px solid ${D_BAR.border}`, borderRadius:8, background:D_BAR.bg, color:D_BAR.text, fontSize:14 }} />
         </div>
-        <div style={{ display:"flex", gap:8, marginBottom:10 }}>
-          <div style={{ fontSize:13, color:D_BAR.textSub, display:"flex", alignItems:"center", gap:6, minWidth:"fit-content" }}>⛳ Hoyo:</div>
-          <input type="number" min="1" max="18" value={hoyo} onChange={e => setHoyo(e.target.value)} placeholder="# Hoyo" style={{ flex:1, padding:"8px 12px", border:`1px solid ${D_BAR.border}`, borderRadius:10, background:D_BAR.bg, color:D_BAR.text, fontSize:15, fontWeight:700, textAlign:"center" }} />
+
+        {/* Hoyo — cuadrícula 1-9 */}
+        <div style={{ marginBottom:10 }}>
+          <div style={{ fontSize:12, color:D_BAR.textSub, marginBottom:5 }}>⛳ Hoyo de entrega:</div>
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(9,1fr)", gap:4 }}>
+            {[1,2,3,4,5,6,7,8,9].map(n => (
+              <button key={n} onClick={() => setHoyo(hoyo===n ? null : n)}
+                style={{ padding:"7px 0", border:`2px solid ${hoyo===n ? D_BAR.gold : D_BAR.border}`, borderRadius:8, background: hoyo===n ? D_BAR.gold : "transparent", color: hoyo===n ? "#000" : D_BAR.textSub, fontSize:14, fontWeight:800, cursor:"pointer", textAlign:"center" }}>
+                {n}
+              </button>
+            ))}
+          </div>
         </div>
-        <button onClick={handleEnviar} disabled={enviando || totalItems===0} style={{ width:"100%", padding:"13px", border:"none", borderRadius:12, background: totalItems===0 ? D_BAR.border : `linear-gradient(135deg,#25D366,#128C7E)`, color:"#fff", fontSize:15, fontWeight:700, cursor: totalItems===0 ? "default" : "pointer", opacity: totalItems===0 ? 0.5 : 1, display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}>
-          {enviando ? "Enviando..." : `💬 Enviar pedido por WhatsApp${totalItems>0 ? ` (${totalItems} items)` : ""}`}
+
+        {/* Canal de envío */}
+        <div style={{ display:"flex", gap:6, marginBottom:10 }}>
+          <button onClick={() => setCanal("whatsapp")} style={{ flex:1, padding:"7px 4px", border:`2px solid ${canal==="whatsapp" ? "#25D366" : D_BAR.border}`, borderRadius:8, background: canal==="whatsapp" ? "rgba(37,211,102,0.15)" : "transparent", color: canal==="whatsapp" ? "#25D366" : D_BAR.textSub, fontSize:12, fontWeight:700, cursor:"pointer" }}>
+            💬 WhatsApp
+          </button>
+          <button onClick={() => setCanal("sms")} style={{ flex:1, padding:"7px 4px", border:`2px solid ${canal==="sms" ? "#4FC3F7" : D_BAR.border}`, borderRadius:8, background: canal==="sms" ? "rgba(79,195,247,0.15)" : "transparent", color: canal==="sms" ? "#4FC3F7" : D_BAR.textSub, fontSize:12, fontWeight:700, cursor:"pointer" }}>
+            📱 SMS
+          </button>
+        </div>
+
+        {/* Botón enviar */}
+        <button onClick={handleEnviar} disabled={enviando || totalItems===0} style={{ width:"100%", padding:"13px", border:"none", borderRadius:12, background: totalItems===0 ? D_BAR.border : canal==="whatsapp" ? `linear-gradient(135deg,#25D366,#128C7E)` : `linear-gradient(135deg,#4FC3F7,#0288D1)`, color:"#fff", fontSize:15, fontWeight:700, cursor: totalItems===0 ? "default" : "pointer", opacity: totalItems===0 ? 0.5 : 1, display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}>
+          {enviando ? "Enviando..." : `${canal==="whatsapp"?"💬":"📱"} Enviar por ${canal==="whatsapp"?"WhatsApp":"SMS"}${totalItems>0 ? ` (${totalItems})` : ""}`}
         </button>
       </div>
     </div>
