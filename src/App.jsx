@@ -1603,7 +1603,8 @@ function CerrarTorneoPanel({ torneoId, torneo, grupos, allPlayers, ranked, pars,
     // Para calcular HC necesitamos los scores completos
     // Usamos fullScores aproximados (reemplazando null con par)
     const playersGlobal = allPlayers.map(p => ({
-      ...p, id: p.id || p.name, opts:{score:true,marcas:true,tarjetas:true}
+      ...p, id: p.id || p.name,
+      opts: p.opts || {score:true,marcas:true,tarjetas:true}
     }));
     const scoresGlobal = allPlayers.map(p => pars.map((par,h) => {
       const v = p.scores[h];
@@ -1611,9 +1612,13 @@ function CerrarTorneoPanel({ torneoId, torneo, grupos, allPlayers, ranked, pars,
     }));
 
     const r = calcMoney(playersGlobal, scoresGlobal, torneo.apuesta||50, 0, torneo.nHoles||18);
-    const playsScoreCount = playersGlobal.length;
+    // Solo contar jugadores que participan en score para la regla 10+
+    const playsScoreCount = playersGlobal.filter(p => p.opts?.score !== false).length;
     const siParaHC = (playsScoreCount >= 10 && r.fi.length === 1) ? r.si : [];
-    const hc = calcHC(playersGlobal, scoresGlobal, siParaHC, torneo.nHoles||18);
+    // Solo calcular HC para jugadores con score
+    const hc = calcHC(playersGlobal.filter(p => p.opts?.score !== false),
+                      scoresGlobal.filter((_,i) => playersGlobal[i].opts?.score !== false),
+                      siParaHC, torneo.nHoles||18);
     setHcUpdates(hc);
   }, []);
 
@@ -1628,7 +1633,7 @@ function CerrarTorneoPanel({ torneoId, torneo, grupos, allPlayers, ranked, pars,
       // ── Construir datos globales de todos los jugadores ──
       const allPlayers = grupos.flatMap(([gid, g]) => {
         const gPs = (Array.isArray(g.players)?g.players:Object.values(g.players||{}))
-          .map(p=>({...p, opts:{score:true,marcas:true,tarjetas:true}}));
+          .map(p=>({...p, opts: p.opts || {score:true,marcas:true,tarjetas:true}}));
         const gScRaw = Array.isArray(g.scores)?g.scores:Object.values(g.scores||{});
         return gPs.map((p,pi) => {
           const rowRaw = gScRaw[pi];
@@ -1643,13 +1648,16 @@ function CerrarTorneoPanel({ torneoId, torneo, grupos, allPlayers, ranked, pars,
       const scoresGlobal = allPlayers.map(p => p.fullScores);
       const rGlobal = calcMoney(allPlayers, scoresGlobal, torneo.apuesta||50, 0, torneo.nHoles||18);
 
-      // Peor score global
-      const netsGlobal = allPlayers.map((p,i) => scoresGlobal[i].reduce((a,b)=>a+b,0) - hcEf(p.hc, torneo.nHoles||18));
-      const peorNeto = Math.max(...netsGlobal);
-      const peoresIdx = netsGlobal.map((n,i)=>n===peorNeto?i:-1).filter(i=>i>=0);
+      // Peor score global (solo entre jugadores que apuestan)
       const tv = torneo.tarjetaVal||10;
-      const peorMoneyArr = allPlayers.map((_,i) => {
-        if (peoresIdx.includes(i)) return -((allPlayers.length-peoresIdx.length)*tv/peoresIdx.length);
+      const conScoreIdx = allPlayers.map((p,i) => p.opts?.score !== false ? i : -1).filter(i=>i>=0);
+      const netsGlobal = allPlayers.map((p,i) => scoresGlobal[i].reduce((a,b)=>a+b,0) - hcEf(p.hc, torneo.nHoles||18));
+      const netsConScore = conScoreIdx.map(i => netsGlobal[i]);
+      const peorNeto = netsConScore.length > 0 ? Math.max(...netsConScore) : null;
+      const peoresIdx = peorNeto !== null ? conScoreIdx.filter(i=>netsGlobal[i]===peorNeto) : [];
+      const peorMoneyArr = allPlayers.map((p,i) => {
+        if (p.opts?.score === false) return 0; // sin apuesta: no participa en peor score
+        if (peoresIdx.includes(i)) return -((conScoreIdx.length-peoresIdx.length)*tv/peoresIdx.length);
         return tv;
       });
 
@@ -1660,7 +1668,7 @@ function CerrarTorneoPanel({ torneoId, torneo, grupos, allPlayers, ranked, pars,
       let offset = 0;
       grupos.forEach(([gid,g]) => {
         const gPs = (Array.isArray(g.players)?g.players:Object.values(g.players||{}))
-          .map(p=>({...p,opts:{score:true,marcas:true,tarjetas:true}}));
+          .map(p=>({...p, opts: p.opts || {score:true,marcas:true,tarjetas:true}}));
         const gMarcas = g.marcas?(Array.isArray(g.marcas)?g.marcas:Object.values(g.marcas)).map(h=>h?({...h,multi:Array.isArray(h.multi)?h.multi:Object.values(h.multi||{})}):h):null;
         const gTarjetas = g.tarjetas||null;
         if (gMarcas) {
@@ -1682,18 +1690,30 @@ function CerrarTorneoPanel({ torneoId, torneo, grupos, allPlayers, ranked, pars,
       });
 
       // Clasificación global final
-      const jugadoresGlobal = allPlayers.map((p,i) => ({
-        name: p.name, hc: p.hc,
-        grupoNombre: p.grupoNombre,
-        bruto: scoresGlobal[i].reduce((a,b)=>a+b,0),
-        neto: rGlobal.nets[i],
-        scoreMoney: rGlobal.money[i],
-        marcasMoney: marcasMoneyArr[i],
-        tarjetasMoney: tarjetasMoneyArr[i]+peorMoneyArr[i],
-        total: rGlobal.money[i]+marcasMoneyArr[i]+tarjetasMoneyArr[i]+peorMoneyArr[i],
-      })).sort((a,b)=>a.neto-b.neto);
+      const jugadoresGlobal = allPlayers.map((p,i) => {
+        const noScore = p.opts?.score === false;
+        const sm = noScore ? 0 : (rGlobal.money[i] ?? 0);
+        const mm = noScore ? 0 : (marcasMoneyArr[i] ?? 0);
+        const tm = noScore ? 0 : ((tarjetasMoneyArr[i] ?? 0) + (peorMoneyArr[i] ?? 0));
+        return {
+          name: p.name, hc: p.hc,
+          grupoNombre: p.grupoNombre,
+          bruto: scoresGlobal[i].reduce((a,b)=>a+b,0),
+          neto: noScore ? null : (rGlobal.nets[i] ?? null),
+          scoreMoney: sm,
+          marcasMoney: mm,
+          tarjetasMoney: tm,
+          total: sm + mm + tm,
+        };
+      }).sort((a,b) => {
+        // Jugadores sin score van al final
+        if (a.neto === null && b.neto === null) return 0;
+        if (a.neto === null) return 1;
+        if (b.neto === null) return -1;
+        return a.neto - b.neto;
+      });
 
-      const ganadorGlobal = jugadoresGlobal[0];
+      const ganadorGlobal = jugadoresGlobal.find(j => j.neto !== null) || jugadoresGlobal[0];
 
       // Guardar resumen global en el torneo
       await set(ref(db, `torneos/${torneoId}/resumenGlobal`), {
@@ -1713,7 +1733,7 @@ function CerrarTorneoPanel({ torneoId, torneo, grupos, allPlayers, ranked, pars,
           const gMarcas = g.marcas?(Array.isArray(g.marcas)?g.marcas:Object.values(g.marcas)).map(h=>h?({...h,multi:Array.isArray(h.multi)?h.multi:Object.values(h.multi||{})}):h):null;
           const gFullScores = gPs.map((_,pi)=>{ const r=Array.isArray(gScRaw[pi])?gScRaw[pi]:Object.values(gScRaw[pi]||{}); return pars.map((par,h)=>{const v=r[h];return(v===null||v===undefined)?par:v;}); });
           await set(ref(db, `torneos/${torneoId}/grupos/${gid}/resumenFinal`), {
-            ganador: calcMoney(gPs.map(p=>({...p,opts:{score:true,marcas:true,tarjetas:true}})),gFullScores,torneo.apuesta||50).fi.map(i=>gPs[i].name).join(" · "),
+            ganador: calcMoney(gPs.map(p=>({...p, opts: p.opts || {score:true,marcas:true,tarjetas:true}})),gFullScores,torneo.apuesta||50).fi.map(i=>gPs[i].name).join(" · "),
             pars, playerNames: gPs.map(p=>p.name),
             scoresPorHoyo: gFullScores,
             marcas: gMarcas, tarjetas: g.tarjetas||null,
