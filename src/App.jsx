@@ -2969,7 +2969,7 @@ function BarView({ onExit, appStyle }) {
   );
 
   return (
-    <div style={{ ...appStyle, minHeight:"100vh" }}>
+    <div style={{ ...appStyle, minHeight:"100vh", background:D_BAR.bg, color:D_BAR.text }}>
       {/* Header */}
       <div style={{ background:D_BAR.surface, borderBottom:`1px solid ${D_BAR.border}`, padding:"16px 16px 12px", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
         <div>
@@ -3000,11 +3000,11 @@ function BarView({ onExit, appStyle }) {
           const qty = cantidades[key] || 0;
           return (
             <div key={key} style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"12px 0", borderBottom:`1px solid ${D_BAR.border}` }}>
-              <div style={{ fontSize:14, color:D_BAR.text, flex:1 }}>{item}</div>
+              <div style={{ fontSize:14, color:D_BAR.text, flex:1, fontWeight:500 }}>{item}</div>
               <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-                <button onClick={() => setCantidad(key, -1)} disabled={qty===0} style={{ width:30, height:30, borderRadius:"50%", border:`1px solid ${D_BAR.border}`, background:"transparent", color:D_BAR.text, cursor:"pointer", fontSize:18, opacity:qty===0?0.3:1 }}>−</button>
-                <span style={{ fontSize:16, fontWeight:700, color:qty>0?D_BAR.gold:D_BAR.textSub, minWidth:24, textAlign:"center" }}>{qty}</span>
-                <button onClick={() => setCantidad(key, 1)} style={{ width:30, height:30, borderRadius:"50%", border:`1px solid ${D_BAR.gold}`, background:D_BAR.goldDim, color:D_BAR.gold, cursor:"pointer", fontSize:18, fontWeight:700 }}>+</button>
+                <button onClick={() => setCantidad(key, -1)} disabled={qty===0} style={{ width:32, height:32, borderRadius:"50%", border:`2px solid ${qty===0?"#aaa":D_BAR.gold}`, background: qty===0?"#ddd":D_BAR.goldDim, color: qty===0?"#aaa":D_BAR.gold, cursor: qty===0?"default":"pointer", fontSize:20, fontWeight:900, lineHeight:"1", opacity:qty===0?0.4:1, display:"flex", alignItems:"center", justifyContent:"center" }}>−</button>
+                <span style={{ fontSize:17, fontWeight:800, color:qty>0?D_BAR.gold:"#999", minWidth:28, textAlign:"center" }}>{qty}</span>
+                <button onClick={() => setCantidad(key, 1)} style={{ width:32, height:32, borderRadius:"50%", border:`2px solid ${D_BAR.gold}`, background:D_BAR.gold, color:"#000", cursor:"pointer", fontSize:20, fontWeight:900, lineHeight:"1", display:"flex", alignItems:"center", justifyContent:"center" }}>+</button>
               </div>
             </div>
           );
