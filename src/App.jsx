@@ -1631,44 +1631,44 @@ function CerrarTorneoPanel({ torneoId, torneo, grupos, allPlayers, ranked, pars,
       const fechaStr = `${fecha.getDate().toString().padStart(2,'0')}/${(fecha.getMonth()+1).toString().padStart(2,'0')}`;
 
       // ── Construir datos globales de todos los jugadores ──
-      const allPlayers = grupos.flatMap(([gid, g]) => {
-        const gPs = (Array.isArray(g.players)?g.players:Object.values(g.players||{}))
-          .map(p=>({...p, opts: p.opts || {score:true,marcas:true,tarjetas:true}}));
-        const gScRaw = Array.isArray(g.scores)?g.scores:Object.values(g.scores||{});
-        return gPs.map((p,pi) => {
-          const rowRaw = gScRaw[pi];
-          const row = toArr(rowRaw);
-          const fullRow = pars.map((par,h)=>{ const v=row[h]; return (v===null||v===undefined)?par:v; });
-          return { ...p, grupoId:gid, grupoNombre:g.nombre||`Grupo ${gid.slice(-3)}`,
-            fullScores:fullRow, marcas:g.marcas, tarjetas:g.tarjetas };
+      // Usamos el prop allPlayers (ya tiene opts correctos de Firebase + scores)
+      // y añadimos fullScores (reemplazando null con par) para el cálculo.
+      const allPlayersCalc = allPlayers.map(p => {
+        const fullScores = pars.map((par, h) => {
+          const v = p.scores[h];
+          return (v === null || v === undefined) ? par : v;
         });
+        return { ...p, fullScores };
       });
+      // Alias para compatibilidad con el código que sigue
+      const allPlayersLocal = allPlayersCalc;
 
       // Score global entre todos
-      const scoresGlobal = allPlayers.map(p => p.fullScores);
-      const rGlobal = calcMoney(allPlayers, scoresGlobal, torneo.apuesta||50, 0, torneo.nHoles||18);
+      const scoresGlobal = allPlayersLocal.map(p => p.fullScores);
+      const rGlobal = calcMoney(allPlayersLocal, scoresGlobal, torneo.apuesta||50, 0, torneo.nHoles||18);
 
       // Peor score global (solo entre jugadores que apuestan)
       const tv = torneo.tarjetaVal||10;
-      const conScoreIdx = allPlayers.map((p,i) => p.opts?.score !== false ? i : -1).filter(i=>i>=0);
-      const netsGlobal = allPlayers.map((p,i) => scoresGlobal[i].reduce((a,b)=>a+b,0) - hcEf(p.hc, torneo.nHoles||18));
+      const conScoreIdx = allPlayersLocal.map((p,i) => p.opts?.score !== false ? i : -1).filter(i=>i>=0);
+      const netsGlobal = allPlayersLocal.map((p,i) => scoresGlobal[i].reduce((a,b)=>a+b,0) - hcEf(p.hc, torneo.nHoles||18));
       const netsConScore = conScoreIdx.map(i => netsGlobal[i]);
       const peorNeto = netsConScore.length > 0 ? Math.max(...netsConScore) : null;
       const peoresIdx = peorNeto !== null ? conScoreIdx.filter(i=>netsGlobal[i]===peorNeto) : [];
-      const peorMoneyArr = allPlayers.map((p,i) => {
+      const peorMoneyArr = allPlayersLocal.map((p,i) => {
         if (p.opts?.score === false) return 0; // sin apuesta: no participa en peor score
         if (peoresIdx.includes(i)) return -((conScoreIdx.length-peoresIdx.length)*tv/peoresIdx.length);
         return tv;
       });
 
-      // Marcas y tarjetas por grupo (excluyendo peorscore)
+      // Marcas y tarjetas por grupo: usamos allPlayersLocal para respetar opts correctos
       const TARJETAS_SIN_PS = TARJETAS.filter(t=>t.key!=="peorscore");
-      const marcasMoneyArr = new Array(allPlayers.length).fill(0);
-      const tarjetasMoneyArr = new Array(allPlayers.length).fill(0);
+      const marcasMoneyArr = new Array(allPlayersLocal.length).fill(0);
+      const tarjetasMoneyArr = new Array(allPlayersLocal.length).fill(0);
       let offset = 0;
       grupos.forEach(([gid,g]) => {
-        const gPs = (Array.isArray(g.players)?g.players:Object.values(g.players||{}))
-          .map(p=>({...p, opts: p.opts || {score:true,marcas:true,tarjetas:true}}));
+        // Tomar jugadores desde allPlayersLocal para preservar opts reales
+        const gPlCount = (Array.isArray(g.players)?g.players:Object.values(g.players||{})).length;
+        const gPs = allPlayersLocal.slice(offset, offset + gPlCount);
         const gMarcas = g.marcas?(Array.isArray(g.marcas)?g.marcas:Object.values(g.marcas)).map(h=>h?({...h,multi:Array.isArray(h.multi)?h.multi:Object.values(h.multi||{})}):h):null;
         const gTarjetas = g.tarjetas||null;
         if (gMarcas) {
@@ -1690,7 +1690,7 @@ function CerrarTorneoPanel({ torneoId, torneo, grupos, allPlayers, ranked, pars,
       });
 
       // Clasificación global final
-      const jugadoresGlobal = allPlayers.map((p,i) => {
+      const jugadoresGlobal = allPlayersLocal.map((p,i) => {
         const noScore = p.opts?.score === false;
         const sm = noScore ? 0 : (rGlobal.money[i] ?? 0);
         const mm = noScore ? 0 : (marcasMoneyArr[i] ?? 0);
@@ -1726,19 +1726,24 @@ function CerrarTorneoPanel({ torneoId, torneo, grupos, allPlayers, ranked, pars,
       });
 
       // Guardar desglose por grupo (tarjeta hoyo×hoyo, marcas, tarjetas)
+      let grpOffset = 0;
       for (const [gid, g] of grupos) {
         try {
-          const gPs = (Array.isArray(g.players)?g.players:Object.values(g.players||{}));
+          const rawGPs = (Array.isArray(g.players)?g.players:Object.values(g.players||{}));
+          // Usar los jugadores de allPlayersLocal para preservar opts correctos
+          const gPsLocal = allPlayersLocal.slice(grpOffset, grpOffset + rawGPs.length);
           const gScRaw = Array.isArray(g.scores)?g.scores:Object.values(g.scores||{});
           const gMarcas = g.marcas?(Array.isArray(g.marcas)?g.marcas:Object.values(g.marcas)).map(h=>h?({...h,multi:Array.isArray(h.multi)?h.multi:Object.values(h.multi||{})}):h):null;
-          const gFullScores = gPs.map((_,pi)=>{ const r=Array.isArray(gScRaw[pi])?gScRaw[pi]:Object.values(gScRaw[pi]||{}); return pars.map((par,h)=>{const v=r[h];return(v===null||v===undefined)?par:v;}); });
+          const gFullScores = gPsLocal.map((p,pi)=>{ const r=Array.isArray(gScRaw[pi])?gScRaw[pi]:Object.values(gScRaw[pi]||{}); return pars.map((par,h)=>{const v=r[h];return(v===null||v===undefined)?par:v;}); });
+          const ganRes = calcMoney(gPsLocal, gFullScores, torneo.apuesta||50);
           await set(ref(db, `torneos/${torneoId}/grupos/${gid}/resumenFinal`), {
-            ganador: calcMoney(gPs.map(p=>({...p, opts: p.opts || {score:true,marcas:true,tarjetas:true}})),gFullScores,torneo.apuesta||50).fi.map(i=>gPs[i].name).join(" · "),
-            pars, playerNames: gPs.map(p=>p.name),
+            ganador: ganRes.fi.map(i=>gPsLocal[i].name).join(" · "),
+            pars, playerNames: gPsLocal.map(p=>p.name),
             scoresPorHoyo: gFullScores,
             marcas: gMarcas, tarjetas: g.tarjetas||null,
           });
-        } catch(e) {}
+          grpOffset += rawGPs.length;
+        } catch(e) { grpOffset += (Array.isArray(g.players)?g.players:Object.values(g.players||{})).length; }
       }
 
       if (guardarHC && hcUpdates) {
@@ -1920,7 +1925,7 @@ function TorneoSpectator({ torneoId, appStyle, isAdmin = false }) {
   const totalTarjetaAbandonos = todosAbandonos.filter(a=>a.conCastigo).reduce((a,c)=>a+c.tarjetaPago,0);
   const gananciaXCastigoGlobal = allPlayers.length > 0 ? Math.round(totalTarjetaAbandonos / allPlayers.length) : 0;
 
-  const playersForCalc = allPlayers.map(p => ({ ...p, opts:{score:true,marcas:true,tarjetas:true} }));
+  const playersForCalc = allPlayers.map(p => ({ ...p, opts: p.opts || {score:true,marcas:true,tarjetas:true} }));
   const fullScoresForCalc = allPlayers.map(p => pars.map((par,h) => {
     const v = p.scores[h];
     return (v===null||v===undefined) ? par : v;
@@ -1933,7 +1938,7 @@ function TorneoSpectator({ torneoId, appStyle, isAdmin = false }) {
   const marcasMoneyMap = {};
   const tarjetasMoneyMap = {};
   grupos.forEach(([gid, g]) => {
-    const gPlayers = (Array.isArray(g.players) ? g.players : Object.values(g.players||{})).map(p=>({...p,opts:{score:true,marcas:true,tarjetas:true}}));
+    const gPlayers = (Array.isArray(g.players) ? g.players : Object.values(g.players||{})).map(p=>({...p, opts: p.opts || {score:true,marcas:true,tarjetas:true}}));
     const gMarcas = g.marcas ? (Array.isArray(g.marcas) ? g.marcas : Object.values(g.marcas)).map(h=>h?({...h,multi:Array.isArray(h.multi)?h.multi:Object.values(h.multi||{})}):h) : null;
     const gTarjetas = normalizeTarjetas(g.tarjetas);
     if (gMarcas && gPlayers.length > 0) {
