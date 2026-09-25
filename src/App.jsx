@@ -397,7 +397,11 @@ function calcMarcasResumen(players, marcas) {
 
 function calcMarcasMoney(players, marcas, marcaVal) {
   const pts = calcMarcasPts(players, marcas);
-  const playsMarcas = players.map(p => p.opts ? p.opts.marcas !== false : true);
+  // Jugador sin apuesta (score:false) tampoco participa en marcas
+  const playsMarcas = players.map(p => {
+    if (p.opts?.score === false) return false;
+    return p.opts ? p.opts.marcas !== false : true;
+  });
   return players.map((_, i) => {
     if (!playsMarcas[i]) return 0;
     let b = 0;
@@ -421,7 +425,11 @@ function calcTarjetasMoney(players, tarjetas, tarjetaVal) {
     });
     return c;
   });
-  const playsTarjetas = players.map(p => p.opts ? p.opts.tarjetas !== false : true);
+  // Un jugador sin apuesta (score:false) tampoco participa en tarjetas
+  const playsTarjetas = players.map(p => {
+    if (p.opts?.score === false) return false;
+    return p.opts ? p.opts.tarjetas !== false : true;
+  });
   return players.map((_, i) => {
     if (!playsTarjetas[i]) return 0;
     let b = 0;
@@ -685,11 +693,13 @@ function SpectatorView({ rondaId }) {
     const mPts = players.map((p,i) => (p.opts?.marcas === false) ? 0 : mPtsRaw[i]);
     const tMoney = tarjetas ? calcTarjetasMoney(players, tarjetas, tarjetaVal||0) : players.map(()=>0);
     const tCount = players.map((p,i) => (p.opts?.tarjetas === false) ? 0 : (tarjetas ? TARJETAS.filter(t=>tarjetas[t.key]===i).length : 0));
-    return players.map((p,i) => ({
-      name:p.name, scoreMoney:r.money[i], marcasMoney:mMoney[i], marcasPts:mPts[i],
-      tarjetasMoney:tMoney[i], tarjetasCount:tCount[i],
-      total:r.money[i]+mMoney[i]+tMoney[i],
-    })).sort((a,b)=>b.total-a.total);
+    return players.map((p,i) => {
+      const noScore = p.opts?.score === false;
+      const sm = noScore ? 0 : (r.money[i] ?? 0);
+      const mm = noScore ? 0 : (mMoney[i] ?? 0);
+      const tm = noScore ? 0 : (tMoney[i] ?? 0);
+      return { name:p.name, scoreMoney:sm, marcasMoney:mm, marcasPts: noScore ? 0 : (mPts[i]??0), tarjetasMoney:tm, tarjetasCount: noScore ? 0 : tCount[i], total:sm+mm+tm };
+    }).sort((a,b)=>b.total-a.total);
   })();
 
   // ── VISTA COMPLETA DE RESULTADOS FINALES (cuando hay historial guardado) ──
