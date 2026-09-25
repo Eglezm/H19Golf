@@ -2867,6 +2867,7 @@ function BarView({ onExit, appStyle }) {
   const [menu, setMenu] = useState({ bebidas:[], comida:[], snacks:[] });
   const [cantidades, setCantidades] = useState({});
   const [hoyo, setHoyo] = useState("");
+  const [nombre, setNombre] = useState("");
   const [whatsapp, setWhatsapp] = useState("");
   const [loading, setLoading] = useState(true);
   const [enviando, setEnviando] = useState(false);
@@ -2923,7 +2924,8 @@ function BarView({ onExit, appStyle }) {
     });
     if (lineas.length === 0) return null;
     const hoyoStr = hoyo ? `\nHoyo: *${hoyo}*` : "";
-    return `🏌️ *Pedido H19 Golf*${hoyoStr}\n\n${lineas.join("\n")}`;
+    const nombreStr = nombre.trim() ? `\nNombre: *${nombre.trim()}*` : "";
+    return `🏌️ *Pedido H19 Golf*${hoyoStr}${nombreStr}\n\n${lineas.join("\n")}`;
   };
 
   const handleEnviar = () => {
@@ -2941,6 +2943,7 @@ function BarView({ onExit, appStyle }) {
   const resetPedido = () => {
     setCantidades({});
     setHoyo("");
+    setNombre("");
     setEnviado(false);
   };
 
@@ -2959,7 +2962,7 @@ function BarView({ onExit, appStyle }) {
     <div style={{ ...appStyle, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", minHeight:"100vh", padding:24, gap:16 }}>
       <div style={{ fontSize:64 }}>✅</div>
       <div style={{ fontSize:22, fontWeight:800, color:D_BAR.success }}>¡Pedido enviado!</div>
-      <div style={{ fontSize:14, color:D_BAR.textSub, textAlign:"center" }}>Tu orden fue enviada al bar vía WhatsApp. En breve te la llevarán al hoyo {hoyo}.</div>
+      <div style={{ fontSize:14, color:D_BAR.textSub, textAlign:"center" }}>Tu orden fue enviada al bar vía WhatsApp. En breve te la llevarán al hoyo {hoyo}{nombre ? `, ${nombre}` : ""}.</div>
       <button onClick={resetPedido} style={{ marginTop:8, padding:"12px 28px", border:"none", borderRadius:12, background:D_BAR.gold, color:"#000", fontSize:15, fontWeight:700, cursor:"pointer" }}>Nuevo pedido</button>
       <button onClick={onExit} style={{ fontSize:13, color:D_BAR.textSub, background:"none", border:"none", cursor:"pointer" }}>Volver</button>
     </div>
@@ -3010,6 +3013,10 @@ function BarView({ onExit, appStyle }) {
 
       {/* Footer fijo */}
       <div style={{ position:"fixed", bottom:0, left:"50%", transform:"translateX(-50%)", width:"100%", maxWidth:420, background:D_BAR.surface, borderTop:`1px solid ${D_BAR.border}`, padding:"12px 16px", zIndex:100 }}>
+        <div style={{ display:"flex", gap:8, marginBottom:8 }}>
+          <div style={{ fontSize:13, color:D_BAR.textSub, display:"flex", alignItems:"center", gap:6, minWidth:"fit-content" }}>👤 Nombre:</div>
+          <input type="text" value={nombre} onChange={e => setNombre(e.target.value)} placeholder="Tu nombre" style={{ flex:1, padding:"8px 12px", border:`1px solid ${D_BAR.border}`, borderRadius:10, background:D_BAR.bg, color:D_BAR.text, fontSize:14 }} />
+        </div>
         <div style={{ display:"flex", gap:8, marginBottom:10 }}>
           <div style={{ fontSize:13, color:D_BAR.textSub, display:"flex", alignItems:"center", gap:6, minWidth:"fit-content" }}>⛳ Hoyo:</div>
           <input type="number" min="1" max="18" value={hoyo} onChange={e => setHoyo(e.target.value)} placeholder="# Hoyo" style={{ flex:1, padding:"8px 12px", border:`1px solid ${D_BAR.border}`, borderRadius:10, background:D_BAR.bg, color:D_BAR.text, fontSize:15, fontWeight:700, textAlign:"center" }} />
