@@ -5149,32 +5149,33 @@ function AdminApp({ onExit, torneoConfig = null }) {
           hole, status: "finalizada", updatedAt: Date.now(),
           abandonos: castigosFinales,
           resultados: {
-            ganador: r.fi.map(i=>players[i].name).join(" · "),
-            netGanador: r.nets[r.fi[0]],
+            ganador: r.fi.length > 0 ? r.fi.map(i=>players[i].name).join(" · ") : "—",
+            netGanador: r.fi.length > 0 ? (r.nets[r.fi[0]] ?? null) : null,
           }
         });
       } catch(e) {}
     }
     // Guardar en historial
     try {
+      const noApostaIdx = new Set(players.map((p,i)=>p.opts?.score===false?i:-1).filter(i=>i>=0));
       const jugadoresDetalle = players.map((p, i) => ({
         name: p.name,
-        hc: p.hc,
-        bruto: fullScores[i].reduce((a,b)=>a+b,0),
-        neto: r.nets[i],
-        scoreMoney: r.money[i],
-        marcasMoney: marcasMoney[i],
-        marcasPts: marcasPts[i],
-        tarjetasMoney: tarjetasMoney[i],
-        tarjetasCount: tarjetasCount[i],
-        total: r.money[i] + marcasMoney[i] + tarjetasMoney[i],
+        hc: p.hc ?? 0,
+        bruto: fullScores[i].reduce((a,b)=>a+(b||0),0),
+        neto: noApostaIdx.has(i) ? null : (r.nets[i] ?? null),
+        scoreMoney: noApostaIdx.has(i) ? 0 : (r.money[i] ?? 0),
+        marcasMoney: marcasMoney[i] ?? 0,
+        marcasPts: marcasPts[i] ?? 0,
+        tarjetasMoney: tarjetasMoney[i] ?? 0,
+        tarjetasCount: tarjetasCount[i] ?? 0,
+        total: (noApostaIdx.has(i) ? 0 : (r.money[i] ?? 0)) + (marcasMoney[i] ?? 0) + (tarjetasMoney[i] ?? 0),
       }));
       const histData = {
         nombre: autoNombre,
         campo, nHoles, fechaTs: Date.now(),
         fecha: fechaStr,
-        ganador: r.fi.map(i=>players[i].name).join(" · "),
-        netGanador: r.nets[r.fi[0]],
+        ganador: r.fi.length > 0 ? r.fi.map(i=>players[i].name).join(" · ") : "—",
+        netGanador: r.fi.length > 0 ? (r.nets[r.fi[0]] ?? null) : null,
         rondaId,
         apuesta, marcaVal, tarjetaVal,
         jugadores: jugadoresDetalle,
@@ -5188,18 +5189,28 @@ function AdminApp({ onExit, torneoConfig = null }) {
         marcas,
         tarjetas,
       };
-      set(ref(db, `historial/${rondaId}`), histData)
+      // Firebase rechaza undefined — limpiar recursivamente
+      const cleanObj = (obj) => {
+        if (Array.isArray(obj)) return obj.map(cleanObj);
+        if (obj !== null && typeof obj === 'object') {
+          const out = {};
+          Object.entries(obj).forEach(([k,v]) => { if (v !== undefined) out[k] = cleanObj(v); });
+          return out;
+        }
+        return (obj !== undefined && !Number.isNaN(obj)) ? obj : null;
+      };
+      set(ref(db, `historial/${rondaId}`), cleanObj(histData))
         .catch(err => alert("Error guardando historial: " + err.message));
       // Si estamos en modo torneo, también guardar en historialTorneos
       if (torneoConfig) {
         const torneoHistKey = `${torneoConfig.torneoId}_${torneoConfig.grupoId}`;
-        set(ref(db, `historialTorneos/${torneoHistKey}`), {
+        set(ref(db, `historialTorneos/${torneoHistKey}`), cleanObj({
           ...histData,
           torneoId: torneoConfig.torneoId,
           torneoNombre: torneoConfig.nombre,
           grupoId: torneoConfig.grupoId,
           grupoNombre: grupoNombre || torneoConfig.grupoNombre,
-        }).catch(() => {});
+        })).catch(() => {});
       }
     } catch(e) { alert("Error en bloque historial: " + e.message); }
     setScreen("res");
