@@ -1969,7 +1969,7 @@ function TorneoSpectator({ torneoId, appStyle, isAdmin = false }) {
     }
   });
 
-  const conScoreGlobal = ranked.filter(p => p.vsParHC !== null);
+  const conScoreGlobal = ranked.filter(p => p.vsParHC !== null && p.opts?.score !== false);
   const peorVsParHCGlobal = conScoreGlobal.length > 0 ? Math.max(...conScoreGlobal.map(p => p.vsParHC)) : null;
   const peoresGlobal = peorVsParHCGlobal !== null ? conScoreGlobal.filter(p => p.vsParHC === peorVsParHCGlobal) : [];
   const totalJugadoresConScore = conScoreGlobal.length;
@@ -5140,13 +5140,16 @@ function AdminApp({ onExit, torneoConfig = null }) {
     const r = calcMoney(players, fullScores, apuesta, extraPotAbandonos, nHoles);
     const playsScoreCount = players.filter(p => p.opts ? p.opts.score !== false : true).length;
     const siParaHC = (playsScoreCount >= 10 && r.fi.length === 1) ? r.si : [];
-    const hc = calcHC(players, fullScores, siParaHC, nHoles);
+    // Solo calcular HC para jugadores que apuestan (score !== false)
+    const playersParaHC = players.filter(p => p.opts?.score !== false);
+    const scoresParaHC = fullScores.filter((_, i) => players[i].opts?.score !== false);
+    const hc = calcHC(playersParaHC, scoresParaHC, siParaHC, nHoles);
     const marcasMoney = calcMarcasMoney(players, marcas, marcaVal);
     const marcasPtsRaw = calcMarcasPts(players, marcas);
     const marcasPts = players.map((p,i) => (p.opts?.marcas === false) ? 0 : marcasPtsRaw[i]);
     // Recalcular peorscore con scores COMPLETOS (total tiros - HC)
     const netosFinales = players.map((p,i) => {
-      if (p.opts?.tarjetas === false) return null;
+      if (p.opts?.score === false || p.opts?.tarjetas === false) return null;
       const hcEfFin = nHoles <= 9 ? Math.ceil(p.hc/2) : p.hc;
       return fullScores[i].reduce((a,b)=>a+b,0) - hcEfFin;
     });
