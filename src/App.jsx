@@ -4780,6 +4780,14 @@ function AdminApp({ onExit, torneoConfig = null }) {
     }).catch(() => {});
   }, [torneoConfig?.torneoId]);
 
+  // Escribe SOLO el campo players en Firebase (para que opts/sustituciones no sean pisados por el siguiente save de scores)
+  const syncPlayersOnly = (newPlayers) => {
+    if (!torneoConfig?.torneoId || !torneoConfig?.grupoId) return;
+    try {
+      set(ref(db, `torneos/${torneoConfig.torneoId}/grupos/${torneoConfig.grupoId}/players`), newPlayers);
+    } catch(e) {}
+  };
+
   const handleEliminarJugador = (pi, conCastigo) => {
     const totalJ = (torneoConfig && totalJugadoresTorneoAdmin > 0) ? totalJugadoresTorneoAdmin : players.length;
     const restantesPago = totalJ - 1;
@@ -4803,13 +4811,16 @@ function AdminApp({ onExit, torneoConfig = null }) {
       return { ...m, multi: multi.filter((_,i)=>i!==pi), oyes:m.oyes===pi?null:(m.oyes>pi?m.oyes-1:m.oyes), regulation:m.regulation===pi?null:(m.regulation>pi?m.regulation-1:m.regulation) };
     });
     setPlayers(newPlayers); setScores(newScores); setMarcas(newMarcas);
+    syncPlayersOnly(newPlayers); // write atómico solo a players
     updateGame({ players:newPlayers, pars, scores:newScores, marcas:newMarcas, tarjetas, hole, campo, status:"en_juego", rondaId, grupoNombre, abandonos:nuevoCastigos });
     setAbandonandoIdx(null);
   };
 
+  // Escribe SOLO el campo players en Firebase (para que opts/sustituciones no sean pisados por el siguiente save de scores)
   const handleToggleOpts = (pi, newOpts) => {
     const newPlayers = players.map((pl, i) => i === pi ? { ...pl, opts: newOpts } : pl);
     setPlayers(newPlayers);
+    syncPlayersOnly(newPlayers); // write atómico solo a players para que no sea pisado
     updateGame({ players:newPlayers, pars, scores, marcas, tarjetas, hole, campo, status:"en_juego", rondaId, grupoNombre, abandonos:castigos });
   };
 
@@ -4819,6 +4830,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
     const newScores = [...scores, Array(nHoles).fill(null)];
     const newMarcas = marcas.map(m => { if (!m) return m; const multi=Array.isArray(m.multi)?m.multi:Object.values(m.multi||{}); return {...m,multi:[...multi,Object.fromEntries(MARCAS_MULTI.map(mk=>[mk.key,false]))]}; });
     setPlayers(newPlayers); setScores(newScores); setMarcas(newMarcas);
+    syncPlayersOnly(newPlayers); // write atómico solo a players
     updateGame({ players:newPlayers, pars, scores:newScores, marcas:newMarcas, tarjetas, hole, campo, status:"en_juego", rondaId, grupoNombre });
     setAgregandoJugador(false);
   };
@@ -4884,6 +4896,42 @@ function AdminApp({ onExit, torneoConfig = null }) {
     });
     return () => unsub();
   }, []);
+
+  // ── Sincronizar players del grupo desde Firebase (torneo) ──
+  // Cuando el admin cambia opts, sustituye o da de baja un jugador desde otro dispositivo,
+  // el anotador debe actualizar su estado local para no pisar esos cambios en el siguiente save.
+  const [lastFirebasePlayers, setLastFirebasePlayers] = useState(null);
+  useEffect(() => {
+    if (!torneoConfig?.torneoId || !torneoConfig?.grupoId) return;
+    const playersRef = ref(db, `torneos/${torneoConfig.torneoId}/grupos/${torneoConfig.grupoId}/players`);
+    const unsub = onValue(playersRef, snap => {
+      if (!snap.exists()) return;
+      const fbPlayers = snap.val();
+      const fbArr = Array.isArray(fbPlayers) ? fbPlayers : Object.values(fbPlayers);
+      // Solo actualizar si realmente hay un cambio (comparar por JSON)
+      setLastFirebasePlayers(prev => {
+        const prevStr = JSON.stringify(prev);
+        const newStr = JSON.stringify(fbArr);
+        if (prevStr === newStr) return prev; // sin cambio
+        // Actualizar players en estado local del anotador
+        setPlayers(localPlayers => {
+          // Solo aplicar si el count coincide (evitar conflicto durante agregar/quitar)
+          if (localPlayers.length === fbArr.length) {
+            // Fusionar: preservar scores/marcas indices, actualizar name/hc/opts desde Firebase
+            return localPlayers.map((lp, i) => ({
+              ...lp,
+              name: fbArr[i]?.name ?? lp.name,
+              hc: fbArr[i]?.hc ?? lp.hc,
+              opts: fbArr[i]?.opts ?? lp.opts,
+            }));
+          }
+          return localPlayers;
+        });
+        return fbArr;
+      });
+    });
+    return () => unsub();
+  }, [torneoConfig?.torneoId, torneoConfig?.grupoId]);
 
   // Cargar HI WHS para todos los jugadores
   const [whsHIMap, setWhsHIMap] = useState({});
