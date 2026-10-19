@@ -1832,7 +1832,7 @@ function CerrarTorneoPanel({ torneoId, torneo, grupos, allPlayers, ranked, pars,
           const ganRes = calcMoney(gPsLocal, gFullScores, torneo.apuesta||50);
           await set(ref(db, `torneos/${torneoId}/grupos/${gid}/resumenFinal`), {
             ganador: ganRes.fi.map(i=>gPsLocal[i].name).join(" · "),
-            pars, playerNames: gPsLocal.map(p=>p.name),
+            pars, playerNames: gPsLocal.map(p=>p.name), playerIds: gPsLocal.map(p=>p.id??p.name),
             scoresPorHoyo: gFullScores,
             marcas: gMarcas, tarjetas: g.tarjetas||null,
           });
@@ -1845,7 +1845,8 @@ function CerrarTorneoPanel({ torneoId, torneo, grupos, allPlayers, ranked, pars,
         if (dirSnap.exists()) {
           const dirData = dirSnap.val();
           const updatedPlayers = (dirData.players||[]).map(p => {
-            const upd = hcUpdates.find(u=>u.name===p.name);
+            // Buscar por ID primero, fallback por nombre
+            const upd = hcUpdates.find(u => (u.id != null && String(u.id) === String(p.id)) || u.name === p.name);
             return upd ? {...p,hc:upd.after} : p;
           });
           const updatedDir = {...dirData, players:updatedPlayers};
@@ -4101,11 +4102,23 @@ function NotificacionesPanel({ jugador, onBadgeChange }) {
 }
 
 // ─── ADMIN GRUPOS PANEL ───────────────────────────────────────────────────────
+// El administrador tiene control total: crear, renombrar, agregar/quitar
+// miembros y eliminar grupos — sin flujo de invitaciones.
 function AdminGruposPanel({ directorio }) {
-  const [grupos, setGrupos]         = React.useState([]);
-  const [loading, setLoading]       = React.useState(true);
-  const [vista, setVista]           = React.useState("lista"); // "lista" | "crear" | "detalle"
+  const [grupos, setGrupos]           = React.useState([]);
+  const [loading, setLoading]         = React.useState(true);
+  const [vista, setVista]             = React.useState("lista"); // "lista" | "crear" | "detalle"
   const [grupoActivo, setGrupoActivo] = React.useState(null);
+  const [saving, setSaving]           = React.useState(false);
+  const [msg, setMsg]                 = React.useState("");
+
+  // ── Crear ──
+  const [nuevoNombre, setNuevoNombre] = React.useState("");
+  const [nuevoSel, setNuevoSel]       = React.useState(new Set());
+
+  // ── Detalle edición ──
+  const [editNombre, setEditNombre]   = React.useState("");
+  const [editando, setEditando]       = React.useState(false);
 
   const cargar = React.useCallback(async () => {
     setLoading(true);
@@ -4117,31 +4130,204 @@ function AdminGruposPanel({ directorio }) {
 
   React.useEffect(() => { cargar(); }, [cargar]);
 
-  const eliminarGrupo = async (g) => {
+  const flashMsg = (txt) => { setMsg(txt); setTimeout(() => setMsg(""), 2500); };
+
+  // ── Crear grupo directamente (sin invitaciones) ──
+  const handleCrear = async () => {
+    if (!nuevoNombre.trim()) return;
+    setSaving(true);
+    const grupoId = `g_${Date.now()}_admin`;
+    const miembros = {};
+    for (const id of nuevoSel) {
+      const p = directorio.find(x => String(x.id) === String(id));
+      if (p) miembros[String(id)] = { nombre: p.name, estado: "activo", joinedAt: Date.now() };
+    }
+    await set(clubRef(`grupos/${grupoId}`), {
+      nombre: nuevoNombre.trim(),
+      creadorId: "admin",
+      creadorNombre: "Administrador",
+      creadoAt: Date.now(),
+      miembros,
+    });
+    setNuevoNombre(""); setNuevoSel(new Set());
+    await cargar();
+    setSaving(false);
+    setVista("lista");
+    flashMsg("✅ Grupo creado.");
+  };
+
+  // ── Renombrar grupo ──
+  const handleRenombrar = async () => {
+    if (!editNombre.trim() || !grupoActivo) return;
+    setSaving(true);
+    const g = { ...grupoActivo, nombre: editNombre.trim() };
+    await set(clubRef(`grupos/${grupoActivo._key}/nombre`), editNombre.trim());
+    setGrupoActivo(g);
+    setEditando(false);
+    setSaving(false);
+    flashMsg("✅ Nombre actualizado.");
+  };
+
+  // ── Agregar miembro directo ──
+  const handleAgregarMiembro = async (p) => {
+    if (!grupoActivo) return;
+    setSaving(true);
+    await set(clubRef(`grupos/${grupoActivo._key}/miembros/${p.id}`), {
+      nombre: p.name, estado: "activo", joinedAt: Date.now()
+    });
+    const snap = await get(clubRef(`grupos/${grupoActivo._key}`));
+    if (snap.exists()) setGrupoActivo({ ...snap.val(), _key: grupoActivo._key });
+    setSaving(false);
+    flashMsg(`✅ ${p.name} agregado al grupo.`);
+  };
+
+  // ── Quitar miembro ──
+  const handleQuitarMiembro = async (id, nombre) => {
+    if (!grupoActivo) return;
+    setSaving(true);
+    await set(clubRef(`grupos/${grupoActivo._key}/miembros/${id}`), null);
+    const snap = await get(clubRef(`grupos/${grupoActivo._key}`));
+    if (snap.exists()) setGrupoActivo({ ...snap.val(), _key: grupoActivo._key });
+    setSaving(false);
+    flashMsg(`${nombre} removido del grupo.`);
+  };
+
+  // ── Eliminar grupo ──
+  const handleEliminar = async (g) => {
     if (!window.confirm(`¿Eliminar el grupo "${g.nombre}"? Esta acción no se puede deshacer.`)) return;
     await set(clubRef(`grupos/${g._key}`), null);
+    if (vista === "detalle") setVista("lista");
     cargar();
   };
 
   if (loading) return <div style={{ textAlign:"center", color:D.textSub, padding:32 }}>Cargando grupos…</div>;
 
+  // ── VISTA: CREAR ──
   if (vista === "crear") {
-    // Pseudo-jugador admin para crear grupos
-    const adminJugador = { id: "admin", name: "Administrador" };
-    return <GrupoCrear jugador={adminJugador} directorio={directorio.filter(p=>p.nipHash)}
-      onCreado={() => { cargar(); setVista("lista"); }}
-      onCancel={() => setVista("lista")} />;
+    const inp = { background:D.surface, border:`1px solid ${D.border}`, borderRadius:10, color:D.text, fontSize:14, padding:"10px 12px", width:"100%", boxSizing:"border-box" };
+    return (
+      <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
+        <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+          <button onClick={() => setVista("lista")} style={{ border:"none", background:"transparent", color:D.gold, fontSize:18, cursor:"pointer" }}>‹</button>
+          <div style={{ fontSize:16, fontWeight:800, color:D.gold }}>Nuevo grupo</div>
+        </div>
+        <div>
+          <div style={{ fontSize:12, color:D.textSub, marginBottom:4 }}>Nombre del grupo</div>
+          <input style={inp} value={nuevoNombre} onChange={e => setNuevoNombre(e.target.value)} placeholder="Ej: Los Chacales del Jueves" />
+        </div>
+        <div>
+          <div style={{ fontSize:12, color:D.textSub, marginBottom:8 }}>Seleccionar miembros (ingreso inmediato, sin invitación)</div>
+          {directorio.length === 0
+            ? <div style={{ color:D.textSub, fontSize:13 }}>No hay jugadores en el directorio.</div>
+            : directorio.map(p => (
+              <div key={p.id} onClick={() => setNuevoSel(prev => { const s=new Set(prev); s.has(String(p.id))?s.delete(String(p.id)):s.add(String(p.id)); return s; })}
+                style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 12px", marginBottom:6, background:nuevoSel.has(String(p.id))?`${D.gold}22`:D.surface, border:`1px solid ${nuevoSel.has(String(p.id))?D.gold:D.border}`, borderRadius:10, cursor:"pointer" }}>
+                <Avatar name={p.name} id={p.id} size={32} />
+                <div style={{ flex:1 }}>
+                  <div style={{ fontSize:14, fontWeight:600 }}>{p.name}</div>
+                  <div style={{ fontSize:11, color:D.textSub }}>HC {p.hc} · {fmtPlayerId(p.id)}</div>
+                </div>
+                <div style={{ fontSize:18 }}>{nuevoSel.has(String(p.id)) ? "✅" : "⬜"}</div>
+              </div>
+            ))
+          }
+        </div>
+        {msg && <div style={{ color:"#2ecc71", fontSize:13 }}>{msg}</div>}
+        <div style={{ display:"flex", gap:10 }}>
+          <button onClick={() => setVista("lista")} style={{ flex:1, padding:"11px", border:`1px solid ${D.border}`, borderRadius:10, background:"transparent", color:D.textSub, fontSize:14, cursor:"pointer" }}>Cancelar</button>
+          <button onClick={handleCrear} disabled={saving || !nuevoNombre.trim()}
+            style={{ flex:2, padding:"11px", border:"none", borderRadius:10, background:nuevoNombre.trim()?`linear-gradient(135deg,${D.gold},#B8860B)`:"#555", color:"#000", fontSize:14, fontWeight:700, cursor:"pointer" }}>
+            {saving ? "Creando…" : `🤝 Crear grupo (${nuevoSel.size} miembros)`}
+          </button>
+        </div>
+      </div>
+    );
   }
 
+  // ── VISTA: DETALLE ──
   if (vista === "detalle" && grupoActivo) {
-    const adminJugador = { id: "admin", name: "Administrador" };
-    return <GrupoDetalle grupo={grupoActivo} jugador={adminJugador} directorio={directorio}
-      onBack={() => { cargar(); setVista("lista"); }} />;
+    const miembros = grupoActivo.miembros ? Object.entries(grupoActivo.miembros) : [];
+    const miembrosIds = new Set(miembros.map(([id]) => String(id)));
+    const noMiembros = directorio.filter(p => !miembrosIds.has(String(p.id)));
+    const inp = { background:D.surface, border:`1px solid ${D.border}`, borderRadius:10, color:D.text, fontSize:14, padding:"9px 12px", flex:1, boxSizing:"border-box" };
+
+    return (
+      <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
+        {/* Header detalle */}
+        <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+          <button onClick={() => { setVista("lista"); setEditando(false); cargar(); }} style={{ border:"none", background:"transparent", color:D.gold, fontSize:18, cursor:"pointer" }}>‹</button>
+          {editando ? (
+            <div style={{ display:"flex", gap:8, flex:1 }}>
+              <input style={{ ...inp, flex:1 }} value={editNombre} onChange={e => setEditNombre(e.target.value)} autoFocus />
+              <button onClick={handleRenombrar} disabled={saving} style={{ padding:"8px 14px", border:"none", borderRadius:10, background:D.gold, color:"#000", fontSize:13, fontWeight:700, cursor:"pointer" }}>{saving?"…":"✓"}</button>
+              <button onClick={() => setEditando(false)} style={{ padding:"8px 12px", border:`1px solid ${D.border}`, borderRadius:10, background:"transparent", color:D.textSub, fontSize:13, cursor:"pointer" }}>✕</button>
+            </div>
+          ) : (
+            <div style={{ flex:1, display:"flex", alignItems:"center", gap:8 }}>
+              <div style={{ fontSize:16, fontWeight:800, color:D.gold }}>{grupoActivo.nombre}</div>
+              <button onClick={() => { setEditNombre(grupoActivo.nombre); setEditando(true); }}
+                style={{ padding:"4px 10px", border:`1px solid ${D.border}`, borderRadius:8, background:"transparent", color:D.textSub, fontSize:11, cursor:"pointer" }}>✏️ Renombrar</button>
+            </div>
+          )}
+        </div>
+        <div style={{ fontSize:12, color:D.textSub }}>
+          Creado: {new Date(grupoActivo.creadoAt||0).toLocaleDateString("es-MX")} · {grupoActivo.creadorNombre||"Admin"}
+        </div>
+        {msg && <div style={{ color:"#2ecc71", fontSize:13, fontWeight:600 }}>{msg}</div>}
+
+        {/* Miembros actuales */}
+        <div style={{ fontSize:13, fontWeight:700, color:D.text }}>Miembros ({miembros.length})</div>
+        {miembros.length === 0
+          ? <div style={{ color:D.textSub, fontSize:13 }}>Sin miembros aún.</div>
+          : miembros.map(([id, m]) => (
+            <div key={id} style={{ display:"flex", alignItems:"center", gap:10, background:D.surface, border:`1px solid ${D.border}`, borderRadius:10, padding:"10px 12px" }}>
+              <Avatar name={m.nombre||id} id={id} size={32} />
+              <div style={{ flex:1 }}>
+                <div style={{ fontSize:14, fontWeight:600 }}>{m.nombre||id}</div>
+                <div style={{ fontSize:11, color:D.textSub }}>{fmtPlayerId(id)}</div>
+              </div>
+              <button onClick={() => handleQuitarMiembro(id, m.nombre||id)} disabled={saving}
+                style={{ padding:"5px 10px", border:`1px solid #c0392b44`, borderRadius:8, background:"#c0392b11", color:"#e74c3c", fontSize:12, cursor:"pointer" }}>
+                ✕ Quitar
+              </button>
+            </div>
+          ))
+        }
+
+        {/* Agregar miembros del directorio */}
+        {noMiembros.length > 0 && (
+          <>
+            <div style={{ fontSize:13, fontWeight:700, color:D.text, marginTop:4 }}>Agregar del directorio</div>
+            {noMiembros.map(p => (
+              <div key={p.id} style={{ display:"flex", alignItems:"center", gap:10, background:D.surface, border:`1px solid ${D.border}`, borderRadius:10, padding:"10px 12px" }}>
+                <Avatar name={p.name} id={p.id} size={32} />
+                <div style={{ flex:1 }}>
+                  <div style={{ fontSize:14 }}>{p.name}</div>
+                  <div style={{ fontSize:11, color:D.textSub }}>HC {p.hc} · {fmtPlayerId(p.id)}</div>
+                </div>
+                <button onClick={() => handleAgregarMiembro(p)} disabled={saving}
+                  style={{ padding:"5px 12px", border:`1px solid ${D.gold}55`, borderRadius:8, background:`${D.gold}11`, color:D.gold, fontSize:12, fontWeight:600, cursor:"pointer" }}>
+                  + Agregar
+                </button>
+              </div>
+            ))}
+          </>
+        )}
+
+        {/* Eliminar grupo */}
+        <button onClick={() => handleEliminar(grupoActivo)} disabled={saving}
+          style={{ marginTop:8, padding:"11px", border:`1px solid #c0392b44`, borderRadius:10, background:"#c0392b11", color:"#e74c3c", fontSize:13, cursor:"pointer" }}>
+          🗑️ Eliminar este grupo
+        </button>
+      </div>
+    );
   }
 
+  // ── VISTA: LISTA ──
   return (
     <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
-      <button onClick={() => setVista("crear")}
+      {msg && <div style={{ color:"#2ecc71", fontSize:13, fontWeight:600, padding:"8px 12px", background:"#0D1F0D", border:"1px solid #4CAF5044", borderRadius:10 }}>{msg}</div>}
+      <button onClick={() => { setNuevoNombre(""); setNuevoSel(new Set()); setVista("crear"); }}
         style={{ padding:"12px", border:`1px dashed ${D.gold}88`, borderRadius:12, background:`${D.gold}11`, color:D.gold, fontSize:14, fontWeight:600, cursor:"pointer", textAlign:"center" }}>
         ➕ Crear nuevo grupo
       </button>
@@ -4149,28 +4335,24 @@ function AdminGruposPanel({ directorio }) {
         <div style={{ textAlign:"center", color:D.textSub, padding:24, fontSize:13 }}>No hay grupos creados aún.</div>
       ) : grupos.map(g => {
         const numMiembros = g.miembros ? Object.keys(g.miembros).length : 0;
+        const fechaStr = new Date(g.creadoAt||0).toLocaleDateString("es-MX");
         return (
-          <div key={g._key} style={{ background:D.surface, border:`1px solid ${D.border}`, borderRadius:12, padding:"14px 16px" }}>
-            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
-              <div onClick={() => { setGrupoActivo(g); setVista("detalle"); }} style={{ flex:1, cursor:"pointer" }}>
-                <div style={{ fontSize:15, fontWeight:700, color:D.gold }}>{g.nombre}</div>
-                <div style={{ fontSize:11, color:D.textSub, marginTop:2 }}>
-                  {numMiembros} miembro{numMiembros!==1?"s":""} · Creador: {g.creadorNombre||g.creadorId}
-                </div>
-                <div style={{ fontSize:10, color:D.textSub }}>
-                  {new Date(g.creadoAt||0).toLocaleDateString("es-MX")}
-                </div>
+          <div key={g._key} style={{ background:D.surface, border:`1px solid ${D.border}`, borderRadius:12, padding:"14px 16px", display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:10 }}>
+            <div onClick={() => { setGrupoActivo(g); setEditando(false); setVista("detalle"); }} style={{ flex:1, cursor:"pointer" }}>
+              <div style={{ fontSize:15, fontWeight:700, color:D.gold }}>{g.nombre}</div>
+              <div style={{ fontSize:11, color:D.textSub, marginTop:2 }}>
+                {numMiembros} miembro{numMiembros!==1?"s":""} · {g.creadorNombre||"Admin"} · {fechaStr}
               </div>
-              <div style={{ display:"flex", gap:8, alignItems:"center" }}>
-                <button onClick={() => { setGrupoActivo(g); setVista("detalle"); }}
-                  style={{ padding:"5px 10px", border:`1px solid ${D.border}`, borderRadius:8, background:"transparent", color:D.textSub, fontSize:11, cursor:"pointer" }}>
-                  Ver
-                </button>
-                <button onClick={() => eliminarGrupo(g)}
-                  style={{ padding:"5px 10px", border:`1px solid #c0392b44`, borderRadius:8, background:"#c0392b11", color:"#e74c3c", fontSize:11, cursor:"pointer" }}>
-                  🗑️
-                </button>
-              </div>
+            </div>
+            <div style={{ display:"flex", gap:6 }}>
+              <button onClick={() => { setGrupoActivo(g); setEditando(false); setVista("detalle"); }}
+                style={{ padding:"5px 10px", border:`1px solid ${D.border}`, borderRadius:8, background:"transparent", color:D.textSub, fontSize:11, cursor:"pointer" }}>
+                Editar
+              </button>
+              <button onClick={() => handleEliminar(g)}
+                style={{ padding:"5px 10px", border:`1px solid #c0392b44`, borderRadius:8, background:"#c0392b11", color:"#e74c3c", fontSize:11, cursor:"pointer" }}>
+                🗑️
+              </button>
             </div>
           </div>
         );
@@ -4195,12 +4377,16 @@ function JugadorHomeScreen({ jugador: jugadorInicial, appStyle, onExit }) {
       const todas = Object.values(snap.val());
       setTodasRondas(todas);
       const misRondas = todas
-        .filter(r => r.playerNames && r.playerNames.includes(jugador.name))
+        .filter(r => {
+          // Buscar por ID primero (rondas nuevas), fallback por nombre (rondas antiguas)
+          if (r.playerIds) return r.playerIds.some(id => String(id) === String(jugador.id));
+          return r.playerNames && r.playerNames.includes(jugador.name);
+        })
         .sort((a,b) => (b.fechaTs||0) - (a.fechaTs||0));
       setHistorial(misRondas);
       setLoading(false);
     }).catch(() => setLoading(false));
-  }, [jugador.name]);
+  }, [jugador.id, jugador.name]);
 
   // Cargar badge de notificaciones pendientes al montar
   React.useEffect(() => {
@@ -4213,13 +4399,13 @@ function JugadorHomeScreen({ jugador: jugadorInicial, appStyle, onExit }) {
 
   const totalRondas = historial.length;
   const mejorScore = historial.length > 0 ? Math.min(...historial.map(r => {
-    const idx = (r.playerNames||[]).indexOf(jugador.name);
-    return idx >= 0 && r.totalScores ? (r.totalScores[idx] ?? 999) : 999;
+    const pi = _playerIndex(r, jugador.id, jugador.name);
+    return pi >= 0 && r.totalScores ? (r.totalScores[pi] ?? 999) : 999;
   }).filter(s => s < 999)) : null;
   const avgScore = historial.length > 0 ? (() => {
     const scores = historial.map(r => {
-      const idx = (r.playerNames||[]).indexOf(jugador.name);
-      return idx >= 0 && r.totalScores ? r.totalScores[idx] : null;
+      const pi = _playerIndex(r, jugador.id, jugador.name);
+      return pi >= 0 && r.totalScores ? r.totalScores[pi] : null;
     }).filter(s => s !== null && s > 0);
     return scores.length > 0 ? (scores.reduce((a,b)=>a+b,0)/scores.length).toFixed(1) : null;
   })() : null;
@@ -4227,10 +4413,10 @@ function JugadorHomeScreen({ jugador: jugadorInicial, appStyle, onExit }) {
   // Calcular WHS Handicap Index del jugador usando el motor WHS existente
   const whsResumen = React.useMemo(() => {
     if (todasRondas.length === 0) return null;
-    try { return whs_resumenJugador(jugador.name, todasRondas); } catch(e) { return null; }
-  }, [todasRondas, jugador.name]);
-  const whsHI = whsResumen?.hiEstablecido ? whsResumen.hi : null;
-  const whsHoyos = whsResumen?.totalHoyos || 0;
+    try { return whs_resumenJugador(jugador.name, todasRondas, jugador.id); } catch(e) { return null; }
+  }, [todasRondas, jugador.name, jugador.id]);
+  const whsHI = whsResumen?.hiEstablecido ? whsResumen.currentHI : null;
+  const whsHoyos = whsResumen?.totalHoyosAcumulados || 0;
   const whsEstablecido = whsResumen?.hiEstablecido || false;
 
   const TABS = [
@@ -4325,7 +4511,7 @@ function JugadorHomeScreen({ jugador: jugadorInicial, appStyle, onExit }) {
             {historial.length === 0 ? (
               <div style={{ textAlign:"center", color:D.textSub, padding:24, fontSize:13 }}>Sin rondas registradas.</div>
             ) : historial.map((r, i) => {
-              const idx = (r.playerNames||[]).indexOf(jugador.name);
+              const idx = _playerIndex(r, jugador.id, jugador.name);
               const score = idx >= 0 && r.totalScores ? r.totalScores[idx] : null;
               const fecha = r.fechaTs ? new Date(r.fechaTs).toLocaleDateString("es-MX",{day:"2-digit",month:"short",year:"numeric"}) : "—";
               return (
@@ -4776,22 +4962,51 @@ function whs_buildScoringRecordV2(rondas, campoKey) {
 }
 
 /**
- * Resumen WHS de un jugador para mostrar en su perfil
+ * Devuelve el índice del jugador en una ronda, buscando primero por ID y con
+ * fallback por nombre (compatibilidad con rondas guardadas antes de playerIds).
  */
-function whs_resumenJugador(nombre, rondas) {
+function _playerIndex(ronda, jugadorId, jugadorNombre) {
+  // Buscar por ID (rondas nuevas con playerIds)
+  if (ronda.playerIds) {
+    const idx = ronda.playerIds.findIndex(id => String(id) === String(jugadorId));
+    if (idx >= 0) return idx;
+  }
+  // Fallback: buscar por nombre
+  if (ronda.playerNames) {
+    const idx = ronda.playerNames.indexOf(jugadorNombre);
+    if (idx >= 0) return idx;
+  }
+  return -1;
+}
+
+/**
+ * Resumen WHS de un jugador para mostrar en su perfil.
+ * Acepta jugadorId (número o string) y jugadorNombre (para fallback en rondas antiguas).
+ */
+function whs_resumenJugador(jugadorNombre, rondas, jugadorId) {
   const mis = rondas
-    .filter(r => (r.playerNames||[]).includes(nombre) && (r.campo === "huerta" || !r.campo))
-    .map(r => {
-      const pi = (r.playerNames||[]).indexOf(nombre);
-      const jugadores = Array.isArray(r.jugadores) ? r.jugadores : Object.values(r.jugadores||{});
-      return {
-        fecha: r.fecha, fechaTs: r.fechaTs || 0,
-        nHoles: r.nHoles || 9,
-        bruto: jugadores[pi]?.bruto ?? null,
-        pcc: null,
-      };
+    .filter(r => {
+      if (r.campo !== "huerta" && r.campo) return false;
+      // Verificar participación: primero por ID, luego por nombre
+      if (jugadorId != null && r.playerIds) {
+        return r.playerIds.some(id => String(id) === String(jugadorId));
+      }
+      return (r.playerNames||[]).includes(jugadorNombre);
     })
-    .filter(r => r.bruto != null);
+    .map(r => {
+      const pi = _playerIndex(r, jugadorId, jugadorNombre);
+      if (pi < 0) return null;
+      // Obtener score bruto por varias rutas
+      const jugadores = Array.isArray(r.jugadores) ? r.jugadores : Object.values(r.jugadores||{});
+      const brutoDeJugadores = jugadores[pi]?.bruto ?? null;
+      const brutoDeScoresPorHoyo = r.scoresPorHoyo?.[pi]
+        ? r.scoresPorHoyo[pi].reduce((a, b) => a + (b || 0), 0) || null
+        : null;
+      const brutoDeTotal = r.totalScores?.[pi] ?? null;
+      const bruto = brutoDeJugadores ?? brutoDeScoresPorHoyo ?? brutoDeTotal;
+      return { fecha: r.fecha, fechaTs: r.fechaTs || 0, nHoles: r.nHoles || 9, bruto, pcc: null };
+    })
+    .filter(r => r != null && r.bruto != null && r.bruto > 0);
 
   return whs_buildScoringRecordV2(mis, "huerta");
 }
@@ -4964,7 +5179,7 @@ function HandicapWHSScreen({ onExit, appStyle }) {
       // Calcular WHS para todos los jugadores (para comparativa)
       const allRes = {};
       players.forEach(p => {
-        allRes[p.name] = whs_resumenJugador(p.name, rondasData);
+        allRes[p.name] = whs_resumenJugador(p.name, rondasData, p.id);
       });
       setAllResults(allRes);
       setLoading(false);
@@ -5420,18 +5635,21 @@ function EstadisticasScreen({ onExit, appStyle }) {
     }).catch(() => setLoading(false));
   }, []);
 
-  // Construir índice de jugadores
+  // Construir índice de jugadores (clave = nombre, para compatibilidad con selector)
+  // Cada entrada guardará también su id canónico cuando esté disponible
   const jugadoresIdx = {};
   rondas.forEach(r => {
     (r.playerNames||[]).forEach((name, pi) => {
       if (!jugadoresIdx[name]) jugadoresIdx[name] = [];
+      // Si la ronda tiene playerIds, guardamos el id para búsquedas futuras
+      const pid = r.playerIds ? r.playerIds[pi] : null;
       const bruto = r.jugadores?.[pi]?.bruto ?? (r.scoresPorHoyo?.[pi]?.reduce((a,b)=>a+b,0)||null);
       const hc = r.jugadores?.[pi]?.hc ?? 0;
       const neto = bruto !== null ? bruto - hc : null;
       jugadoresIdx[name].push({
         fecha: r.fecha, fechaTs: r.fechaTs||0,
         campo: r.campo, nHoles: r.nHoles||18,
-        bruto, hc, neto,
+        bruto, hc, neto, pid,
         pars: r.pars,
         scores: r.scoresPorHoyo?.[pi],
       });
@@ -6327,10 +6545,11 @@ function AdminApp({ onExit, torneoConfig = null }) {
         apuesta, marcaVal, tarjetaVal,
         jugadores: jugadoresDetalle,
         abandonos: castigosFinales,
-        hcUpdates: hc.map(u => ({ name:u.name, before:u.before, delta:u.delta, after:u.after })),
+        hcUpdates: hc.map(u => ({ id:u.id, name:u.name, before:u.before, delta:u.delta, after:u.after })),
         // Tarjeta completa hoyo por hoyo
         pars,
         playerNames: players.map(p=>p.name),
+        playerIds: players.map(p=>p.id ?? p.name),
         playerOptsArr: players.map(p=>p.opts || {score:true,marcas:true,tarjetas:true}),
         scoresPorHoyo: fullScores,
         marcas,
