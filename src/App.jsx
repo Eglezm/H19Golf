@@ -45,6 +45,24 @@ const CLUB_H19_ID = "club_h19";
 const clubPath   = (path) => `clubes/${CLUB_H19_ID}/${path}`;
 const clubRef    = (path) => ref(db, clubPath(path));
 
+// ── Formato de ID de jugador ─────────────────────────────────────────────────
+// Convierte número entero → "H19-000001". Acepta también strings ya formateados.
+function fmtPlayerId(id) {
+  if (id === null || id === undefined) return "—";
+  const n = typeof id === "string" && id.startsWith("H19-")
+    ? parseInt(id.replace("H19-", ""), 10)
+    : parseInt(id, 10);
+  if (isNaN(n)) return String(id);
+  return "H19-" + String(n).padStart(6, "0");
+}
+// Extrae el número entero de un ID (sea numérico o "H19-000003" → 3)
+function parsePlayerId(id) {
+  if (typeof id === "number") return id;
+  if (typeof id === "string" && id.startsWith("H19-"))
+    return parseInt(id.replace("H19-", ""), 10);
+  return parseInt(id, 10);
+}
+
 // Inicializar el nodo del club H19 y migrar datos de raíz si es necesario.
 async function initClubH19() {
   try {
@@ -3722,7 +3740,7 @@ function JugadorPerfilEditor({ jugador, onSaved, onCancel }) {
       <div style={{ display:"flex", gap:10, flexDirection:"column", marginTop:4 }}>
         <div style={{ background:D.surface, border:`1px solid ${D.border}`, borderRadius:10, padding:"10px 12px", display:"flex", justifyContent:"space-between" }}>
           <span style={{ fontSize:13, color:D.textSub }}>ID Jugador</span>
-          <span style={{ fontSize:13, color:D.text, fontWeight:600 }}>#{jugador.id}</span>
+          <span style={{ fontSize:13, color:D.text, fontWeight:600 }}>{fmtPlayerId(jugador.id)}</span>
         </div>
         <div style={{ background:D.surface, border:`1px solid ${D.border}`, borderRadius:10, padding:"10px 12px", display:"flex", justifyContent:"space-between" }}>
           <span style={{ fontSize:13, color:D.textSub }}>HC (Ventajas)</span>
@@ -3892,7 +3910,7 @@ function GrupoCrear({ jugador, directorio, onCreado, onCancel }) {
             <Avatar name={p.name} id={p.id} size={32} />
             <div style={{ flex:1 }}>
               <div style={{ fontSize:14, fontWeight:600 }}>{p.name}</div>
-              <div style={{ fontSize:11, color:D.textSub }}>HC {p.hc} · #{p.id}</div>
+              <div style={{ fontSize:11, color:D.textSub }}>HC {p.hc} · {fmtPlayerId(p.id)}</div>
             </div>
             <div style={{ fontSize:18 }}>{selIds.has(String(p.id)) ? "✅" : "⬜"}</div>
           </div>
@@ -3915,7 +3933,7 @@ function GrupoDetalle({ grupo, jugador, directorio, onBack }) {
   const [selIds, setSelIds]     = React.useState(new Set());
   const [msg, setMsg]           = React.useState("");
 
-  const esDueno = grupo.creadorId === jugador.id;
+  const esDueno = grupo.creadorId === jugador.id || jugador.id === "admin";
   const miembros = grupo.miembros ? Object.entries(grupo.miembros) : [];
   const miembrosIds = new Set(miembros.map(([id]) => String(id)));
   const noMiembros = directorio.filter(p => !miembrosIds.has(String(p.id)) && p.nipHash);
@@ -4082,10 +4100,90 @@ function NotificacionesPanel({ jugador, onBadgeChange }) {
   );
 }
 
+// ─── ADMIN GRUPOS PANEL ───────────────────────────────────────────────────────
+function AdminGruposPanel({ directorio }) {
+  const [grupos, setGrupos]         = React.useState([]);
+  const [loading, setLoading]       = React.useState(true);
+  const [vista, setVista]           = React.useState("lista"); // "lista" | "crear" | "detalle"
+  const [grupoActivo, setGrupoActivo] = React.useState(null);
+
+  const cargar = React.useCallback(async () => {
+    setLoading(true);
+    const snap = await get(clubRef("grupos")).catch(() => null);
+    if (!snap || !snap.exists()) { setGrupos([]); setLoading(false); return; }
+    setGrupos(Object.entries(snap.val()).map(([k,v]) => ({ ...v, _key:k })));
+    setLoading(false);
+  }, []);
+
+  React.useEffect(() => { cargar(); }, [cargar]);
+
+  const eliminarGrupo = async (g) => {
+    if (!window.confirm(`¿Eliminar el grupo "${g.nombre}"? Esta acción no se puede deshacer.`)) return;
+    await set(clubRef(`grupos/${g._key}`), null);
+    cargar();
+  };
+
+  if (loading) return <div style={{ textAlign:"center", color:D.textSub, padding:32 }}>Cargando grupos…</div>;
+
+  if (vista === "crear") {
+    // Pseudo-jugador admin para crear grupos
+    const adminJugador = { id: "admin", name: "Administrador" };
+    return <GrupoCrear jugador={adminJugador} directorio={directorio.filter(p=>p.nipHash)}
+      onCreado={() => { cargar(); setVista("lista"); }}
+      onCancel={() => setVista("lista")} />;
+  }
+
+  if (vista === "detalle" && grupoActivo) {
+    const adminJugador = { id: "admin", name: "Administrador" };
+    return <GrupoDetalle grupo={grupoActivo} jugador={adminJugador} directorio={directorio}
+      onBack={() => { cargar(); setVista("lista"); }} />;
+  }
+
+  return (
+    <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+      <button onClick={() => setVista("crear")}
+        style={{ padding:"12px", border:`1px dashed ${D.gold}88`, borderRadius:12, background:`${D.gold}11`, color:D.gold, fontSize:14, fontWeight:600, cursor:"pointer", textAlign:"center" }}>
+        ➕ Crear nuevo grupo
+      </button>
+      {grupos.length === 0 ? (
+        <div style={{ textAlign:"center", color:D.textSub, padding:24, fontSize:13 }}>No hay grupos creados aún.</div>
+      ) : grupos.map(g => {
+        const numMiembros = g.miembros ? Object.keys(g.miembros).length : 0;
+        return (
+          <div key={g._key} style={{ background:D.surface, border:`1px solid ${D.border}`, borderRadius:12, padding:"14px 16px" }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
+              <div onClick={() => { setGrupoActivo(g); setVista("detalle"); }} style={{ flex:1, cursor:"pointer" }}>
+                <div style={{ fontSize:15, fontWeight:700, color:D.gold }}>{g.nombre}</div>
+                <div style={{ fontSize:11, color:D.textSub, marginTop:2 }}>
+                  {numMiembros} miembro{numMiembros!==1?"s":""} · Creador: {g.creadorNombre||g.creadorId}
+                </div>
+                <div style={{ fontSize:10, color:D.textSub }}>
+                  {new Date(g.creadoAt||0).toLocaleDateString("es-MX")}
+                </div>
+              </div>
+              <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+                <button onClick={() => { setGrupoActivo(g); setVista("detalle"); }}
+                  style={{ padding:"5px 10px", border:`1px solid ${D.border}`, borderRadius:8, background:"transparent", color:D.textSub, fontSize:11, cursor:"pointer" }}>
+                  Ver
+                </button>
+                <button onClick={() => eliminarGrupo(g)}
+                  style={{ padding:"5px 10px", border:`1px solid #c0392b44`, borderRadius:8, background:"#c0392b11", color:"#e74c3c", fontSize:11, cursor:"pointer" }}>
+                  🗑️
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 // ─── JUGADOR HOME SCREEN ──────────────────────────────────────────────────────
 function JugadorHomeScreen({ jugador: jugadorInicial, appStyle, onExit }) {
   const [jugador, setJugador]   = React.useState(jugadorInicial);
   const [historial, setHistorial] = React.useState([]);
+  const [todasRondas, setTodasRondas] = React.useState([]);
   const [loading, setLoading]   = React.useState(true);
   const [tab, setTab]           = React.useState("resumen");
   const [editandoPerfil, setEditandoPerfil] = React.useState(false);
@@ -4095,6 +4193,7 @@ function JugadorHomeScreen({ jugador: jugadorInicial, appStyle, onExit }) {
     get(clubRef("historial")).then(snap => {
       if (!snap.exists()) { setLoading(false); return; }
       const todas = Object.values(snap.val());
+      setTodasRondas(todas);
       const misRondas = todas
         .filter(r => r.playerNames && r.playerNames.includes(jugador.name))
         .sort((a,b) => (b.fechaTs||0) - (a.fechaTs||0));
@@ -4125,6 +4224,15 @@ function JugadorHomeScreen({ jugador: jugadorInicial, appStyle, onExit }) {
     return scores.length > 0 ? (scores.reduce((a,b)=>a+b,0)/scores.length).toFixed(1) : null;
   })() : null;
 
+  // Calcular WHS Handicap Index del jugador usando el motor WHS existente
+  const whsResumen = React.useMemo(() => {
+    if (todasRondas.length === 0) return null;
+    try { return whs_resumenJugador(jugador.name, todasRondas); } catch(e) { return null; }
+  }, [todasRondas, jugador.name]);
+  const whsHI = whsResumen?.hiEstablecido ? whsResumen.hi : null;
+  const whsHoyos = whsResumen?.totalHoyos || 0;
+  const whsEstablecido = whsResumen?.hiEstablecido || false;
+
   const TABS = [
     ["resumen","📊","Resumen"],
     ["rondas","⛳","Rondas"],
@@ -4141,7 +4249,11 @@ function JugadorHomeScreen({ jugador: jugadorInicial, appStyle, onExit }) {
           <Avatar name={jugador.name} id={jugador.id} size={44} />
           <div style={{ flex:1 }}>
             <div style={{ fontSize:18, fontWeight:800, color:D.gold }}>{jugador.name}</div>
-            <div style={{ fontSize:12, color:D.textSub }}>HC {jugador.hc} · #{jugador.id} · Chacales Team</div>
+            <div style={{ fontSize:12, color:D.textSub }}>
+              HC {jugador.hc}
+              {whsEstablecido && whsHI != null && <span style={{ color:"#4CAF50", marginLeft:6 }}>· WHS {whsHI.toFixed(1)}</span>}
+              {" · "}{fmtPlayerId(jugador.id)} · Chacales Team
+            </div>
           </div>
           <button onClick={onExit} style={{ padding:"5px 10px", border:`1px solid ${D.border}`, borderRadius:8, background:"transparent", color:D.textSub, fontSize:11, cursor:"pointer" }}>Salir</button>
         </div>
@@ -4173,6 +4285,27 @@ function JugadorHomeScreen({ jugador: jugadorInicial, appStyle, onExit }) {
                   <div style={{ fontSize:10, color:D.textSub, marginTop:2 }}>{label}</div>
                 </div>
               ))}
+            </div>
+            {/* WHS Handicap Index */}
+            <div style={{ background:"#0D1F0D", border:"1px solid #4CAF5044", borderRadius:12, padding:"12px 16px" }}>
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:4 }}>
+                <div style={{ fontSize:12, fontWeight:700, color:"#4CAF50" }}>🌍 WHS Handicap Index</div>
+                <div style={{ fontSize:10, color:D.textSub }}>{whsHoyos}/54 hoyos acumulados</div>
+              </div>
+              {whsEstablecido && whsHI != null ? (
+                <div style={{ display:"flex", alignItems:"baseline", gap:8 }}>
+                  <div style={{ fontSize:28, fontWeight:900, color:"#4CAF50" }}>{whsHI.toFixed(1)}</div>
+                  {whsResumen?.lowHI != null && whsResumen.lowHI < whsHI && (
+                    <div style={{ fontSize:11, color:D.textSub }}>Low HI: {whsResumen.lowHI.toFixed(1)}</div>
+                  )}
+                </div>
+              ) : (
+                <div style={{ fontSize:12, color:D.textSub }}>
+                  {whsHoyos < 54
+                    ? `Se necesitan 54 hoyos para establecer HI. Llevas ${whsHoyos} hoyos válidos.`
+                    : "Calculando…"}
+                </div>
+              )}
             </div>
             {avgScore && (
               <div style={{ background:D.surface, border:`1px solid ${D.border}`, borderRadius:12, padding:"12px 16px", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
@@ -4225,9 +4358,9 @@ function JugadorHomeScreen({ jugador: jugadorInicial, appStyle, onExit }) {
                   ["Nombre",jugador.name],
                   ["Correo",jugador.email||"—"],
                   ["Teléfono",jugador.tel||"—"],
-                  ["ID Jugador",`#${jugador.id}`],
+                  ["ID Jugador", fmtPlayerId(jugador.id)],
                   ["HC (Ventajas)",jugador.hc],
-                  ["WHS",jugador.whs??"—"],
+                  ["WHS HI", whsEstablecido && whsHI != null ? whsHI.toFixed(1)+" ✓" : `${whsHoyos}/54 hoyos`],
                 ].map(([k,v]) => (
                   <div key={k} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", paddingBottom:8, borderBottom:`1px solid ${D.border}44` }}>
                     <span style={{ fontSize:13, color:D.textSub }}>{k}</span>
@@ -6443,7 +6576,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
         <div style={{ fontSize:11, color:D.textSub, letterSpacing:2, textTransform:"uppercase", marginTop:2 }}>Admin</div>
       </div>
       <div style={{ padding:"12px 12px" }}>
-        <TabBar tabs={[{key:"dir",label:"👥 Jugadores"},{key:"hist",label:"📋 Historial"},{key:"sel",label:"⛳ Nueva ronda"}]} active="dir" onChange={k => { if(k==="sel") setScreen("sel"); if(k==="hist") setScreen("hist"); }} />
+        <TabBar tabs={[{key:"dir",label:"👥 Jugadores"},{key:"hist",label:"📋 Historial"},{key:"grupos",label:"🤝 Grupos"},{key:"sel",label:"⛳ Nueva ronda"}]} active="dir" onChange={k => { if(k==="sel") setScreen("sel"); if(k==="hist") setScreen("hist"); if(k==="grupos") setScreen("admin-grupos"); }} />
         {Object.keys(whsHIMap).length > 0 && (() => {
           const conHI = Object.values(whsHIMap).filter(w => w.hiEstablecido && w.hi != null);
           const sinHI = Object.values(whsHIMap).filter(w => !w.hiEstablecido);
@@ -6496,7 +6629,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
                 {jugoUltima && <div title="Jugó la última ronda" style={{ position:"absolute", bottom:-2, right:-2, width:12, height:12, borderRadius:"50%", background:D.success, border:`2px solid ${D.surface}` }} />}
               </div>
               <div style={{ flex:1 }}>
-                <div style={{ fontSize:14, fontWeight:600 }}>{p.name}</div>
+                <div style={{ fontSize:14, fontWeight:600 }}>{p.name} <span style={{ fontSize:10, color:D.textSub, fontWeight:400 }}>{fmtPlayerId(p.id)}</span></div>
                 {editingHC===p.id ? (
                   <div style={{ display:"flex", alignItems:"center", gap:6, marginTop:4 }}>
                     <span style={{ fontSize:11, color:D.gold }}>HC</span>
@@ -6617,6 +6750,23 @@ function AdminApp({ onExit, torneoConfig = null }) {
     </div>
   );
 
+  // ── ADMIN GRUPOS ──
+  if (screen==="admin-grupos") return (
+    <div style={appSt}>
+      <div style={{ background:D.surface, borderBottom:`1px solid ${D.border}`, padding:"20px 16px 14px" }}>
+        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+          <div style={{ fontSize:28, fontWeight:900, color:D.gold }}>H19</div>
+          <button onClick={onExit} style={{ fontSize:12, color:D.textSub, background:"none", border:`1px solid ${D.border}`, borderRadius:8, padding:"5px 10px", cursor:"pointer" }}>Salir</button>
+        </div>
+        <div style={{ fontSize:11, color:D.textSub, letterSpacing:2, textTransform:"uppercase", marginTop:2 }}>Admin</div>
+      </div>
+      <div style={{ padding:"12px 12px" }}>
+        <TabBar tabs={[{key:"dir",label:"👥 Jugadores"},{key:"hist",label:"📋 Historial"},{key:"grupos",label:"🤝 Grupos"},{key:"sel",label:"⛳ Nueva ronda"}]} active="grupos" onChange={k => { if(k==="dir") setScreen("dir"); if(k==="hist") setScreen("hist"); if(k==="sel") setScreen("sel"); }} />
+        <AdminGruposPanel directorio={dir} onBack={() => setScreen("dir")} />
+      </div>
+    </div>
+  );
+
   // ── BAR CONFIG (Admin) ──
   if (screen==="bar-config") return <BarAdminScreen onExit={() => setScreen("dir")} />;
 
@@ -6630,7 +6780,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
         </div>
       </div>
       <div style={{ padding:"12px 12px" }}>
-        <TabBar tabs={[{key:"dir",label:"👥 Jugadores"},{key:"hist",label:"📋 Historial"},{key:"sel",label:"⛳ Nueva ronda"}]} active="hist" onChange={k => { if(k==="dir") setScreen("dir"); if(k==="sel") setScreen("sel"); }} />
+        <TabBar tabs={[{key:"dir",label:"👥 Jugadores"},{key:"hist",label:"📋 Historial"},{key:"grupos",label:"🤝 Grupos"},{key:"sel",label:"⛳ Nueva ronda"}]} active="hist" onChange={k => { if(k==="dir") setScreen("dir"); if(k==="sel") setScreen("sel"); if(k==="grupos") setScreen("admin-grupos"); }} />
 
         {/* Sub-tabs: Rondas vs Torneos */}
         <div style={{ display:"flex", gap:8, marginBottom:12 }}>
