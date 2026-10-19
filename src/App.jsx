@@ -38,22 +38,45 @@ async function hashNIP(nip, clubId, playerId) {
 // ID del club original — todos los datos existentes pertenecen a este club
 const CLUB_H19_ID = "club_h19";
 
-// Inicializar el nodo del club H19 si no existe.
-// Crea la metadata básica; los datos (directorio, historial, etc.) siguen en
-// la raíz durante la transición y se migrarán en la Fase 3.
+// ── Helpers de ruta (Fase 3) ─────────────────────────────────────────────────
+// Todas las rutas de datos apuntan a clubes/{clubId}/ para la arquitectura
+// multi-club. Las funciones de escritura hacen dual-write (club + raíz) durante
+// la transición para mantener compatibilidad con clientes viejos.
+const clubPath   = (path) => `clubes/${CLUB_H19_ID}/${path}`;
+const clubRef    = (path) => ref(db, clubPath(path));
+
+// Inicializar el nodo del club H19 y migrar datos de raíz si es necesario.
 async function initClubH19() {
   try {
-    const clubRef = ref(db, `clubes/${CLUB_H19_ID}`);
-    const snap = await get(clubRef);
+    const metaRef = ref(db, `clubes/${CLUB_H19_ID}`);
+    const snap = await get(metaRef);
+    const version = snap.exists() ? (snap.val().version || 1) : 0;
+
+    // Crear metadata del club si no existe
     if (!snap.exists()) {
-      await set(clubRef, {
+      await set(metaRef, {
         nombre: "Club de Golf H19 — Chacales Team",
         createdAt: Date.now(),
         activo: true,
-        config: { tarjetaVal: DEFAULT_TARJETA_VAL, hoyos: 18, moneda: "USD" },
-        admins: {},  // se pobla cuando el admin asigna su NIP
-        version: 2,  // marca de fase
+        config: { hoyos: 18, moneda: "USD" },
+        admins: {},
+        version: 3,
       });
+    }
+
+    // Migración Fase 3: copiar nodos raíz → clubes/club_h19/ si aún no migrados
+    if (version < 3) {
+      const nodosARaiz = ["directorio", "historial", "historialTorneos", "torneos"];
+      for (const nodo of nodosARaiz) {
+        const rootSnap = await get(ref(db, nodo));
+        const clubSnap = await get(clubRef(nodo));
+        // Solo copiar si hay datos en raíz y no hay datos ya en club
+        if (rootSnap.exists() && !clubSnap.exists()) {
+          await set(clubRef(nodo), rootSnap.val());
+        }
+      }
+      // Marcar migración completa
+      await set(ref(db, `clubes/${CLUB_H19_ID}/version`), 3);
     }
   } catch(e) {}  // silencioso — no interrumpe la app
 }
@@ -1177,7 +1200,7 @@ function TorneoCrear({ onExit, onIniciarGrupo, appStyle }) {
   };
 
   useEffect(() => {
-    onValue(ref(db, "directorio"), snap => {
+    onValue(clubRef("directorio"), snap => {
       if (snap.exists()) setDir(snap.val().players || []);
     }, { onlyOnce: true });
   }, []);
@@ -1798,14 +1821,17 @@ function CerrarTorneoPanel({ torneoId, torneo, grupos, allPlayers, ranked, pars,
       }
 
       if (guardarHC && hcUpdates) {
-        const dirSnap = await get(ref(db, "directorio"));
+        const dirSnap = await get(clubRef("directorio"));
         if (dirSnap.exists()) {
           const dirData = dirSnap.val();
           const updatedPlayers = (dirData.players||[]).map(p => {
             const upd = hcUpdates.find(u=>u.name===p.name);
             return upd ? {...p,hc:upd.after} : p;
           });
-          await set(ref(db, "directorio"), {...dirData, players:updatedPlayers});
+          const updatedDir = {...dirData, players:updatedPlayers};
+          // Fase 3: dual-write
+          await set(clubRef("directorio"), updatedDir);
+          await set(ref(db, "directorio"), updatedDir);
         }
       }
 
@@ -4091,7 +4117,7 @@ function HandicapWHSScreen({ onExit, appStyle }) {
   const [allResults, setAllResults] = useState({}); // nombre -> whsResult para comparativa
 
   useEffect(() => {
-    Promise.all([get(ref(db, "historial")), get(ref(db, "directorio"))]).then(([h, d]) => {
+    Promise.all([get(clubRef("historial")), get(clubRef("directorio"))]).then(([h, d]) => {
       const rondasData = h.exists() ? Object.values(h.val()) : [];
       setRondas(rondasData);
       const dirVal = d.exists() ? d.val() : null;
@@ -4545,8 +4571,7 @@ function EstadisticasScreen({ onExit, appStyle }) {
   const [whsHI, setWhsHI] = useState(null); // HI WHS del jugador seleccionado
 
   useEffect(() => {
-    const r = ref(db, "historial");
-    get(r).then(snap => {
+    get(clubRef("historial")).then(snap => {
       if (!snap.exists()) { setLoading(false); return; }
       const data = snap.val();
       const arr = Object.values(data)
@@ -4980,10 +5005,9 @@ function AdminApp({ onExit, torneoConfig = null }) {
   const [histTab, setHistTab] = useState("rondas");
   const [confirmDeleteHist, setConfirmDeleteHist] = useState(null);
 
-  // Load historial from Firebase
+  // Load historial from Firebase — Fase 3: lee de clubes/club_h19/historial
   useEffect(() => {
-    const histRef = ref(db, "historial");
-    const unsub = onValue(histRef, snap => {
+    const unsub = onValue(clubRef("historial"), snap => {
       if (snap.exists()) {
         const data = snap.val();
         const lista = Object.entries(data).map(([id, r]) => ({id, ...r}))
@@ -4994,10 +5018,9 @@ function AdminApp({ onExit, torneoConfig = null }) {
     return () => unsub();
   }, []);
 
-  // Load historial de torneos from Firebase
+  // Load historial de torneos from Firebase — Fase 3: lee de clubes/club_h19/torneos
   useEffect(() => {
-    const torneoRef = ref(db, "torneos");
-    const unsub = onValue(torneoRef, snap => {
+    const unsub = onValue(clubRef("torneos"), snap => {
       if (snap.exists()) {
         const data = snap.val();
         const lista = Object.entries(data)
@@ -5010,10 +5033,9 @@ function AdminApp({ onExit, torneoConfig = null }) {
     return () => unsub();
   }, []);
 
-  // Load directory from Firebase
+  // Load directory from Firebase — Fase 3: lee de clubes/club_h19/directorio
   useEffect(() => {
-    const dirRef = ref(db, "directorio");
-    const unsub = onValue(dirRef, snap => {
+    const unsub = onValue(clubRef("directorio"), snap => {
       if (snap.exists()) {
         const data = snap.val();
         setDir(data.players || []);
@@ -5023,7 +5045,8 @@ function AdminApp({ onExit, torneoConfig = null }) {
           {id:1,name:"Beto",hc:0},{id:2,name:"Arturo G",hc:4},
           {id:3,name:"Enrique",hc:2},{id:4,name:"Miguel",hc:3},{id:5,name:"Toño",hc:1}
         ]};
-        set(ref(db, "directorio"), defaultDir);
+        set(clubRef("directorio"), defaultDir);
+        set(ref(db, "directorio"), defaultDir);  // dual-write
       }
     });
     return () => unsub();
@@ -5068,7 +5091,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
   // Cargar HI WHS para todos los jugadores
   const [whsHIMap, setWhsHIMap] = useState({});
   useEffect(() => {
-    get(ref(db, "historial")).then(snap => {
+    get(clubRef("historial")).then(snap => {
       if (!snap.exists()) return;
       const rondas = Object.values(snap.val());
       const nombres = [...new Set(rondas.flatMap(r => r.playerNames || []))];
@@ -5102,7 +5125,10 @@ function AdminApp({ onExit, torneoConfig = null }) {
   }, []);
 
   const saveDir = (newPlayers, newNidVal) => {
-    set(ref(db, "directorio"), { players:newPlayers, nextId:newNidVal||nid });
+    const data = { players:newPlayers, nextId:newNidVal||nid };
+    // Fase 3: escritura principal en club + dual-write a raíz para compatibilidad
+    set(clubRef("directorio"), data);
+    set(ref(db, "directorio"), data);  // dual-write — se puede remover en Fase 4
   };
 
   // ── Fase 2: Guardar NIP hasheado para un jugador ────────────────────────────
@@ -5482,18 +5508,23 @@ function AdminApp({ onExit, torneoConfig = null }) {
         }
         return (obj !== undefined && !Number.isNaN(obj)) ? obj : null;
       };
-      set(ref(db, `historial/${rondaId}`), cleanObj(histData))
+      // Fase 3: escribir historial en club (primario) + raíz (dual-write)
+      const cleanHistData = cleanObj(histData);
+      set(clubRef(`historial/${rondaId}`), cleanHistData)
         .catch(err => alert("Error guardando historial: " + err.message));
-      // Si estamos en modo torneo, también guardar en historialTorneos
+      set(ref(db, `historial/${rondaId}`), cleanHistData).catch(() => {});  // dual-write
+      // Si estamos en modo torneo, también guardar en torneos
       if (torneoConfig) {
         const torneoHistKey = `${torneoConfig.torneoId}_${torneoConfig.grupoId}`;
-        set(ref(db, `historialTorneos/${torneoHistKey}`), cleanObj({
+        const cleanTorneoData = cleanObj({
           ...histData,
           torneoId: torneoConfig.torneoId,
           torneoNombre: torneoConfig.nombre,
           grupoId: torneoConfig.grupoId,
           grupoNombre: grupoNombre || torneoConfig.grupoNombre,
-        })).catch(() => {});
+        });
+        set(clubRef(`historialTorneos/${torneoHistKey}`), cleanTorneoData).catch(() => {});
+        set(ref(db, `historialTorneos/${torneoHistKey}`), cleanTorneoData).catch(() => {});  // dual-write
       }
     } catch(e) { alert("Error en bloque historial: " + e.message); }
     setScreen("res");
