@@ -3308,6 +3308,8 @@ function H19() {
   const [barOpen, setBarOpen] = useState(false);
   // Fase 1: uid anónimo de Firebase — disponible para sesiones en Fase 2+
   const [anonUid, setAnonUid] = useState(null);
+  // Fase 4: jugador autenticado con NIP
+  const [activeJugador, setActiveJugador] = useState(null);
 
   useEffect(() => {
     // Escuchar cambios de auth; si el login anónimo aún no completó al montar
@@ -3388,6 +3390,9 @@ function H19() {
             </div>
           </div>
         )}
+        {/* Fase 4: acceso por NIP de jugador */}
+        <Btn onClick={() => setMode("jugador-login")} style={{ background:`linear-gradient(135deg,#1A1A2E,#16213E)`, border:`1px solid ${D.gold}44` }}>🔑 Entrar como jugador</Btn>
+        <div style={{ width:"100%", borderTop:`1px solid ${D.border}`, margin:"4px 0" }} />
         <Btn onClick={() => setMode("pin")}>🏌️ Admin - Única salida</Btn>
         <Btn onClick={() => setMode("pin-torneo")} style={{ background:`linear-gradient(135deg,#1A5C24,#2E7D32)` }}>🏌️🏌️ Admin - Crear torneo</Btn>
         <Btn outline onClick={() => setMode("torneo-unirse")}>🔗 Entrar con código de grupo</Btn>
@@ -3550,7 +3555,221 @@ function H19() {
     </>
   );
 
+  // ── Fase 4: login por NIP de jugador ──────────────────────────────────────
+  if (mode === "jugador-login") {
+    return <JugadorLoginScreen appStyle={appStyle} onExit={() => setMode("home")}
+      onSuccess={(jugador) => { setMode("jugador-home"); setPinInput(""); setPinError(false); setActiveJugador(jugador); }} />;
+  }
+
+  if (mode === "jugador-home" && activeJugador) {
+    return <JugadorHomeScreen jugador={activeJugador} appStyle={appStyle}
+      onExit={() => { setMode("home"); setActiveJugador(null); }} />;
+  }
+
   return null;
+}
+
+// ─── FASE 4: LOGIN POR NIP ─────────────────────────────────────────────────
+
+function JugadorLoginScreen({ appStyle, onExit, onSuccess }) {
+  const [dir, setDir] = React.useState([]);
+  const [selectedId, setSelectedId] = React.useState(null);
+  const [nipInput, setNipInput] = React.useState("");
+  const [error, setError] = React.useState(null);
+  const [loading, setLoading] = React.useState(false);
+  const [loadingDir, setLoadingDir] = React.useState(true);
+
+  React.useEffect(() => {
+    get(clubRef("directorio")).then(snap => {
+      if (snap.exists()) setDir(snap.val().players || []);
+      setLoadingDir(false);
+    }).catch(() => setLoadingDir(false));
+  }, []);
+
+  const handleLogin = async () => {
+    if (!selectedId || nipInput.length < 4) return;
+    setLoading(true); setError(null);
+    try {
+      const jugador = dir.find(p => p.id === selectedId);
+      if (!jugador?.nipHash) { setError("Este jugador aún no tiene NIP asignado. Pide al admin que te asigne uno."); setLoading(false); return; }
+      const hash = await hashNIP(nipInput, CLUB_H19_ID, selectedId);
+      if (hash === jugador.nipHash) {
+        onSuccess(jugador);
+      } else {
+        setError("NIP incorrecto");
+      }
+    } catch(e) { setError("Error al verificar NIP"); }
+    setLoading(false);
+  };
+
+  const jugadoresConNip = dir.filter(p => p.nipHash);
+  const jugadoresSinNip = dir.filter(p => !p.nipHash);
+  const selected = dir.find(p => p.id === selectedId);
+
+  return (
+    <div style={{ ...appStyle, display:"flex", flexDirection:"column", alignItems:"center", padding:24, gap:14, minHeight:"100vh", justifyContent:"center" }}>
+      <div style={{ fontSize:48, fontWeight:900, color:D.gold }}>H19</div>
+      <div style={{ fontSize:15, fontWeight:700, color:D.text }}>¿Quién eres?</div>
+      <div style={{ fontSize:12, color:D.textSub, marginBottom:4, textAlign:"center" }}>Selecciona tu nombre e ingresa tu NIP personal</div>
+
+      {loadingDir ? (
+        <div style={{ color:D.textSub, fontSize:13 }}>Cargando jugadores…</div>
+      ) : jugadoresConNip.length === 0 ? (
+        <div style={{ background:D.surface, border:`1px solid ${D.border}`, borderRadius:12, padding:16, textAlign:"center" }}>
+          <div style={{ fontSize:13, color:D.textSub, marginBottom:8 }}>Ningún jugador tiene NIP asignado aún.</div>
+          <div style={{ fontSize:12, color:D.textSub }}>El admin debe asignar NIPs desde el Directorio.</div>
+        </div>
+      ) : (
+        <>
+          {/* Selector de jugador */}
+          <div style={{ width:"100%", display:"flex", flexDirection:"column", gap:8 }}>
+            <div style={{ fontSize:12, color:D.textSub, fontWeight:600 }}>Jugadores con NIP:</div>
+            <div style={{ display:"flex", flexWrap:"wrap", gap:8 }}>
+              {jugadoresConNip.sort((a,b)=>a.name.localeCompare(b.name)).map(p => (
+                <button key={p.id} onClick={() => { setSelectedId(p.id); setNipInput(""); setError(null); }}
+                  style={{ padding:"10px 16px", border:`2px solid ${selectedId===p.id?D.gold:D.border}`, borderRadius:20, background:selectedId===p.id?D.goldDim:"transparent", color:selectedId===p.id?D.gold:D.text, fontSize:14, fontWeight:selectedId===p.id?700:400, cursor:"pointer", transition:"all 0.15s" }}>
+                  {p.name}
+                </button>
+              ))}
+            </div>
+            {jugadoresSinNip.length > 0 && (
+              <div style={{ fontSize:11, color:D.textSub, marginTop:2 }}>Sin NIP: {jugadoresSinNip.map(p=>p.name).join(", ")}</div>
+            )}
+          </div>
+
+          {/* Input NIP */}
+          {selectedId && (
+            <div style={{ width:"100%", display:"flex", flexDirection:"column", gap:10 }}>
+              <div style={{ fontSize:13, color:D.gold, fontWeight:700, textAlign:"center" }}>NIP de {selected?.name}</div>
+              <input type="password" inputMode="numeric" maxLength={6} value={nipInput}
+                onChange={e => { setNipInput(e.target.value.replace(/\D/g,"")); setError(null); }}
+                placeholder="••••"
+                style={{ width:"100%", padding:16, border:`2px solid ${error?D.danger:D.gold}44`, borderRadius:14, background:D.surface, color:D.text, fontSize:28, textAlign:"center", letterSpacing:10, fontWeight:700, boxSizing:"border-box" }}
+                onKeyDown={e => e.key==="Enter" && handleLogin()} autoFocus />
+              {error && <div style={{ color:D.danger, fontSize:13, textAlign:"center", fontWeight:600 }}>{error}</div>}
+              <button onClick={handleLogin} disabled={loading||nipInput.length<4}
+                style={{ width:"100%", padding:14, border:"none", borderRadius:14, background:nipInput.length>=4?D.gold:"#555", color:nipInput.length>=4?"#000":"#999", fontSize:16, fontWeight:800, cursor:nipInput.length>=4?"pointer":"default" }}>
+                {loading ? "Verificando…" : "Entrar →"}
+              </button>
+            </div>
+          )}
+        </>
+      )}
+
+      <button onClick={onExit} style={{ fontSize:13, color:D.textSub, background:"none", border:"none", cursor:"pointer", marginTop:8 }}>← Volver</button>
+    </div>
+  );
+}
+
+function JugadorHomeScreen({ jugador, appStyle, onExit }) {
+  const [historial, setHistorial] = React.useState([]);
+  const [loading, setLoading] = React.useState(true);
+  const [tab, setTab] = React.useState("resumen"); // "resumen" | "rondas"
+
+  React.useEffect(() => {
+    get(clubRef("historial")).then(snap => {
+      if (!snap.exists()) { setLoading(false); return; }
+      const todas = Object.values(snap.val());
+      const misRondas = todas
+        .filter(r => r.playerNames && r.playerNames.includes(jugador.name))
+        .sort((a,b) => (b.fechaTs||0) - (a.fechaTs||0));
+      setHistorial(misRondas);
+      setLoading(false);
+    }).catch(() => setLoading(false));
+  }, [jugador.name]);
+
+  const totalRondas = historial.length;
+  const mejorScore = historial.length > 0 ? Math.min(...historial.map(r => {
+    const idx = (r.playerNames||[]).indexOf(jugador.name);
+    return idx >= 0 && r.totalScores ? (r.totalScores[idx] ?? 999) : 999;
+  }).filter(s => s < 999)) : null;
+  const avgScore = historial.length > 0 ? (() => {
+    const scores = historial.map(r => {
+      const idx = (r.playerNames||[]).indexOf(jugador.name);
+      return idx >= 0 && r.totalScores ? r.totalScores[idx] : null;
+    }).filter(s => s !== null && s > 0);
+    return scores.length > 0 ? (scores.reduce((a,b)=>a+b,0)/scores.length).toFixed(1) : null;
+  })() : null;
+
+  return (
+    <div style={{ ...appStyle, display:"flex", flexDirection:"column", minHeight:"100vh" }}>
+      {/* Header */}
+      <div style={{ background:`linear-gradient(135deg,#1A1200,#2A1E00)`, padding:"24px 20px 16px", borderBottom:`1px solid ${D.gold}33` }}>
+        <div style={{ display:"flex", alignItems:"center", gap:12 }}>
+          <Avatar name={jugador.name} id={jugador.id} size={48} />
+          <div>
+            <div style={{ fontSize:20, fontWeight:800, color:D.gold }}>{jugador.name}</div>
+            <div style={{ fontSize:13, color:D.textSub }}>HC {jugador.hc} · Chacales Team</div>
+          </div>
+          <button onClick={onExit} style={{ marginLeft:"auto", padding:"6px 12px", border:`1px solid ${D.border}`, borderRadius:8, background:"transparent", color:D.textSub, fontSize:12, cursor:"pointer" }}>Salir</button>
+        </div>
+      </div>
+
+      {/* Tabs */}
+      <div style={{ display:"flex", borderBottom:`1px solid ${D.border}` }}>
+        {[["resumen","📊 Resumen"],["rondas","⛳ Rondas"]].map(([t,l]) => (
+          <button key={t} onClick={() => setTab(t)}
+            style={{ flex:1, padding:"12px 0", border:"none", borderBottom:`2px solid ${tab===t?D.gold:"transparent"}`, background:"transparent", color:tab===t?D.gold:D.textSub, fontSize:13, fontWeight:tab===t?700:400, cursor:"pointer" }}>
+            {l}
+          </button>
+        ))}
+      </div>
+
+      <div style={{ flex:1, padding:"16px 16px", overflow:"auto" }}>
+        {loading ? (
+          <div style={{ textAlign:"center", color:D.textSub, padding:32, fontSize:13 }}>Cargando…</div>
+        ) : tab === "resumen" ? (
+          <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+            {/* Stats cards */}
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10 }}>
+              {[
+                ["Rondas",totalRondas,"⛳"],
+                ["HC actual",jugador.hc,"🏌️"],
+                ["Mejor score",mejorScore??"-","🏆"],
+              ].map(([label,val,icon]) => (
+                <div key={label} style={{ background:D.surface, border:`1px solid ${D.border}`, borderRadius:12, padding:"14px 10px", textAlign:"center" }}>
+                  <div style={{ fontSize:22 }}>{icon}</div>
+                  <div style={{ fontSize:20, fontWeight:800, color:D.gold, marginTop:4 }}>{val}</div>
+                  <div style={{ fontSize:10, color:D.textSub, marginTop:2 }}>{label}</div>
+                </div>
+              ))}
+            </div>
+            {avgScore && (
+              <div style={{ background:D.surface, border:`1px solid ${D.border}`, borderRadius:12, padding:"12px 16px", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                <div style={{ fontSize:13, color:D.textSub }}>Score promedio</div>
+                <div style={{ fontSize:18, fontWeight:700, color:D.text }}>{avgScore}</div>
+              </div>
+            )}
+            {totalRondas === 0 && (
+              <div style={{ textAlign:"center", color:D.textSub, padding:24, fontSize:13 }}>Aún no hay rondas registradas para {jugador.name}.</div>
+            )}
+          </div>
+        ) : (
+          <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+            {historial.length === 0 ? (
+              <div style={{ textAlign:"center", color:D.textSub, padding:24, fontSize:13 }}>Sin rondas registradas.</div>
+            ) : historial.map((r, i) => {
+              const idx = (r.playerNames||[]).indexOf(jugador.name);
+              const score = idx >= 0 && r.totalScores ? r.totalScores[idx] : null;
+              const fecha = r.fechaTs ? new Date(r.fechaTs).toLocaleDateString("es-MX",{day:"2-digit",month:"short",year:"numeric"}) : "—";
+              return (
+                <div key={i} style={{ background:D.surface, border:`1px solid ${D.border}`, borderRadius:12, padding:"12px 14px", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                  <div>
+                    <div style={{ fontSize:13, fontWeight:600 }}>{r.campo || "Campo"}</div>
+                    <div style={{ fontSize:11, color:D.textSub }}>{fecha}</div>
+                  </div>
+                  <div style={{ textAlign:"right" }}>
+                    <div style={{ fontSize:18, fontWeight:800, color:D.gold }}>{score ?? "—"}</div>
+                    <div style={{ fontSize:10, color:D.textSub }}>golpes</div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  );
 }
 
 // ─── ADMIN APP ────────────────────────────────────
