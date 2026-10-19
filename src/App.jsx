@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { initializeApp } from "firebase/app";
 import { getDatabase, ref, set, onValue, remove, get } from "firebase/database";
+import { getAuth, signInAnonymously, onAuthStateChanged } from "firebase/auth";
 
 const firebaseConfig = {
   apiKey: "AIzaSyAsWuJRelERz7W2QG3-DPaOprKKT0TJBA4",
@@ -13,6 +14,13 @@ const firebaseConfig = {
 };
 const firebaseApp = initializeApp(firebaseConfig);
 const db = getDatabase(firebaseApp);
+const auth = getAuth(firebaseApp);
+
+// ── Firebase Auth anónimo ─────────────────────────────────────────────────────
+// Genera un uid permanente por dispositivo. Se usa para sesiones en Fase 2+.
+// No cambia ningún comportamiento actual — solo garantiza que el usuario tiene
+// un uid de Firebase antes de cualquier operación con la base de datos.
+signInAnonymously(auth).catch(() => {});  // silencioso — app funciona sin auth
 
 const DEFAULT_APUESTA = 50;
 const DEFAULT_MARCA_VAL = 10;
@@ -3234,6 +3242,17 @@ function H19() {
   const [torneoIsAdmin, setTorneoIsAdmin] = useState(false);
   const [savedTorneoAdmin, setSavedTorneoAdmin] = useState(null);
   const [barOpen, setBarOpen] = useState(false);
+  // Fase 1: uid anónimo de Firebase — disponible para sesiones en Fase 2+
+  const [anonUid, setAnonUid] = useState(null);
+
+  useEffect(() => {
+    // Escuchar cambios de auth; si el login anónimo aún no completó al montar
+    // este componente, onAuthStateChanged lo captura cuando esté listo.
+    const unsub = onAuthStateChanged(auth, (user) => {
+      if (user) setAnonUid(user.uid);
+    });
+    return () => unsub();
+  }, []);
 
   useEffect(() => {
     try {
