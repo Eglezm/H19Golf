@@ -22,6 +22,42 @@ const auth = getAuth(firebaseApp);
 // un uid de Firebase antes de cualquier operación con la base de datos.
 signInAnonymously(auth).catch(() => {});  // silencioso — app funciona sin auth
 
+// ── Utilidades de auth ───────────────────────────────────────────────────────
+// sha256 usando Web Crypto API nativa (disponible en todos los browsers modernos)
+async function sha256(str) {
+  const msgBuf = new TextEncoder().encode(str);
+  const hashBuf = await crypto.subtle.digest("SHA-256", msgBuf);
+  return Array.from(new Uint8Array(hashBuf)).map(b => b.toString(16).padStart(2,"0")).join("");
+}
+
+// Hash del NIP con salt = clubId + playerId (evita rainbow table cross-club)
+async function hashNIP(nip, clubId, playerId) {
+  return sha256(String(nip) + String(clubId) + String(playerId));
+}
+
+// ID del club original — todos los datos existentes pertenecen a este club
+const CLUB_H19_ID = "club_h19";
+
+// Inicializar el nodo del club H19 si no existe.
+// Crea la metadata básica; los datos (directorio, historial, etc.) siguen en
+// la raíz durante la transición y se migrarán en la Fase 3.
+async function initClubH19() {
+  try {
+    const clubRef = ref(db, `clubes/${CLUB_H19_ID}`);
+    const snap = await get(clubRef);
+    if (!snap.exists()) {
+      await set(clubRef, {
+        nombre: "Club de Golf H19 — Chacales Team",
+        createdAt: Date.now(),
+        activo: true,
+        config: { tarjetaVal: DEFAULT_TARJETA_VAL, hoyos: 18, moneda: "USD" },
+        admins: {},  // se pobla cuando el admin asigna su NIP
+        version: 2,  // marca de fase
+      });
+    }
+  } catch(e) {}  // silencioso — no interrumpe la app
+}
+
 const DEFAULT_APUESTA = 50;
 const DEFAULT_MARCA_VAL = 10;
 const DEFAULT_TARJETA_VAL = 10;
@@ -3251,6 +3287,8 @@ function H19() {
     const unsub = onAuthStateChanged(auth, (user) => {
       if (user) setAnonUid(user.uid);
     });
+    // Fase 2: inicializar nodo del club si no existe (silencioso, en background)
+    initClubH19();
     return () => unsub();
   }, []);
 
@@ -4828,6 +4866,12 @@ function AdminApp({ onExit, torneoConfig = null }) {
   const [newHC, setNewHC] = useState("");
   const [editingHC, setEditingHC] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(null);
+  // ── Fase 2: Panel de NIPs ──────────────────────────────────────────────────
+  const [nipPanelPlayerId, setNipPanelPlayerId] = useState(null); // id del jugador editando NIP
+  const [nipInput, setNipInput] = useState("");
+  const [nipConfirm, setNipConfirm] = useState("");
+  const [nipSaving, setNipSaving] = useState(false);
+  const [nipMsg, setNipMsg] = useState(null); // { ok: bool, text: string }
   const [players, setPlayers] = useState([]);
   const [scores, setScores] = useState([]);
   const [marcas, setMarcas] = useState([]);
@@ -5059,6 +5103,30 @@ function AdminApp({ onExit, torneoConfig = null }) {
 
   const saveDir = (newPlayers, newNidVal) => {
     set(ref(db, "directorio"), { players:newPlayers, nextId:newNidVal||nid });
+  };
+
+  // ── Fase 2: Guardar NIP hasheado para un jugador ────────────────────────────
+  const handleAsignarNIP = async (playerId) => {
+    if (nipInput.length < 4) { setNipMsg({ ok:false, text:"El NIP debe tener al menos 4 dígitos" }); return; }
+    if (nipInput !== nipConfirm) { setNipMsg({ ok:false, text:"Los NIPs no coinciden" }); return; }
+    setNipSaving(true); setNipMsg(null);
+    try {
+      const hash = await hashNIP(nipInput, CLUB_H19_ID, playerId);
+      // Actualizar en el directorio raíz (compatibilidad actual)
+      const updated = dir.map(p => p.id === playerId ? { ...p, nipHash: hash, role: p.role || "jugador" } : p);
+      saveDir(updated);
+      // También en el nodo del club (Fase 2+)
+      const clubPlayerRef = ref(db, `clubes/${CLUB_H19_ID}/directorio/jugadores/${playerId}`);
+      const snap = await get(clubPlayerRef);
+      const existing = snap.exists() ? snap.val() : {};
+      await set(clubPlayerRef, { ...existing, id:playerId, nipHash:hash, role:existing.role||"jugador" });
+      setNipMsg({ ok:true, text:"NIP guardado ✓" });
+      setNipInput(""); setNipConfirm("");
+      setTimeout(() => { setNipPanelPlayerId(null); setNipMsg(null); }, 1500);
+    } catch(e) {
+      setNipMsg({ ok:false, text:"Error al guardar el NIP" });
+    }
+    setNipSaving(false);
   };
 
   const saveToLocal = (state) => {
@@ -5741,6 +5809,11 @@ function AdminApp({ onExit, torneoConfig = null }) {
                   </button>
                 );
               })()}
+              {/* Botón NIP — Fase 2 */}
+              <button onClick={() => { setNipPanelPlayerId(nipPanelPlayerId===p.id?null:p.id); setNipInput(""); setNipConfirm(""); setNipMsg(null); }}
+                style={{ padding:"5px 8px", border:`1px solid ${p.nipHash?"#4CAF5044":D.border}`, borderRadius:8, background:p.nipHash?"#1A2A1A":"transparent", color:p.nipHash?"#4CAF50":D.textSub, fontSize:11, cursor:"pointer", whiteSpace:"nowrap" }}>
+                {p.nipHash ? "🔑 ✓" : "🔑 NIP"}
+              </button>
               {confirmDelete===p.id ? (
                 <div style={{ display:"flex", alignItems:"center", gap:6 }}>
                   <span style={{ fontSize:11, color:D.danger, whiteSpace:"nowrap" }}>¿Eliminar?</span>
@@ -5751,7 +5824,30 @@ function AdminApp({ onExit, torneoConfig = null }) {
                 <button onClick={() => setConfirmDelete(p.id)} style={{ padding:"5px 8px", border:`1px solid ${D.danger}44`, borderRadius:8, background:"transparent", color:D.danger, fontSize:11, cursor:"pointer" }}>✕</button>
               )}
             </div>
-            );
+            {/* Panel inline de asignación de NIP */}
+            {nipPanelPlayerId===p.id && (
+              <div style={{ background:D.bg, border:`1px solid ${D.gold}44`, borderRadius:10, padding:"12px 14px", margin:"4px 0 8px", display:"flex", flexDirection:"column", gap:10 }}>
+                <div style={{ fontSize:12, fontWeight:700, color:D.gold }}>🔑 Asignar NIP a {p.name}</div>
+                <div style={{ fontSize:11, color:D.textSub }}>El jugador usará este NIP de 4–6 dígitos para acceder a la app. Se guarda encriptado.</div>
+                <div style={{ display:"flex", gap:8 }}>
+                  <input type="password" inputMode="numeric" maxLength={6} value={nipInput} onChange={e=>setNipInput(e.target.value.replace(/\D/g,""))} placeholder="NIP (4-6 dígitos)"
+                    style={{ flex:1, padding:"10px 12px", border:`1px solid ${D.border}`, borderRadius:10, background:D.surface, color:D.text, fontSize:16, textAlign:"center", letterSpacing:6, fontWeight:700 }} />
+                  <input type="password" inputMode="numeric" maxLength={6} value={nipConfirm} onChange={e=>setNipConfirm(e.target.value.replace(/\D/g,""))} placeholder="Confirmar"
+                    style={{ flex:1, padding:"10px 12px", border:`1px solid ${D.border}`, borderRadius:10, background:D.surface, color:D.text, fontSize:16, textAlign:"center", letterSpacing:6, fontWeight:700 }} />
+                </div>
+                {nipMsg && <div style={{ fontSize:12, color:nipMsg.ok?D.success:D.danger, fontWeight:600 }}>{nipMsg.text}</div>}
+                <div style={{ display:"flex", gap:8 }}>
+                  <button onClick={() => handleAsignarNIP(p.id)} disabled={nipSaving||nipInput.length<4}
+                    style={{ flex:1, padding:"10px", border:"none", borderRadius:10, background:nipInput.length>=4?D.success:"#999", color:"#fff", fontSize:13, fontWeight:700, cursor:nipInput.length>=4?"pointer":"default" }}>
+                    {nipSaving ? "Guardando…" : "Guardar NIP"}
+                  </button>
+                  <button onClick={() => { setNipPanelPlayerId(null); setNipInput(""); setNipConfirm(""); setNipMsg(null); }}
+                    style={{ padding:"10px 14px", border:`1px solid ${D.border}`, borderRadius:10, background:"transparent", color:D.textSub, fontSize:13, cursor:"pointer" }}>
+                    Cancelar
+                  </button>
+                </div>
+              </div>
+            )}
           })}
         </Card>
         <Card>
