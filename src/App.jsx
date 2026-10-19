@@ -5753,7 +5753,8 @@ function AdminApp({ onExit, torneoConfig = null }) {
             const ultimosNombres = new Set((historial[0]?.jugadores||[]).map(j=>j.name));
             const jugoUltima = ultimosNombres.has(p.name);
             return (
-            <div key={p.id} style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 0", borderBottom:idx<dir.length-1?`1px solid ${D.border}`:"none" }}>
+            <React.Fragment key={p.id}>
+            <div style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 0", borderBottom:idx<dir.length-1?`1px solid ${D.border}`:"none" }}>
               <div style={{ position:"relative" }}>
                 <Avatar name={p.name} id={p.id} size={36} />
                 {jugoUltima && <div title="Jugó la última ronda" style={{ position:"absolute", bottom:-2, right:-2, width:12, height:12, borderRadius:"50%", background:D.success, border:`2px solid ${D.surface}` }} />}
@@ -5848,7 +5849,8 @@ function AdminApp({ onExit, torneoConfig = null }) {
                 </div>
               </div>
             )}
-          })}
+            </React.Fragment>
+          )})}
         </Card>
         <Card>
           <SLabel>Agregar jugador</SLabel>
