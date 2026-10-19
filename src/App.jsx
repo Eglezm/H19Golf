@@ -60,7 +60,7 @@ async function initClubH19() {
         activo: true,
         config: { hoyos: 18, moneda: "USD" },
         admins: {},
-        version: 3,
+        version: 1,  // se actualizará a 3 tras migración
       });
     }
 
@@ -68,17 +68,19 @@ async function initClubH19() {
     if (version < 3) {
       const nodosARaiz = ["directorio", "historial", "historialTorneos", "torneos"];
       for (const nodo of nodosARaiz) {
-        const rootSnap = await get(ref(db, nodo));
-        const clubSnap = await get(clubRef(nodo));
-        // Solo copiar si hay datos en raíz y no hay datos ya en club
-        if (rootSnap.exists() && !clubSnap.exists()) {
-          await set(clubRef(nodo), rootSnap.val());
-        }
+        try {
+          const rootSnap = await get(ref(db, nodo));
+          if (!rootSnap.exists()) continue;
+          const clubSnap = await get(clubRef(nodo));
+          if (!clubSnap.exists()) {
+            await set(clubRef(nodo), rootSnap.val());
+          }
+        } catch(e) { /* continuar con el siguiente nodo */ }
       }
       // Marcar migración completa
       await set(ref(db, `clubes/${CLUB_H19_ID}/version`), 3);
     }
-  } catch(e) {}  // silencioso — no interrumpe la app
+  } catch(e) { /* silencioso — no interrumpe la app */ }
 }
 
 const DEFAULT_APUESTA = 50;
