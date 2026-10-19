@@ -1,0 +1,7911 @@
+import React, { useState, useEffect } from "react";
+import { initializeApp } from "firebase/app";
+import { getDatabase, ref, set, onValue, remove, get } from "firebase/database";
+import { getAuth, signInAnonymously, onAuthStateChanged } from "firebase/auth";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyAsWuJRelERz7W2QG3-DPaOprKKT0TJBA4",
+  authDomain: "h19golf-4624f.firebaseapp.com",
+  databaseURL: "https://h19golf-4624f-default-rtdb.firebaseio.com",
+  projectId: "h19golf-4624f",
+  storageBucket: "h19golf-4624f.firebasestorage.app",
+  messagingSenderId: "476582553669",
+  appId: "1:476582553669:web:b01cbb904a8a9a4f1e1b2c"
+};
+const firebaseApp = initializeApp(firebaseConfig);
+const db = getDatabase(firebaseApp);
+const auth = getAuth(firebaseApp);
+
+// ── Firebase Auth anónimo ─────────────────────────────────────────────────────
+// Genera un uid permanente por dispositivo. Se usa para sesiones en Fase 2+.
+// No cambia ningún comportamiento actual — solo garantiza que el usuario tiene
+// un uid de Firebase antes de cualquier operación con la base de datos.
+signInAnonymously(auth).catch(() => {});  // silencioso — app funciona sin auth
+
+// ── Utilidades de auth ───────────────────────────────────────────────────────
+// sha256 usando Web Crypto API nativa (disponible en todos los browsers modernos)
+async function sha256(str) {
+  const msgBuf = new TextEncoder().encode(str);
+  const hashBuf = await crypto.subtle.digest("SHA-256", msgBuf);
+  return Array.from(new Uint8Array(hashBuf)).map(b => b.toString(16).padStart(2,"0")).join("");
+}
+
+// Hash del NIP con salt = clubId + playerId (evita rainbow table cross-club)
+async function hashNIP(nip, clubId, playerId) {
+  return sha256(String(nip) + String(clubId) + String(playerId));
+}
+
+// ID del club original — todos los datos existentes pertenecen a este club
+const CLUB_H19_ID = "club_h19";
+
+// ── Helpers de ruta (Fase 3) ─────────────────────────────────────────────────
+// Todas las rutas de datos apuntan a clubes/{clubId}/ para la arquitectura
+// multi-club. Las funciones de escritura hacen dual-write (club + raíz) durante
+// la transición para mantener compatibilidad con clientes viejos.
+const clubPath   = (path) => `clubes/${CLUB_H19_ID}/${path}`;
+const clubRef    = (path) => ref(db, clubPath(path));
+
+// Inicializar el nodo del club H19 y migrar datos de raíz si es necesario.
+async function initClubH19() {
+  try {
+    const metaRef = ref(db, `clubes/${CLUB_H19_ID}`);
+    const snap = await get(metaRef);
+    const version = snap.exists() ? (snap.val().version || 1) : 0;
+
+    // Crear metadata del club si no existe
+    if (!snap.exists()) {
+      await set(metaRef, {
+        nombre: "Club de Golf H19 — Chacales Team",
+        createdAt: Date.now(),
+        activo: true,
+        config: { hoyos: 18, moneda: "USD" },
+        admins: {},
+        version: 1,  // se actualizará a 3 tras migración
+      });
+    }
+
+    // Migración Fase 3: copiar nodos raíz → clubes/club_h19/ si aún no migrados
+    if (version < 3) {
+      const nodosARaiz = ["directorio", "historial", "historialTorneos", "torneos"];
+      for (const nodo of nodosARaiz) {
+        try {
+          const rootSnap = await get(ref(db, nodo));
+          if (!rootSnap.exists()) continue;
+          const clubSnap = await get(clubRef(nodo));
+          if (!clubSnap.exists()) {
+            await set(clubRef(nodo), rootSnap.val());
+          }
+        } catch(e) { /* continuar con el siguiente nodo */ }
+      }
+      // Marcar migración completa
+      await set(ref(db, `clubes/${CLUB_H19_ID}/version`), 3);
+    }
+  } catch(e) { /* silencioso — no interrumpe la app */ }
+}
+
+const DEFAULT_APUESTA = 50;
+const DEFAULT_MARCA_VAL = 10;
+const DEFAULT_TARJETA_VAL = 10;
+const ADMIN_PIN = "1919";
+
+// Campos personalizados guardados en localStorage
+const getCamposCustom = () => { try { return JSON.parse(localStorage.getItem("h19-campos-custom")||"{}"); } catch(e) { return {}; } };
+const saveCamposCustom = (c) => { try { localStorage.setItem("h19-campos-custom", JSON.stringify(c)); } catch(e) {} };
+
+const CAMPOS = {
+  huerta:    { nombre: "Club de Golf La Huerta",   pares: [4,3,3,3,3,4,3,3,3,4,3,3,3,3,4,3,3,3],
+    greens: [
+      {lat:19.0601039, lng:-98.3301499}, {lat:19.0598427, lng:-98.3300061}, {lat:19.058892, lng:-98.3300967},
+      {lat:19.058652, lng:-98.3307404}, {lat:19.0596076, lng:-98.3300105}, {lat:19.0585069, lng:-98.3313680},
+      {lat:19.059541, lng:-98.3316322}, {lat:19.0597324, lng:-98.3309748}, {lat:19.0588899, lng:-98.3317317},
+    ],
+    waypoints: {
+      5: { label:"La Vista", lat:19.0583248, lng:-98.33006978 },
+    } },
+  lavista:   { nombre: "La Vista Country Club",              pares: [4,3,4,5,4,4,3,4,5,5,4,3,4,4,5,4,3,4] },
+  campestre: { nombre: "Club Campestre de Puebla",           pares: [4,3,5,4,4,4,4,3,5,4,4,5,3,4,5,4,3,4] },
+  soltepec:  { nombre: "Club de Golf Hacienda Soltepec",     pares: [4,4,5,3,5,3,4,4,3,4,4,5,3,5,3,4,4,3] },
+  elcristo:  { nombre: "El Cristo Golf & Country Club",      pares: [5,3,4,4,4,4,3,4,5,5,3,4,4,4,5,4,3,4] },
+  cuernavaca:{ nombre: "Club de Golf de Cuernavaca",         pares: [4,4,5,4,3,4,3,4,4,4,4,5,4,3,4,3,4,4] },
+  xalapa:    { nombre: "Club de Golf Xalapa",                pares: [4,4,5,4,5,3,4,4,3,4,3,4,5,3,4,5,3,4] },
+  otro:      { nombre: "Otro campo",                         pares: null },
+};
+
+// Distancia en yardas entre 2 coordenadas GPS (fórmula de Haversine)
+// HC efectivo según número de hoyos (9 hoyos = HC/2 redondeado arriba)
+const hcEf = (hc, nHoles) => nHoles <= 9 ? Math.ceil(hc / 2) : hc;
+
+function distanciaYardas(lat1, lng1, lat2, lng2) {
+  const R = 6371000; // radio de la Tierra en metros
+  const toRad = (d) => d * Math.PI / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a = Math.sin(dLat/2)**2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng/2)**2;
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  const metros = R * c;
+  return Math.round(metros * 1.09361); // metros a yardas
+}
+
+// Obtiene el waypoint (punto intermedio/dogleg) para un hoyo dado, si existe
+function getWaypoint(campo, holeIndex) {
+  const c = CAMPOS[campo];
+  if (!c || !c.waypoints) return null;
+  const idx = holeIndex % 9;
+  return c.waypoints[idx] || null;
+}
+
+// Obtiene la coordenada del green para un hoyo dado, considerando que en 18 hoyos se repite el recorrido de 9
+function getGreenCoord(campo, holeIndex) {
+  const c = CAMPOS[campo];
+  if (!c || !c.greens) return null;
+  const idx = holeIndex % c.greens.length;
+  return c.greens[idx] || null;
+}
+
+const MARCAS_MULTI = [
+  { key: "holeinone", label: "🎯 Hole in One", pts: 10 },
+  { key: "eagle",     label: "🦅 Eagle",       pts: 6  },
+  { key: "birdie",    label: "🐦 Birdie",      pts: 2  },
+  { key: "holeout",   label: "🕳️ Hole out",   pts: 1  },
+  { key: "sandy",     label: "🏖️ Sandy par",  pts: 2  },
+];
+
+const TARJETAS = [
+  { key: "ob",        label: "🚫 Out of Bound", auto: false },
+  { key: "water",     label: "💧 Water",         auto: false },
+  { key: "sand",      label: "⛱️ Sand",          auto: false },
+  { key: "sapo",      label: "🐸 Sapo",          auto: false },
+  { key: "arbol",     label: "🌳 Árbol",         auto: false },
+  { key: "threeput",  label: "🐍 Culebra",       auto: false }, // antes "Three putt"
+  { key: "anaconda",  label: "🦎 Anaconda",      auto: false }, // 4+ putts en un hoyo → paga a todo el torneo
+  { key: "doblepar",  label: "🔻 MP del Hoyo",   auto: true  },
+  { key: "peorscore", label: "🪣 MP General",     auto: true  },
+];
+
+const D = {
+  bg: "#F5F0E8", surface: "#FFFFFF", card: "#FFFFFF", border: "#DDD5C0",
+  gold: "#9A6F00", goldLight: "#C49A00", goldDim: "#FDF3D0",
+  text: "#1A1A1A", textSub: "#6B6150", textDim: "#B0A690",
+  green: "#1B5E20", greenBg: "#E8F5E9", red: "#B71C1C", redBg: "#FFEBEE",
+  success: "#2E7D32", danger: "#C62828",
+};
+
+const COLORS = [
+  {bg:"#D6E4F7",fg:"#1A4A8A"},{bg:"#D4EDD8",fg:"#1A5C24"},
+  {bg:"#F7E6D4",fg:"#8A3A0A"},{bg:"#F7D4E6",fg:"#8A0A40"},
+  {bg:"#E4D4F7",fg:"#4A1A8A"},{bg:"#F7D4F0",fg:"#8A1A7A"},
+  {bg:"#D4F0E8",fg:"#0A5A3A"},{bg:"#F7EDD4",fg:"#7A5000"},
+  {bg:"#D4D8F7",fg:"#1A1A8A"},{bg:"#F7D8D4",fg:"#8A1A14"},
+];
+
+const col = (id) => {
+  let n = typeof id === "number" ? id : String(id).split("").reduce((a,c) => a + c.charCodeAt(0), 0);
+  return COLORS[Math.abs(n) % COLORS.length];
+};
+const fmt = (n) => n >= 0 ? `+$${n}` : `-$${Math.abs(n)}`;
+const fmtC = (n) => n >= 0 ? D.success : D.danger;
+
+const emptyMarca = (n) => ({
+  multi: Array(n).fill(null).map(() => ({ holeinone:false, eagle:false, birdie:false, holeout:false, sandy:false })),
+  oyes: null, regulation: null,
+});
+const emptyTarjetas = () => { const t = {}; TARJETAS.forEach(tj => { t[tj.key] = null; }); t["threeput_hole"] = null; t["anaconda_hole"] = null; t["doblepar_hole"] = null; return t; };
+
+// Firebase convierte arrays a objetos — normalizar al leer
+// Helper: Firebase puede devolver arrays como objetos {0:x,1:y} — siempre convertir
+const toArr = (x) => {
+  if (!x) return [];
+  if (Array.isArray(x)) return x;
+  if (typeof x === 'object') return Object.values(x);
+  return [];
+};
+
+const normalizeTarjetas = (t) => {
+  if (!t) return emptyTarjetas();
+  const result = { ...emptyTarjetas(), ...t };
+  // peorscore puede ser un array serializado como objeto {0:0, 1:1}
+  if (result.peorscore !== null && result.peorscore !== undefined && !Array.isArray(result.peorscore) && typeof result.peorscore === 'object') {
+    result.peorscore = Object.values(result.peorscore);
+  }
+  // anaconda puede ser array (empate) serializado como objeto desde Firebase
+  if (result.anaconda !== null && result.anaconda !== undefined && !Array.isArray(result.anaconda) && typeof result.anaconda === 'object') {
+    result.anaconda = Object.values(result.anaconda);
+  }
+  return result;
+};
+
+function Avatar({ name, id, size = 32 }) {
+  const c = col(id);
+  const nameStr = String(name || '?');
+  return (
+    <div style={{ width:size, height:size, borderRadius:"50%", background:c.bg, color:c.fg, display:"flex", alignItems:"center", justifyContent:"center", fontSize:size*0.34, fontWeight:700, flexShrink:0, border:`1px solid ${c.fg}33` }}>
+      {nameStr.substring(0,2).toUpperCase()}
+    </div>
+  );
+}
+
+// ─── SELECTOR DE CAMPO ────────────────────────────────
+function CampoSelector({ campo, setCampo, nHoles, setNHoles }) {
+  const [camposCustom, setCamposCustom] = useState(getCamposCustom);
+  const [addingCampo, setAddingCampo] = useState(false);
+  const [newNombre, setNewNombre] = useState("");
+  const [newPares, setNewPares] = useState(Array(18).fill(4));
+  const [newHoles, setNewHoles] = useState(18);
+
+  const todosLosCampos = { ...CAMPOS };
+  Object.entries(camposCustom).forEach(([k,v]) => { todosLosCampos[k] = v; });
+
+  const guardarCampo = () => {
+    if (!newNombre.trim()) return;
+    const key = "custom_" + newNombre.trim().toLowerCase().replace(/\s+/g,"_").replace(/[^a-z0-9_]/g,"");
+    const pares = newPares.slice(0, newHoles);
+    const nuevo = { ...camposCustom, [key]: { nombre: newNombre.trim(), pares, custom: true } };
+    saveCamposCustom(nuevo);
+    setCamposCustom(nuevo);
+    setCampo(key);
+    if (setNHoles) setNHoles(newHoles);
+    setAddingCampo(false);
+    setNewNombre("");
+    setNewPares(Array(18).fill(4));
+  };
+
+  const eliminarCampo = (key, e) => {
+    e.stopPropagation();
+    const nuevo = { ...camposCustom };
+    delete nuevo[key];
+    saveCamposCustom(nuevo);
+    setCamposCustom(nuevo);
+    if (campo === key) setCampo("otro");
+  };
+
+  if (addingCampo) {
+    const parTotal = newPares.slice(0, newHoles).reduce((a,b)=>a+b,0);
+    return (
+      <div>
+        <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:12 }}>
+          <button onClick={() => setAddingCampo(false)} style={{ fontSize:12, color:D.textSub, background:"none", border:`1px solid ${D.border}`, borderRadius:8, padding:"5px 10px", cursor:"pointer" }}>Volver</button>
+          <div style={{ fontSize:14, fontWeight:700, color:D.gold }}>Nuevo campo</div>
+        </div>
+        <input value={newNombre} onChange={e=>setNewNombre(e.target.value)} placeholder="Nombre del club"
+          style={{ width:"100%", padding:"10px 12px", border:`1px solid ${D.border}`, borderRadius:10, background:D.surface, color:D.text, fontSize:14, marginBottom:12, boxSizing:"border-box" }} />
+        <div style={{ display:"flex", gap:8, marginBottom:12 }}>
+          {[9,18].map(h => (
+            <button key={h} onClick={() => setNewHoles(h)} style={{ flex:1, padding:9, border:`1px solid ${newHoles===h?D.gold:D.border}`, borderRadius:10, background:newHoles===h?D.goldDim:"transparent", color:newHoles===h?D.gold:D.textSub, fontSize:13, fontWeight:700, cursor:"pointer" }}>
+              {h} hoyos
+            </button>
+          ))}
+        </div>
+        <div style={{ marginBottom:8, fontSize:12, color:D.textSub }}>Par por hoyo: <span style={{ color:D.gold, fontWeight:700 }}>Total: {parTotal}</span></div>
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(9, 1fr)", gap:4, marginBottom:16 }}>
+          {Array(newHoles).fill(0).map((_, h) => (
+            <div key={h} style={{ textAlign:"center" }}>
+              <div style={{ fontSize:10, color:D.textDim, marginBottom:2 }}>{h+1}</div>
+              <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:2 }}>
+                <button onClick={() => setNewPares(p => p.map((v,i)=>i===h?Math.min(6,v+1):v))}
+                  style={{ width:28, height:20, border:`1px solid ${D.border}`, borderRadius:4, background:D.surface, color:D.gold, fontSize:12, cursor:"pointer", padding:0 }}>+</button>
+                <div style={{ fontSize:14, fontWeight:700, color:D.text }}>{newPares[h]}</div>
+                <button onClick={() => setNewPares(p => p.map((v,i)=>i===h?Math.max(3,v-1):v))}
+                  style={{ width:28, height:20, border:`1px solid ${D.border}`, borderRadius:4, background:D.surface, color:D.textSub, fontSize:12, cursor:"pointer", padding:0 }}>-</button>
+              </div>
+            </div>
+          ))}
+        </div>
+        <button onClick={guardarCampo} disabled={!newNombre.trim()}
+          style={{ width:"100%", padding:"12px", border:"none", borderRadius:10, background:newNombre.trim()?D.gold:"#555", color:"#000", fontSize:14, fontWeight:700, cursor:newNombre.trim()?"pointer":"default" }}>
+          ✓ Guardar campo
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+      {Object.entries(todosLosCampos).map(([key, c]) => (
+        <div key={key} style={{ display:"flex", alignItems:"center", gap:6 }}>
+          <button onClick={() => setCampo(key)} style={{ flex:1, padding:"10px 14px", border:`1px solid ${campo===key?D.gold:D.border}`, borderRadius:10, background:campo===key?D.goldDim:"transparent", color:campo===key?D.gold:D.textSub, fontSize:13, fontWeight:700, cursor:"pointer", textAlign:"left" }}>
+            {campo===key?"✓ ":""}{c.nombre}
+            {c.custom && <span style={{ fontSize:10, color:D.textDim, marginLeft:6 }}>personalizado</span>}
+          </button>
+          {c.custom && (
+            <button onClick={(e) => eliminarCampo(key, e)} style={{ padding:"8px 10px", border:`1px solid ${D.danger}44`, borderRadius:8, background:"transparent", color:D.danger, fontSize:11, cursor:"pointer", flexShrink:0 }}>🗑️</button>
+          )}
+        </div>
+      ))}
+      <button onClick={() => setAddingCampo(true)} style={{ width:"100%", padding:"10px 14px", border:`1px dashed ${D.gold}`, borderRadius:10, background:"transparent", color:D.gold, fontSize:13, fontWeight:600, cursor:"pointer", textAlign:"left" }}>
+        ➕ Agregar campo personalizado
+      </button>
+    </div>
+  );
+}
+
+function getBadge(s, par) {
+  const d = s - par;
+  if (d <= -2) return { label:"Eagle",  bg:"#D6E4F7", fg:"#1A4A8A" };
+  if (d === -1) return { label:"Birdie", bg:"#D4EDD8", fg:"#1A5C24" };
+  if (d === 0)  return { label:"Par",    bg:"#EEE8DC", fg:"#6B6150" };
+  if (d === 1)  return { label:"Bogey",  bg:"#FFF0D4", fg:"#8A4A00" };
+  if (d === 2)  return { label:"Doble",  bg:"#FFE0D4", fg:"#8A2A00" };
+  return { label:"+"+d, bg:"#FFDBDB", fg:"#C62828" };
+}
+
+// Notación tradicional de golf
+function ScoreCell({ s, par, size = 24, isSalida = false }) {
+  const starOverlay = isSalida ? (
+    <span style={{ position:"absolute", top:-5, right:-4, fontSize:9, color:"#1A5C24", lineHeight:1, fontWeight:900 }}>★</span>
+  ) : null;
+
+  if (s === null || s === undefined) return (
+    <div style={{ width:size, height:size, display:"flex", alignItems:"center", justifyContent:"center", fontSize:size*0.45, color:D.textDim, margin:"0 auto", position:"relative" }}>
+      -{starOverlay}
+    </div>
+  );
+  const d = s - par;
+  const fs = Math.round(size * 0.46);
+  const base = { width:size, height:size, display:"flex", alignItems:"center", justifyContent:"center", fontSize:fs, fontWeight:700, margin:"0 auto", position:"relative", boxSizing:"border-box", background:"transparent" };
+
+  if (d <= -2) {
+    return (
+      <div style={{ ...base, borderRadius:"50%", border:`1.5px solid ${D.gold}`, outline:`1.5px solid ${D.gold}`, outlineOffset:"2px", color:D.gold }}>{s}{starOverlay}</div>
+    );
+  }
+  if (d === -1) {
+    return (
+      <div style={{ ...base, borderRadius:"50%", border:`1.5px solid #1A5C24`, color:"#1A5C24" }}>{s}{starOverlay}</div>
+    );
+  }
+  if (d === 0) {
+    return (
+      <div style={{ ...base, color:D.text }}>{s}{starOverlay}</div>
+    );
+  }
+  if (d === 1) {
+    return (
+      <div style={{ ...base, border:`1.5px solid #C87A30`, color:"#8A4A00" }}>{s}{starOverlay}</div>
+    );
+  }
+  if (d === 2) {
+    return (
+      <div style={{ ...base, border:`1.5px solid #C62828`, outline:`1.5px solid #C62828`, outlineOffset:"2px", color:"#C62828" }}>{s}{starOverlay}</div>
+    );
+  }
+  // Triple bogey o peor
+  return (
+    <div style={{ ...base, border:`1.5px solid #7B0000`, outline:`1.5px solid #7B0000`, outlineOffset:"2px", color:"#7B0000", fontWeight:900 }}>{s}{starOverlay}</div>
+  );
+}
+
+// Leyenda de notación de golf
+function ScoreLegend() {
+  const items = [
+    { d:-2, label:"Eagle", s:2, par:4 },
+    { d:-1, label:"Birdie", s:3, par:4 },
+    { d:0,  label:"Par",    s:4, par:4 },
+    { d:1,  label:"Bogey",  s:5, par:4 },
+    { d:2,  label:"Doble",  s:6, par:4 },
+    { d:3,  label:"Triple+",s:7, par:4 },
+  ];
+  return (
+    <div style={{ display:"flex", flexWrap:"wrap", gap:8, justifyContent:"center", padding:"10px 0 4px", borderTop:`1px solid ${D.border}`, marginTop:8 }}>
+      {items.map(it => (
+        <div key={it.label} style={{ display:"flex", alignItems:"center", gap:4 }}>
+          <ScoreCell s={it.s} par={it.par} size={20} />
+          <span style={{ fontSize:9, color:D.textSub }}>{it.label}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function Card({ children, style = {} }) {
+  return (
+    <div style={{ background:D.card, border:`1px solid ${D.border}`, borderRadius:16, padding:16, marginBottom:12, ...style }}>
+      {children}
+    </div>
+  );
+}
+
+function SLabel({ children }) {
+  return <div style={{ fontSize:10, fontWeight:700, color:D.gold, textTransform:"uppercase", letterSpacing:2, marginBottom:10 }}>{children}</div>;
+}
+
+function Btn({ children, onClick, disabled, outline, danger, style = {} }) {
+  return (
+    <button onClick={onClick} disabled={disabled} style={{ width:"100%", padding:14, border:outline ? `1px solid ${danger?D.danger:D.gold}` : "none", borderRadius:12, fontSize:15, fontWeight:700, cursor:disabled?"default":"pointer", marginTop:6, background:outline ? "transparent" : danger ? D.danger : `linear-gradient(135deg,${D.gold},${D.goldLight})`, color:outline ? (danger?D.danger:D.gold) : "#FFFFFF", opacity:disabled?0.4:1, ...style }}>
+      {children}
+    </button>
+  );
+}
+
+function TabBar({ tabs, active, onChange }) {
+  return (
+    <div style={{ display:"flex", gap:6, marginBottom:14 }}>
+      {tabs.map(t => (
+        <button key={t.key} onClick={() => onChange(t.key)} style={{ flex:1, padding:"9px 4px", border:`1px solid ${active===t.key?D.gold:D.border}`, borderRadius:10, background:active===t.key?D.goldDim:D.surface, color:active===t.key?D.gold:D.textSub, fontSize:11, fontWeight:700, cursor:"pointer" }}>
+          {t.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function Pill({ active, danger, onClick, children }) {
+  return (
+    <div onClick={onClick} style={{ display:"flex", alignItems:"center", gap:6, padding:"7px 14px", border:`1px solid ${active?D.gold:danger?D.danger:D.border}`, borderRadius:20, background:active?D.goldDim:"transparent", color:active?D.gold:danger?D.danger:D.textSub, fontSize:13, fontWeight:600, cursor:"pointer", userSelect:"none" }}>
+      {children}
+    </div>
+  );
+}
+
+function calcMarcasPts(players, marcas) {
+  const marcasArr = Array.isArray(marcas) ? marcas : Object.values(marcas||{});
+  return players.map((p, pi) => {
+    let pts = 0;
+    marcasArr.forEach(h => {
+      if (!h) return;
+      const multi = Array.isArray(h.multi) ? h.multi : Object.values(h.multi||{});
+      MARCAS_MULTI.forEach(m => { if (multi[pi]?.[m.key]) pts += m.pts; });
+      if (h.oyes === pi) pts += 1;
+      if (h.regulation === pi) pts += 1;
+    });
+    return pts;
+  });
+}
+
+function calcMarcasResumen(players, marcas) {
+  const playsMarcas = (p) => p ? (p.opts ? p.opts.marcas !== false : true) : false;
+  const eventos = [];
+  const marcasArr = Array.isArray(marcas) ? marcas : Object.values(marcas||{});
+  marcasArr.forEach((h, hi) => {
+    if (!h) return;
+    const multi = Array.isArray(h.multi) ? h.multi : Object.values(h.multi||{});
+    MARCAS_MULTI.forEach(m => {
+      players.forEach((p, pi) => {
+        if (multi[pi]?.[m.key] && playsMarcas(p)) eventos.push({ hole:hi+1, label:m.label, playerName:p.name });
+      });
+    });
+    if (h.oyes !== null && h.oyes !== undefined && playsMarcas(players[h.oyes])) eventos.push({ hole:hi+1, label:"⛳ O'Yes", playerName:players[h.oyes]?.name||"—" });
+    if (h.regulation !== null && h.regulation !== undefined && playsMarcas(players[h.regulation])) eventos.push({ hole:hi+1, label:"✅ Regulation", playerName:players[h.regulation]?.name||"—" });
+  });
+  return eventos.sort((a,b) => a.hole - b.hole);
+}
+
+function calcMarcasMoney(players, marcas, marcaVal) {
+  const pts = calcMarcasPts(players, marcas);
+  // Jugador sin apuesta (score:false) tampoco participa en marcas
+  const playsMarcas = players.map(p => {
+    if (p.opts?.score === false) return false;
+    return p.opts ? p.opts.marcas !== false : true;
+  });
+  return players.map((_, i) => {
+    if (!playsMarcas[i]) return 0;
+    let b = 0;
+    players.forEach((_, j) => {
+      if (i !== j && playsMarcas[j]) { b += pts[i]*marcaVal; b -= pts[j]*marcaVal; }
+    });
+    return b;
+  });
+}
+
+function calcTarjetasMoney(players, tarjetas, tarjetaVal) {
+  // count: cuántas tarjetas tiene cada jugador (incluyendo peorscore que puede ser array)
+  // anaconda se excluye aquí porque paga a todo el torneo (global), no solo al grupo
+  const count = players.map((_, i) => {
+    let c = 0;
+    TARJETAS.forEach(t => {
+      if (t.key === "anaconda") return; // anaconda paga global, no local
+      const owner = tarjetas[t.key];
+      if (Array.isArray(owner)) {
+        // Si hay empate (peorscore), se divide la tarjeta entre los empatados
+        if (owner.includes(i)) c += 1 / owner.length;
+      } else if (owner === i) c += 1;
+    });
+    return c;
+  });
+  // Un jugador sin apuesta (score:false) tampoco participa en tarjetas
+  const playsTarjetas = players.map(p => {
+    if (p.opts?.score === false) return false;
+    return p.opts ? p.opts.tarjetas !== false : true;
+  });
+  return players.map((_, i) => {
+    if (!playsTarjetas[i]) return 0;
+    let b = 0;
+    players.forEach((_, j) => {
+      if (i !== j && playsTarjetas[j]) { b -= count[i]*tarjetaVal; b += count[j]*tarjetaVal; }
+    });
+    return Math.round(b);
+  });
+}
+
+function calcMoney(players, scores, apuesta, extraPot = 0, nHoles = 18) {
+  const playsScore = players.map(p => p.opts ? p.opts.score !== false : true);
+  const idxIn = players.map((_, i) => i).filter(i => playsScore[i]);
+  const n = idxIn.length;
+  // HC proporcional: 9 hoyos = HC/2, 18 hoyos = HC completo
+  const hcEfectivo = (p) => nHoles <= 9 ? Math.ceil(p.hc / 2) : p.hc;
+  const nets = players.map((p, i) => scores[i].reduce((a, b) => a+b, 0) - hcEfectivo(p));
+  if (n < 2) {
+    return { nets, fi:[], si:[], pot:0, money: players.map(() => 0) };
+  }
+  // El pozo incluye la apuesta de los abandonados con castigo
+  const pot = apuesta * n + extraPot;
+  const netsIn = idxIn.map(i => nets[i]);
+  const uniq = [...new Set(netsIn)].sort((a, b) => a-b);
+  const f = uniq[0], s = uniq[1];
+  const fi = idxIn.filter(i => nets[i] === f);
+  const si = s !== undefined ? idxIn.filter(i => nets[i] === s) : [];
+  const loserIdxs = idxIn.filter(i => nets[i] !== f);
+  // Perdedores activos + pozo extra de abandonados
+  const totalFromLosers = apuesta * loserIdxs.length + extraPot;
+  return { nets, fi, si, pot, money: players.map((_, i) => {
+    if (!playsScore[i]) return 0;
+    if (n <= 9) {
+      if (fi.includes(i)) return Math.round(totalFromLosers / fi.length);
+      return -apuesta;
+    }
+    if (fi.length > 1) {
+      if (fi.includes(i)) return Math.round(totalFromLosers / fi.length);
+      return -apuesta;
+    }
+    // 10+ con 1ro y 2do distintos: 60/40 del pozo total
+    if (fi.includes(i)) return Math.round(pot * 0.6) - apuesta;
+    if (si.includes(i)) return Math.round((pot * 0.4) / si.length) - apuesta;
+    return -apuesta;
+  })};
+}
+
+function calcHC(players, scores, si = [], nHoles = 18) {
+  const hcEfectivo = (p) => nHoles <= 9 ? Math.ceil(p.hc / 2) : p.hc;
+  const nets = players.map((p, i) => scores[i].reduce((a, b) => a+b, 0) - hcEfectivo(p));
+  const fnet = Math.min(...nets);
+  const fi = nets.reduce((a, v, i) => v===fnet ? [...a,i] : a, []);
+  const ganadores = [...new Set([...fi, ...si])];
+  const deltas = {};
+  players.forEach(p => { deltas[p.id] = 0; });
+
+  // Escala 18h siempre:
+  // HC 0 gana  → no baja, los demás suben +1 (18h) o +2 (9h), tope 10
+  // HC 1+ gana → baja -1 (18h) o -2 (9h), los demás no cambian
+  const deltaGanadorBaja = nHoles <= 9 ? 2 : 1;
+  const deltaPerderSube  = nHoles <= 9 ? 2 : 1;
+  const hcTope = 10;
+
+  let ganadorHC0 = false;
+  ganadores.forEach(wi => {
+    const w = players[wi];
+    if (w.hc === 0) {
+      ganadorHC0 = true;
+      // HC 0 no cambia
+    } else {
+      // HC 1+ baja deltaGanadorBaja
+      deltas[w.id] -= deltaGanadorBaja;
+    }
+  });
+
+  if (ganadorHC0) {
+    // Todos los NO ganadores suben (si están bajo el tope)
+    players.forEach((p, i) => {
+      if (!ganadores.includes(i) && p.hc < hcTope) {
+        const nuevoHC = p.hc + deltaPerderSube;
+        deltas[p.id] = Math.min(nuevoHC, hcTope) - p.hc;
+      }
+    });
+  }
+
+  return players.map(p => ({
+    ...p,
+    before: p.hc,
+    delta: deltas[p.id],
+    after: Math.max(0, p.hc + deltas[p.id]),
+  }));
+}
+
+function calcOrden(players, scores, pars, currentHole) {
+  if (currentHole === 0) return players.map((_, i) => i);
+  return players.map((_, i) => i).sort((a, b) => {
+    // Compara el resultado del hoyo anterior; si hay empate, retrocede hoyo por hoyo
+    // hasta encontrar diferencia (desempate por hoyos previos, no por acumulado total)
+    for (let h = currentHole - 1; h >= 0; h--) {
+      const sa = scores[a][h] ?? pars[h];
+      const sb = scores[b][h] ?? pars[h];
+      if (sa !== sb) return sa - sb;
+    }
+    return 0; // empate total en todos los hoyos jugados
+  });
+}
+
+// ─── SPLASH SCREEN ────────────────────────────────
+function SplashScreen({ phase, appStyle }) {
+  const IMG = "https://images.unsplash.com/photo-1587174486073-ae5e5cff23aa?w=800&q=80";
+  return (
+    <div style={{ ...appStyle, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center",
+      background:"#0A1A0A", position:"relative", overflow:"hidden",
+      opacity: phase === 2 ? 0 : 1, transition: phase === 2 ? "opacity 0.7s ease" : "none" }}>
+      {/* Imagen real de campo de golf */}
+      <div style={{ position:"absolute", inset:0 }}>
+        <img src={IMG} alt="" style={{ width:"100%", height:"100%", objectFit:"cover", objectPosition:"center" }}
+          onError={e => { e.target.style.display="none"; }} />
+        {/* Overlay oscuro para legibilidad */}
+        <div style={{ position:"absolute", inset:0, background:"linear-gradient(180deg, rgba(0,0,0,0.35) 0%, rgba(0,0,0,0.55) 50%, rgba(0,0,0,0.7) 100%)" }} />
+      </div>
+      {/* Contenido central */}
+      <div style={{ position:"relative", zIndex:1, textAlign:"center" }}>
+        <div style={{ fontSize:88, fontWeight:900, letterSpacing:-4, color:D.gold,
+          textShadow:"0 4px 24px rgba(0,0,0,0.8), 0 0 40px #9A6F0066" }}>
+          H19
+        </div>
+        <div style={{ width: phase >= 1 ? 160 : 0, height:2,
+          background:`linear-gradient(90deg, transparent, ${D.gold}, transparent)`,
+          margin:"8px auto 16px", transition:"width 0.6s ease" }} />
+        <div style={{ fontSize:16, fontWeight:600, color:"#FFFFFF", letterSpacing:3, textTransform:"uppercase",
+          opacity: phase >= 1 ? 1 : 0, transform: phase >= 1 ? "translateY(0)" : "translateY(12px)",
+          transition:"opacity 0.5s ease 0.1s, transform 0.5s ease 0.1s",
+          textShadow:"0 2px 8px rgba(0,0,0,0.8)" }}>
+          Welcome to H19 Golf
+        </div>
+        <div style={{ fontSize:18, color:"#FFD97D", letterSpacing:2, marginTop:8,
+          opacity: phase >= 1 ? 1 : 0, transition:"opacity 0.5s ease 0.3s",
+          textShadow:"0 1px 4px rgba(0,0,0,0.8)" }}>
+          ⛳ Chacales Team
+        </div>
+      </div>
+      {/* Dots decorativos */}
+      <div style={{ position:"absolute", bottom:40, left:"50%", transform:"translateX(-50%)",
+        display:"flex", gap:6, opacity: phase >= 1 ? 0.8 : 0, transition:"opacity 0.5s ease 0.4s" }}>
+        {[0,1,2].map(i => (
+          <div key={i} style={{ width: i===1 ? 20 : 6, height:4, borderRadius:2,
+            background:D.gold, opacity: i===1 ? 1 : 0.5 }} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ─── SPECTATOR VIEW ───────────────────────────────
+function SpectatorView({ rondaId }) {
+  const [ronda, setRonda] = useState(null);
+  const [histData, setHistData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [showSplash, setShowSplash] = useState(true);
+  const [splashPhase, setSplashPhase] = useState(0);
+  const [distGreen, setDistGreen] = useState(null);
+  const [distWaypoint, setDistWaypoint] = useState(null);
+  const [gpsError, setGpsError] = useState("");
+  const [gpsLoading, setGpsLoading] = useState(false);
+
+  useEffect(() => {
+    const r = ref(db, `rondas/${rondaId}`);
+    const unsub = onValue(r, snap => {
+      setRonda(snap.exists() ? snap.val() : null);
+      setLoading(false);
+    });
+    return () => unsub();
+  }, [rondaId]);
+
+  useEffect(() => {
+    const h = ref(db, `historial/${rondaId}`);
+    const unsub = onValue(h, snap => {
+      setHistData(snap.exists() ? snap.val() : null);
+    });
+    return () => unsub();
+  }, [rondaId]);
+
+  useEffect(() => { setDistGreen(null); setDistWaypoint(null); setGpsError(""); }, [ronda?.hole]);
+
+  // Splash animation — más corto para espectadores (2s total)
+  useEffect(() => {
+    setTimeout(() => setSplashPhase(1), 400);
+    setTimeout(() => setSplashPhase(2), 1600);
+    setTimeout(() => setShowSplash(false), 2200);
+  }, []);
+
+  const appStyle = { fontSize:14, fontFamily:"-apple-system,sans-serif", color:D.text, background:D.bg, minHeight:"100vh", maxWidth:420, margin:"0 auto" };
+
+  if (showSplash) {
+    return <SplashScreen phase={splashPhase} appStyle={{ fontSize:14, fontFamily:"-apple-system,sans-serif", color:D.text, background:D.bg, minHeight:"100vh", maxWidth:420, margin:"0 auto" }} />;
+  }
+
+  if (loading) {
+    return (
+      <div style={{ ...appStyle, display:"flex", alignItems:"center", justifyContent:"center", flexDirection:"column", gap:12 }}>
+        <div style={{ fontSize:32 }}>⛳</div>
+        <div style={{ color:D.gold, fontWeight:700 }}>Conectando...</div>
+      </div>
+    );
+  }
+
+  if (!ronda || !ronda.players || !ronda.scores) {
+    return (
+      <div style={{ ...appStyle, display:"flex", alignItems:"center", justifyContent:"center", flexDirection:"column", gap:12 }}>
+        <div style={{ fontSize:32 }}>🏌️</div>
+        <div style={{ color:D.textSub }}>Ronda no encontrada</div>
+      </div>
+    );
+  }
+
+  const { players: _players, scores: _scores, pars, hole, campo, tarjetas, marcas, status, apuesta, marcaVal, tarjetaVal } = ronda;
+  const players = Array.isArray(_players) ? _players : Object.values(_players||{});
+  const scores = Array.isArray(_scores) ? _scores : Object.values(_scores||{});
+  // nHoles: de ronda activa, de historial, o inferir de pars
+  const svNHoles = ronda.nHoles || histData?.nHoles || (pars ? (Array.isArray(pars)?pars:Object.values(pars)).length : 18);
+  const nets = players.map((p, i) => (toArr(scores[i])).reduce((a,v)=>a+(v||0),0) - hcEf(p.hc, svNHoles));
+  const ranked = players.map((p, i) => ({ ...p, net:nets[i], gross:(toArr(scores[i])).reduce((a,v)=>a+(v||0),0) })).sort((a,b)=>a.net-b.net);
+  const campoNombre = CAMPOS[campo]?.nombre || campo;
+
+  const medirDistancia = () => {
+    const green = getGreenCoord(campo, hole||0);
+    if (!green) { setGpsError("Este campo no tiene GPS configurado para este hoyo"); return; }
+    if (!navigator.geolocation) { setGpsError("Tu navegador no soporta GPS"); return; }
+    setGpsLoading(true); setGpsError(""); setDistGreen(null); setDistWaypoint(null);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const yd = distanciaYardas(pos.coords.latitude, pos.coords.longitude, green.lat, green.lng);
+        setDistGreen(yd);
+        const wp = getWaypoint(campo, hole||0);
+        if (wp) {
+          const ydw = distanciaYardas(pos.coords.latitude, pos.coords.longitude, wp.lat, wp.lng);
+          setDistWaypoint({ label:wp.label, yards:ydw });
+        }
+        setGpsLoading(false);
+      },
+      (err) => {
+        setGpsError(err.code === 1 ? "Activa el permiso de ubicación para usar el GPS" : "No se pudo obtener tu ubicación");
+        setGpsLoading(false);
+      },
+      { enableHighAccuracy:true, timeout:10000, maximumAge:5000 }
+    );
+  };
+
+
+  // ── DINERO EN VIVO (estimado con hoyos no jugados = par) ──
+  const liveMoney = (() => {
+    if (!pars || !apuesta) return null;
+    const fullSc = players.map((_, i) => pars.map((par, h) => {
+      const v = toArr(scores[i])[h];
+      return v===null||v===undefined ? par : v;
+    }));
+    const r = calcMoney(players, fullSc, apuesta, 0, svNHoles);
+    const mMoney = marcas ? calcMarcasMoney(players, marcas, marcaVal||0) : players.map(()=>0);
+    const mPtsRaw = marcas ? calcMarcasPts(players, marcas) : players.map(()=>0);
+    const mPts = players.map((p,i) => (p.opts?.marcas === false) ? 0 : mPtsRaw[i]);
+    const tMoney = tarjetas ? calcTarjetasMoney(players, tarjetas, tarjetaVal||0) : players.map(()=>0);
+    const tCount = players.map((p,i) => (p.opts?.tarjetas === false) ? 0 : (tarjetas ? TARJETAS.filter(t=>tarjetas[t.key]===i).length : 0));
+    return players.map((p,i) => {
+      const noScore = p.opts?.score === false;
+      const sm = noScore ? 0 : (r.money[i] ?? 0);
+      const mm = noScore ? 0 : (mMoney[i] ?? 0);
+      const tm = noScore ? 0 : (tMoney[i] ?? 0);
+      return { name:p.name, scoreMoney:sm, marcasMoney:mm, marcasPts: noScore ? 0 : (mPts[i]??0), tarjetasMoney:tm, tarjetasCount: noScore ? 0 : tCount[i], total:sm+mm+tm };
+    }).sort((a,b)=>b.total-a.total);
+  })();
+
+  // ── VISTA COMPLETA DE RESULTADOS FINALES (cuando hay historial guardado) ──
+  if (status === "finalizada" && histData && histData.jugadores) {
+    const jr = histData.jugadores.slice().sort((a,b) => a.neto - b.neto);
+    const winner = jr[0];
+    return (
+      <div style={appStyle}>
+        <div style={{ background:`linear-gradient(135deg,#FDF8EE,#F5EDD0)`, borderBottom:`1px solid ${D.gold}44`, padding:"28px 16px", textAlign:"center", marginBottom:16 }}>
+          <div style={{ fontSize:36, marginBottom:8 }}>🏆</div>
+          <div style={{ fontSize:11, color:D.gold, letterSpacing:2, textTransform:"uppercase", marginBottom:6 }}>{histData.nombre || campoNombre}</div>
+          <div style={{ fontSize:24, fontWeight:900, color:D.text, marginBottom:4 }}>{histData.ganador}</div>
+          <div style={{ fontSize:13, color:D.textSub }}>{histData.netGanador} golpes netos</div>
+        </div>
+        <div style={{ padding:"0 12px 32px" }}>
+          <Card>
+            <SLabel>📊 Clasificación final</SLabel>
+            {jr.map((p, pos) => (
+              <div key={p.name} style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 0", borderBottom:pos<jr.length-1?`1px solid ${D.border}`:"none" }}>
+                <div style={{ width:24, height:24, borderRadius:"50%", background:pos===0?D.goldDim:D.surface, border:`1px solid ${pos===0?D.gold:D.border}`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:12, fontWeight:900, color:pos===0?D.gold:D.textSub }}>{pos+1}</div>
+                <Avatar name={p.name} id={p.name} size={32} />
+                <div style={{ flex:1 }}>
+                  <div style={{ fontSize:14, fontWeight:600 }}>{p.name}</div>
+                  <div style={{ fontSize:11, color:D.textSub }}>HC {hcEf(p.hc, svNHoles)}{svNHoles<=9?" (de "+p.hc+")":""} · {p.bruto} bruto</div>
+                </div>
+                <div style={{ textAlign:"right" }}>
+                  <div style={{ fontSize:18, fontWeight:900, color:pos===0?D.gold:D.text }}>{p.neto}</div>
+                  <div style={{ fontSize:10, color:D.textSub }}>neto</div>
+                </div>
+              </div>
+            ))}
+          </Card>
+
+          <Card>
+            <SLabel>💰 Resumen por jugador</SLabel>
+            {jr.map((p, pos) => (
+              <div key={p.name} style={{ padding:"10px 0", borderBottom:pos<jr.length-1?`1px solid ${D.border}`:"none" }}>
+                <div style={{ display:"flex", justifyContent:"space-between", marginBottom:4 }}>
+                  <div style={{ fontSize:13, fontWeight:700 }}>{p.name}</div>
+                  <div style={{ fontSize:14, fontWeight:900, color:p.total>=0?D.success:D.danger }}>{p.total>=0?`+$${p.total}`:`-$${Math.abs(p.total)}`}</div>
+                </div>
+                <div style={{ fontSize:11, color:D.textSub }}>Score {"$"+String(p.scoreMoney)} · Marcas {"$"+String(p.marcasMoney)} ({p.marcasPts}pts) · Tarjetas {"$"+String(p.tarjetasMoney)} ({p.tarjetasCount})</div>
+              </div>
+            ))}
+          </Card>
+
+          {histData.marcas && histData.playerNames && (() => {
+            const eventos = calcMarcasResumen(histData.playerNames.map((n,i)=>({name:n, opts:histData.playerOptsArr?.[i]})), histData.marcas);
+            return eventos.length > 0 ? (
+              <Card>
+                <SLabel>⭐ Resumen de marcas</SLabel>
+                {eventos.map((ev, i) => (
+                  <div key={i} style={{ display:"flex", alignItems:"center", gap:8, padding:"6px 0", borderBottom:i<eventos.length-1?`1px solid ${D.border}`:"none" }}>
+                    <div style={{ fontSize:11, color:D.textDim, width:42 }}>Hoyo {ev.hole}</div>
+                    <div style={{ flex:1, fontSize:12 }}>{ev.label}</div>
+                    <div style={{ fontSize:12, fontWeight:700, color:D.gold }}>{ev.playerName}</div>
+                  </div>
+                ))}
+              </Card>
+            ) : null;
+          })()}
+
+          {histData.scoresPorHoyo && histData.pars && (
+            <Card>
+              <SLabel>🏌️ Tarjeta hoyo por hoyo</SLabel>
+              <div style={{ overflowX:"auto" }}>
+                <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11, minWidth:histData.pars.length*32+90 }}>
+                  <thead>
+                    <tr>
+                      <th style={{ textAlign:"left", padding:"4px 6px", color:D.textSub, position:"sticky", left:0, background:D.surface }}>Hoyo</th>
+                      {histData.pars.map((par, h) => (
+                        <th key={h} style={{ padding:"4px 4px", color:D.textDim, fontWeight:600, minWidth:28 }}>{h+1}</th>
+                      ))}
+                      <th style={{ padding:"4px 6px", color:D.gold, fontWeight:700 }}>Tot</th>
+                    </tr>
+                    <tr>
+                      <td style={{ padding:"2px 6px", color:D.textDim, fontSize:10, position:"sticky", left:0, background:D.surface }}>Par</td>
+                      {histData.pars.map((par, h) => (
+                        <td key={h} style={{ textAlign:"center", padding:"2px 4px", color:D.textDim, fontSize:10 }}>{par}</td>
+                      ))}
+                      <td style={{ textAlign:"center", padding:"2px 6px", color:D.textDim, fontSize:10, fontWeight:700 }}>{histData.pars.reduce((a,b)=>a+b,0)}</td>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(histData.playerNames||[]).map((name, pi) => {
+                      const row = histData.scoresPorHoyo[pi] || [];
+                      const tot = row.reduce((a,b)=>a+(b||0),0);
+                      return (
+                        <tr key={name} style={{ borderTop:`1px solid ${D.border}` }}>
+                          <td style={{ padding:"5px 6px", fontWeight:600, position:"sticky", left:0, background:D.surface, whiteSpace:"nowrap" }}>{name}</td>
+                          {row.map((s, h) => (
+                            <td key={h} style={{ textAlign:"center", padding:"3px 1px" }}>
+                              <ScoreCell s={s??null} par={histData.pars[h]} size={22} />
+                            </td>
+                          ))}
+                          <td style={{ textAlign:"center", padding:"5px 6px", fontWeight:900, color:D.gold }}>{tot}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+                <ScoreLegend />
+              </div>
+            </Card>
+          )}
+
+          {tarjetas && (
+            <Card>
+              <SLabel>🃏 Resumen de tarjetas</SLabel>
+              {TARJETAS.map((tj, idx) => {
+                const owner = tarjetas[tj.key];
+                return (
+                  <div key={tj.key} style={{ display:"flex", alignItems:"center", gap:8, padding:"6px 0", borderBottom:idx<TARJETAS.length-1?`1px solid ${D.border}`:"none" }}>
+                    <div style={{ flex:1, fontSize:12 }}>{tj.label}</div>
+                    {owner !== null && owner !== undefined
+                      ? <div style={{ fontSize:12, fontWeight:700, color:D.danger }}>{players[owner]?.name||"—"}</div>
+                      : <div style={{ fontSize:11, color:D.textDim }}>Sin dueño</div>
+                    }
+                  </div>
+                );
+              })}
+            </Card>
+          )}
+
+          {histData.hcUpdates && histData.hcUpdates.length > 0 && (
+            <Card>
+              <SLabel>📈 Ajuste de handicaps</SLabel>
+              {histData.hcUpdates.map((u, i) => {
+                const up=u.delta>0, dn=u.delta<0;
+                return (
+                  <div key={u.name} style={{ display:"flex", alignItems:"center", gap:8, padding:"9px 0", borderBottom:i<histData.hcUpdates.length-1?`1px solid ${D.border}`:"none" }}>
+                    <Avatar name={u.name} id={u.name} size={30} />
+                    <div style={{ flex:1 }}>
+                      <div style={{ fontSize:13, fontWeight:600 }}>{u.name}</div>
+                      <div style={{ fontSize:11, color:D.textSub }}>HC {u.before}</div>
+                    </div>
+                    <div style={{ fontSize:12, padding:"3px 10px", borderRadius:10, fontWeight:700, background:up?D.redBg:dn?D.greenBg:D.surface, color:up?D.danger:dn?D.success:D.textSub, border:`1px solid ${up?D.danger+"44":dn?D.success+"44":D.border}` }}>
+                      {up?`+${u.delta} -> HC ${u.after}`:dn?`${u.delta} -> HC ${u.after}`:"Sin cambio"}
+                    </div>
+                  </div>
+                );
+              })}
+            </Card>
+          )}
+
+          {histData.abandonos && histData.abandonos.length > 0 && (
+            <Card style={{ border:`1px solid ${D.danger}44` }}>
+              <SLabel>🚪 Jugadores que abandonaron</SLabel>
+              {histData.abandonos.map((c, i) => (
+                <div key={i} style={{ padding:"10px 0", borderBottom:i<histData.abandonos.length-1?`1px solid ${D.border}`:"none" }}>
+                  <div style={{ display:"flex", justifyContent:"space-between", marginBottom:4 }}>
+                    <div style={{ fontSize:13, fontWeight:700 }}>{c.name}</div>
+                    <div style={{ fontSize:14, fontWeight:900, color:D.danger }}>
+                      {c.conCastigo ? "-$"+(c.scorePago+c.tarjetaPago) : "Sin castigo"}
+                    </div>
+                  </div>
+                  {c.conCastigo && (
+                    <div style={{ fontSize:11, color:D.textSub }}>
+                      {"Score: $"+c.scorePago+" · Tarjeta abandono: $"+c.tarjetaPago+" (a todos los jugadores del torneo)"}
+                    </div>
+                  )}
+                </div>
+              ))}
+              <div style={{ marginTop:8, paddingTop:8, borderTop:`1px solid ${D.border}` }}>
+                <div style={{ fontSize:11, color:D.textSub }}>
+                  {"Cada jugador activo recibe: $"+Math.round(histData.abandonos.filter(c=>c.conCastigo).reduce((a,c)=>a+c.tarjetaPago,0) / Math.max(1, histData.jugadores?.length||1))+" por tarjeta de abandono"}
+                </div>
+              </div>
+            </Card>
+          )}
+
+          <div style={{ textAlign:"center", fontSize:11, color:D.textDim, marginTop:8 }}>Resultados finales · Vista de solo lectura</div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={appStyle}>
+      <div style={{ background:D.surface, borderBottom:`1px solid ${D.border}`, padding:"20px 16px 14px", textAlign:"center" }}>
+        <div style={{ fontSize:30, fontWeight:900, color:D.gold }}>H19</div>
+        <div style={{ fontSize:11, color:D.textSub, letterSpacing:2, textTransform:"uppercase", marginTop:2 }}>{campoNombre}</div>
+        <div style={{ marginTop:8, display:"inline-flex", alignItems:"center", gap:6, padding:"4px 12px", background:status==="finalizada"?D.greenBg:D.goldDim, border:`1px solid ${status==="finalizada"?D.success:D.gold}`, borderRadius:20 }}>
+          <div style={{ width:6, height:6, borderRadius:"50%", background:status==="finalizada"?D.success:D.gold }} />
+          <span style={{ fontSize:11, fontWeight:700, color:status==="finalizada"?D.success:D.gold }}>
+            {status==="finalizada" ? "Ronda finalizada" : "En vivo"}
+          </span>
+        </div>
+      </div>
+      <div style={{ padding:"12px 12px 32px" }}>
+        {status !== "finalizada" && (
+          <Card style={{ textAlign:"center", marginBottom:12 }}>
+            <div style={{ fontSize:11, color:D.textSub, letterSpacing:2, textTransform:"uppercase", marginBottom:4 }}>Hoyo actual</div>
+            <div style={{ fontSize:36, fontWeight:900 }}>{(hole||0)+1}</div>
+            <div style={{ fontSize:13, color:D.gold, fontWeight:700 }}>PAR {(pars||[])[hole||0]||"—"}</div>
+          </Card>
+        )}
+        {status !== "finalizada" && getGreenCoord(campo, hole||0) && (
+          <Card style={{ marginBottom:12, textAlign:"center" }}>
+            {distGreen !== null ? (
+              <div onClick={medirDistancia} style={{ cursor:"pointer" }}>
+                {distWaypoint && (
+                  <div style={{ marginBottom:10, paddingBottom:10, borderBottom:`1px solid ${D.border}` }}>
+                    <div style={{ fontSize:10, fontWeight:700, color:D.textSub, textTransform:"uppercase", letterSpacing:2, marginBottom:2 }}>📍 A {distWaypoint.label}</div>
+                    <div style={{ fontSize:22, fontWeight:900, color:D.text }}>{distWaypoint.yards} <span style={{ fontSize:12, color:D.textSub, fontWeight:600 }}>yds</span></div>
+                  </div>
+                )}
+                <div style={{ fontSize:10, fontWeight:700, color:D.gold, textTransform:"uppercase", letterSpacing:2, marginBottom:4 }}>📍 Distancia al green</div>
+                <div style={{ fontSize:32, fontWeight:900, color:D.text }}>{distGreen} <span style={{ fontSize:14, color:D.textSub, fontWeight:600 }}>yds</span></div>
+                <div style={{ fontSize:10, color:D.textDim, marginTop:2 }}>Toca para actualizar</div>
+              </div>
+            ) : (
+              <button onClick={medirDistancia} disabled={gpsLoading} style={{ width:"100%", padding:"10px", border:`1px solid ${D.gold}`, borderRadius:10, background:D.goldDim, color:D.gold, fontSize:13, fontWeight:700, cursor:"pointer" }}>
+                {gpsLoading ? "📍 Midiendo..." : "📍 Medir distancia al green"}
+              </button>
+            )}
+            {gpsError && <div style={{ fontSize:11, color:D.danger, marginTop:8 }}>{gpsError}</div>}
+          </Card>
+        )}
+        {status !== "finalizada" && pars && (
+          <Card style={{ marginBottom:12 }}>
+            <SLabel>🚩 Orden de salida</SLabel>
+            <div style={{ display:"flex", flexWrap:"wrap", gap:8 }}>
+              {calcOrden(players, scores, pars, hole||0).map((pi, pos) => (
+                <div key={players[pi].id} style={{ display:"flex", alignItems:"center", gap:6, padding:"5px 10px 5px 6px", background:D.goldDim, borderRadius:20, border:`1px solid ${D.gold}33` }}>
+                  <div style={{ width:18, height:18, borderRadius:"50%", background:D.gold, color:"#fff", fontSize:10, fontWeight:900, display:"flex", alignItems:"center", justifyContent:"center" }}>{pos+1}</div>
+                  <span style={{ fontSize:12, fontWeight:600 }}>{players[pi].name}</span>
+                </div>
+              ))}
+            </div>
+          </Card>
+        )}
+        <Card>
+          <SLabel>📋 Marcador en vivo</SLabel>
+          {pars && pars.length > 0 && players && players.length > 0 && (() => {
+            const parTotal = (pars||[]).reduce((a,b)=>a+b,0);
+            const fmtVs = (v) => v === null ? "-" : v === 0 ? "E" : v > 0 ? `+${v}` : `${v}`;
+            const vsColor = (v) => v === null ? D.textDim : v < 0 ? D.success : v > 0 ? D.danger : D.text;
+            const tablaData = players.map((pl, pi) => {
+              const rowScores = scores[pi] || [];
+              const jugados = toArr(rowScores).filter(s => s !== null && s !== undefined);
+              const total = jugados.length > 0 ? jugados.reduce((a,b)=>a+b,0) : null;
+              // Solo sumar par de hoyos jugados (no null)
+              const parJugados = (rowScores||[]).reduce((sum,s,i) => s!==null&&s!==undefined ? sum+((pars||[])[i]||0) : sum, 0);
+              const vsPar = total !== null ? total - parJugados : null;
+              const vsParHC = vsPar !== null ? vsPar - hcEf(pl.hc, svNHoles) : null;
+              return { pl, pi, rowScores, total, vsPar, vsParHC };
+            }).sort((a,b) => {
+              if (a.vsParHC === null && b.vsParHC === null) return 0;
+              if (a.vsParHC === null) return 1;
+              if (b.vsParHC === null) return -1;
+              return a.vsParHC - b.vsParHC;
+            });
+            return (
+              <div style={{ overflowX:"auto" }}>
+                <table style={{ borderCollapse:"collapse", width:"100%", fontSize:11, color:D.text }}>
+                  <thead>
+                    <tr style={{ background:D.surface }}>
+                      <td style={{ padding:"6px 6px", fontWeight:700, color:D.gold, fontSize:10, textTransform:"uppercase", letterSpacing:1, position:"sticky", left:0, background:D.surface, borderBottom:`1px solid ${D.border}`, minWidth:70 }}>Jugador</td>
+                      {(pars||[]).map((_,i) => <td key={i} style={{ padding:"5px 2px", textAlign:"center", fontWeight:700, color:D.textSub, borderBottom:`1px solid ${D.border}`, minWidth:24, fontSize:10 }}>{i+1}</td>)}
+                      <td style={{ padding:"5px 4px", textAlign:"center", fontWeight:700, color:D.gold, borderBottom:`1px solid ${D.border}`, minWidth:28, borderLeft:`1px solid ${D.border}` }}>TOT</td>
+                      <td style={{ padding:"5px 3px", textAlign:"center", fontWeight:700, color:D.textSub, borderBottom:`1px solid ${D.border}`, minWidth:24 }}>HC</td>
+                      <td style={{ padding:"5px 4px", textAlign:"center", fontWeight:700, color:"#1A5C24", borderBottom:`1px solid ${D.border}`, minWidth:32, borderLeft:`1px solid ${D.border}` }}>VS Par</td>
+                      <td style={{ padding:"5px 4px", textAlign:"center", fontWeight:700, color:D.gold, borderBottom:`1px solid ${D.border}`, minWidth:40, borderLeft:`1px solid ${D.border}` }}>VS Par-HC</td>
+                    </tr>
+                    <tr>
+                      <td style={{ padding:"3px 6px", fontSize:10, color:D.textDim, position:"sticky", left:0, background:D.card, borderBottom:`1px solid ${D.border}` }}>PAR</td>
+                      {(pars||[]).map((p,i) => <td key={i} style={{ padding:"3px 2px", textAlign:"center", fontSize:10, color:D.textSub, borderBottom:`1px solid ${D.border}` }}>{p}</td>)}
+                      <td style={{ padding:"3px 4px", textAlign:"center", fontSize:10, color:D.textSub, borderBottom:`1px solid ${D.border}`, borderLeft:`1px solid ${D.border}` }}>{parTotal}</td>
+                      <td style={{ borderBottom:`1px solid ${D.border}` }}></td>
+                      <td style={{ borderBottom:`1px solid ${D.border}`, borderLeft:`1px solid ${D.border}` }}></td>
+                      <td style={{ borderBottom:`1px solid ${D.border}`, borderLeft:`1px solid ${D.border}` }}></td>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {tablaData.map(({ pl, pi, rowScores, total, vsPar, vsParHC }, pos) => (
+                      <tr key={pl.id} style={{ borderBottom:`1px solid ${D.border}`, background:pos===0&&vsParHC!==null?D.goldDim+"55":"transparent" }}>
+                        <td style={{ padding:"6px 6px", position:"sticky", left:0, background:pos===0&&vsParHC!==null?D.goldDim+"55":D.card, zIndex:1 }}>
+                          <div style={{ display:"flex", alignItems:"center", gap:5 }}>
+                            <span style={{ fontSize:10, fontWeight:700, color:pos===0?D.gold:D.textSub, minWidth:12 }}>{pos+1}</span>
+                            <Avatar name={String(pl.name||'')} id={pl.id} size={20} />
+                            <span style={{ fontSize:11, fontWeight:600, whiteSpace:"nowrap" }}>{pl.name}</span>
+                          </div>
+                        </td>
+                        {(pars||[]).map((par, hi) => {
+                          const s = rowScores[hi];
+                          const isCurrent = hi === (hole||0);
+                          return (
+                            <td key={hi} style={{ textAlign:"center", padding:"3px 1px", background:isCurrent?D.goldDim+"55":"transparent" }}>
+                              <ScoreCell s={s??null} par={par} size={22} isSalida={!!ronda.hoyoSalida&&hi===(ronda.hoyoSalida||1)-1} />
+                            </td>
+                          );
+                        })}
+                        <td style={{ textAlign:"center", padding:"5px 4px", fontWeight:700, fontSize:12, borderLeft:`1px solid ${D.border}` }}>{total??'—'}</td>
+                        <td style={{ textAlign:"center", padding:"5px 3px", fontSize:11, color:D.textSub }}>{hcEf(pl.hc, svNHoles)}</td>
+                        <td style={{ textAlign:"center", padding:"5px 4px", fontWeight:700, fontSize:12, color:vsColor(vsPar), borderLeft:`1px solid ${D.border}` }}>{fmtVs(vsPar)}</td>
+                        <td style={{ textAlign:"center", padding:"5px 4px", fontWeight:900, fontSize:12, color:vsColor(vsParHC), borderLeft:`1px solid ${D.border}` }}>{fmtVs(vsParHC)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <ScoreLegend />
+              </div>
+            );
+          })()}
+        </Card>
+
+        {liveMoney && (
+          <Card>
+            <SLabel>💰 ¿Cómo va el dinero? <span style={{ fontSize:10, color:D.textDim, fontWeight:400 }}>(estimado)</span></SLabel>
+            {liveMoney.map((p, pos) => (
+              <div key={p.name} style={{ padding:"9px 0", borderBottom:pos<liveMoney.length-1?`1px solid ${D.border}`:"none" }}>
+                <div style={{ display:"flex", justifyContent:"space-between", marginBottom:3 }}>
+                  <div style={{ fontSize:13, fontWeight:700 }}>{p.name}</div>
+                  <div style={{ fontSize:14, fontWeight:900, color:p.total>=0?D.success:D.danger }}>{p.total>=0?`+$${p.total}`:`-$${Math.abs(p.total)}`}</div>
+                </div>
+                <div style={{ fontSize:10, color:D.textSub }}>Score {"$"+String(p.scoreMoney)} · Marcas {"$"+String(p.marcasMoney)} ({p.marcasPts}pts) · Tarj {"$"+String(p.tarjetasMoney)} ({p.tarjetasCount})</div>
+              </div>
+            ))}
+            <div style={{ fontSize:10, color:D.textDim, textAlign:"center", marginTop:6 }}>Los hoyos sin jugar se calculan como par</div>
+          </Card>
+        )}
+
+        {marcas && (() => {
+          const eventos = calcMarcasResumen(players, marcas);
+          return eventos.length > 0 ? (
+            <Card>
+              <SLabel>⭐ Resumen de marcas</SLabel>
+              {eventos.map((ev, i) => (
+                <div key={i} style={{ display:"flex", alignItems:"center", gap:8, padding:"6px 0", borderBottom:i<eventos.length-1?`1px solid ${D.border}`:"none" }}>
+                  <div style={{ fontSize:11, color:D.textDim, width:42 }}>Hoyo {ev.hole}</div>
+                  <div style={{ flex:1, fontSize:12 }}>{ev.label}</div>
+                  <div style={{ fontSize:12, fontWeight:700, color:D.gold }}>{ev.playerName}</div>
+                </div>
+              ))}
+            </Card>
+          ) : null;
+        })()}
+
+
+        {tarjetas && (
+          <Card>
+            <SLabel>🃏 Tarjetas</SLabel>
+            {TARJETAS.map((tj, idx) => {
+              const owner = tarjetas[tj.key];
+              return (
+                <div key={tj.key} style={{ display:"flex", alignItems:"center", gap:8, padding:"6px 0", borderBottom:idx<TARJETAS.length-1?`1px solid ${D.border}`:"none" }}>
+                  <div style={{ flex:1, fontSize:12 }}>{tj.label}</div>
+                  {owner !== null && owner !== undefined
+                    ? <div style={{ fontSize:12, fontWeight:700, color:D.danger }}>{players[owner]?.name||"—"}</div>
+                    : <div style={{ fontSize:11, color:D.textDim }}>Sin dueño</div>
+                  }
+                </div>
+              );
+            })}
+          </Card>
+        )}
+        <div style={{ textAlign:"center", fontSize:11, color:D.textDim, marginTop:8 }}>Vista de solo lectura · Actualización automática</div>
+      </div>
+    </div>
+  );
+}
+
+// ─── TORNEO: CREAR ────────────────────────────────
+function TorneoCrear({ onExit, onIniciarGrupo, appStyle }) {
+  const [paso, setPaso] = useState(1); // 1=config, 2=grupos+jugadores, 3=compartir
+  const [campo, setCampo] = useState("huerta");
+  const [nHoles, setNHoles] = useState(9);
+  const [apuesta, setApuesta] = useState(50);
+  const [marcaVal, setMarcaVal] = useState(10);
+  const [tarjetaVal, setTarjetaVal] = useState(10);
+  const [nombre, setNombre] = useState("");
+  const [grupos, setGrupos] = useState([{nombre:"", id:null, players:[], hoyoSalida:1},{nombre:"", id:null, players:[], hoyoSalida:1}]);
+  const [torneoId, setTorneoId] = useState(null);
+  const [creando, setCreando] = useState(false);
+  const [dir, setDir] = useState([]);
+  const [grupoActivo, setGrupoActivo] = useState(0);
+  // Grupos aleatorios
+  const [modoGrupos, setModoGrupos] = useState("manual"); // "manual" | "aleatorio"
+  const [selAleatorio, setSelAleatorio] = useState(new Set()); // jugadores seleccionados para sorteo
+  const [nGruposAleatorio, setNGruposAleatorio] = useState(3);
+  const [previewAleatorio, setPreviewAleatorio] = useState(null); // grupos generados para preview
+
+  // Fisher-Yates shuffle — sorteo verdaderamente aleatorio
+  const shuffleArray = (arr) => {
+    const a = [...arr];
+    for (let i = a.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [a[i], a[j]] = [a[j], a[i]];
+    }
+    return a;
+  };
+
+  // Distribuir jugadores en grupos equilibrados
+  const distribuirEnGrupos = (jugadores, nG) => {
+    const shuffled = shuffleArray(jugadores);
+    const base = Math.floor(shuffled.length / nG);
+    const extra = shuffled.length % nG; // primeros 'extra' grupos tienen uno más
+    const grupos = [];
+    let idx = 0;
+    for (let i = 0; i < nG; i++) {
+      const size = base + (i < extra ? 1 : 0);
+      grupos.push(shuffled.slice(idx, idx + size));
+      idx += size;
+    }
+    return grupos;
+  };
+
+  const generarPreview = () => {
+    const jugadores = dir.filter(p => selAleatorio.has(p.id));
+    if (jugadores.length < nGruposAleatorio) return;
+    const grupos = distribuirEnGrupos(jugadores, nGruposAleatorio);
+    setPreviewAleatorio(grupos.map((ps, i) => ({
+      nombre: `Grupo ${i+1}`, id: null,
+      players: ps, hoyoSalida: i+1,
+    })));
+  };
+
+  const confirmarAleatorio = () => {
+    if (!previewAleatorio) return;
+    setGrupos(previewAleatorio.map(g => ({ ...g })));
+    setModoGrupos("manual"); // pasa a vista manual para editar hoyos si quiere
+    setPreviewAleatorio(null);
+  };
+
+  useEffect(() => {
+    onValue(clubRef("directorio"), snap => {
+      if (snap.exists()) setDir(snap.val().players || []);
+    }, { onlyOnce: true });
+  }, []);
+
+  // Guardar torneoId en localStorage cuando lleguemos al paso 3
+  useEffect(() => {
+    if (paso === 3 && torneoId) {
+      try { localStorage.setItem("h19-torneo-admin", JSON.stringify({ torneoId, nombre: nombre.trim() || "Torneo", campo, nHoles, apuesta, marcaVal, tarjetaVal })); } catch(e) {}
+    }
+  }, [paso, torneoId]);
+
+  const addGrupo = () => setGrupos(g => [...g, {nombre:"", id:null, players:[], hoyoSalida:1}]);
+  const removeGrupo = (i) => setGrupos(g => g.filter((_,idx)=>idx!==i));
+  const setGrupoNombre = (i, val) => setGrupos(g => g.map((g2,idx) => idx===i ? {...g2, nombre:val} : g2));
+  const setGrupoHoyoSalida = (i, val) => setGrupos(g => g.map((g2,idx) => idx===i ? {...g2, hoyoSalida:val} : g2));
+  const togglePlayerInGrupo = (grupoIdx, player) => {
+    setGrupos(g => g.map((g2, idx) => {
+      if (idx !== grupoIdx) return g2;
+      const exists = g2.players.find(p => p.id === player.id);
+      return { ...g2, players: exists ? g2.players.filter(p=>p.id!==player.id) : [...g2.players, player] };
+    }));
+  };
+  const playerEnGrupo = (player) => grupos.findIndex(g => g.players.find(p=>p.id===player.id));
+
+  const crearTorneo = async () => {
+    setCreando(true);
+    const tid = "T-" + Math.random().toString(36).substring(2,8).toUpperCase();
+    const gruposConId = grupos.map((g, i) => ({
+      ...g,
+      id: Math.random().toString(36).substring(2,8).toUpperCase(),
+      nombre: g.nombre.trim() || `Grupo ${i+1}`,
+    }));
+    const data = {
+      torneoId: tid,
+      nombre: nombre.trim() || `Torneo ${new Date().toLocaleDateString('es-MX')}`,
+      campo, nHoles, apuesta, marcaVal, tarjetaVal,
+      status: "en_juego", createdAt: Date.now(),
+      gruposConfig: gruposConId,
+      grupos: {}
+    };
+    await set(ref(db, `torneos/${tid}`), data);
+    // Registrar código de grupo y pre-cargar jugadores asignados
+    for (const g of gruposConId) {
+      await set(ref(db, `codigosGrupo/${g.id}`), {
+        torneoId: tid, grupoId: g.id, grupoNombre: g.nombre,
+        players: g.players.map(p => ({ ...p, opts:{score:true,marcas:true,tarjetas:true} }))
+      });
+    }
+    setGrupos(gruposConId);
+    setTorneoId(tid);
+    setCreando(false);
+    setPaso(3);
+  };
+
+  const torneoData = { torneoId, nombre: nombre.trim() || `Torneo`, campo, nHoles, apuesta, marcaVal, tarjetaVal };
+
+  // ── PASO 1: Configuración del torneo ──
+  if (paso === 1) {
+    const parTotal = (CAMPOS[campo].pares||[]).slice(0,nHoles).reduce((a,b)=>a+b,0);
+    return (
+      <div style={appStyle}>
+        <div style={{ background:D.surface, borderBottom:`1px solid ${D.border}`, padding:"16px 16px 12px", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+          <div style={{ fontSize:20, fontWeight:900, color:D.gold }}>Nuevo Torneo</div>
+          <button onClick={onExit} style={{ fontSize:12, color:D.textSub, background:"none", border:`1px solid ${D.border}`, borderRadius:8, padding:"5px 10px", cursor:"pointer" }}>Salir</button>
+        </div>
+        <div style={{ padding:"12px" }}>
+          <Card>
+            <SLabel>Nombre del torneo</SLabel>
+            <input value={nombre} onChange={e=>setNombre(e.target.value)} placeholder={`Torneo ${new Date().toLocaleDateString('es-MX')}`}
+              style={{ width:"100%", padding:"10px 12px", border:`1px solid ${D.border}`, borderRadius:10, background:D.surface, color:D.text, fontSize:14, boxSizing:"border-box" }} />
+          </Card>
+          <Card>
+            <SLabel>Campo</SLabel>
+            <CampoSelector campo={campo} setCampo={setCampo} nHoles={nHoles} setNHoles={setNHoles} />
+          </Card>
+          <Card>
+            <SLabel>Hoyos</SLabel>
+            <div style={{ display:"flex", gap:8 }}>
+              {[9,18].map(h => {
+                const pt = (CAMPOS[campo].pares||[]).slice(0,h).reduce((a,b)=>a+b,0);
+                return <button key={h} onClick={() => setNHoles(h)} style={{ flex:1, padding:9, border:`1px solid ${nHoles===h?D.gold:D.border}`, borderRadius:10, background:nHoles===h?D.goldDim:"transparent", color:nHoles===h?D.gold:D.textSub, fontSize:13, fontWeight:700, cursor:"pointer" }}>{h} hoyos · Par {pt}</button>;
+              })}
+            </div>
+          </Card>
+          <Card>
+            <SLabel>💰 Apuestas (iguales para todos los grupos)</SLabel>
+            {[{label:"Score — por jugador",val:apuesta,set:setApuesta},{label:"Marcas — por punto",val:marcaVal,set:setMarcaVal},{label:"Tarjetas — por tarjeta",val:tarjetaVal,set:setTarjetaVal}].map(({label,val,set:setVal}) => (
+              <div key={label} style={{ display:"flex", alignItems:"center", gap:10, padding:"8px 0", borderBottom:`1px solid ${D.border}` }}>
+                <div style={{ flex:1, fontSize:13, color:D.textSub }}>{label}</div>
+                <button onClick={() => setVal(Math.max(0,val-10))} style={{ width:30,height:30,borderRadius:"50%",border:`1px solid ${D.border}`,background:"transparent",color:D.text,cursor:"pointer",fontSize:18 }}>-</button>
+                <div style={{ width:50, textAlign:"center", fontSize:15, fontWeight:700, color:D.gold }}>{"$"+String(val)}</div>
+                <button onClick={() => setVal(val+10)} style={{ width:30,height:30,borderRadius:"50%",border:`1px solid ${D.gold}`,background:D.goldDim,color:D.gold,cursor:"pointer",fontSize:18 }}>+</button>
+              </div>
+            ))}
+          </Card>
+          <Btn onClick={() => setPaso(2)}>Siguiente: Definir grupos</Btn>
+        </div>
+      </div>
+    );
+  }
+
+  // ── PASO 2: Definir grupos y asignar jugadores ──
+  if (paso === 2) {
+    const grupoActualPlayers = grupos[grupoActivo]?.players || [];
+    const totalJugadoresAsignados = [...new Set(grupos.flatMap(g => g.players.map(p=>p.id)))].length;
+    return (
+      <div style={appStyle}>
+        <div style={{ background:D.surface, borderBottom:`1px solid ${D.border}`, padding:"14px 16px 12px", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+          <div style={{ fontSize:20, fontWeight:900, color:D.gold }}>Grupos y jugadores</div>
+          <button onClick={() => setPaso(1)} style={{ fontSize:12, color:D.textSub, background:"none", border:`1px solid ${D.border}`, borderRadius:8, padding:"5px 10px", cursor:"pointer" }}>Atrás</button>
+        </div>
+        <div style={{ padding:"12px" }}>
+
+          {/* Selector de modo */}
+          <Card>
+            <SLabel>Forma de crear grupos</SLabel>
+            <div style={{ display:"flex", gap:8 }}>
+              {[["manual","✋ Manual"],["aleatorio","🎲 Grupos Aleatorios"]].map(([k,l]) => (
+                <button key={k} onClick={() => setModoGrupos(k)}
+                  style={{ flex:1, padding:"10px", border:`1px solid ${modoGrupos===k?D.gold:D.border}`, borderRadius:10, background:modoGrupos===k?D.goldDim:"transparent", color:modoGrupos===k?D.gold:D.textSub, fontSize:12, fontWeight:700, cursor:"pointer" }}>
+                  {l}
+                </button>
+              ))}
+            </div>
+          </Card>
+
+          {/* ── MODO ALEATORIO ── */}
+          {modoGrupos === "aleatorio" && (<>
+            <Card>
+              <SLabel>Seleccionar jugadores participantes</SLabel>
+              <div style={{ fontSize:11, color:D.textSub, marginBottom:8 }}>
+                {"Seleccionados: " + selAleatorio.size + " de " + dir.length}
+              </div>
+              <div style={{ display:"flex", gap:6, marginBottom:8 }}>
+                <button onClick={() => setSelAleatorio(new Set(dir.map(p=>p.id)))}
+                  style={{ fontSize:11, padding:"5px 10px", border:`1px solid ${D.gold}`, borderRadius:8, background:D.goldDim, color:D.gold, cursor:"pointer" }}>
+                  Todos
+                </button>
+                <button onClick={() => setSelAleatorio(new Set())}
+                  style={{ fontSize:11, padding:"5px 10px", border:`1px solid ${D.border}`, borderRadius:8, background:"transparent", color:D.textSub, cursor:"pointer" }}>
+                  Ninguno
+                </button>
+              </div>
+              <div style={{ maxHeight:240, overflowY:"auto" }}>
+                {dir.slice().sort((a,b)=>a.name.localeCompare(b.name)).map(p => {
+                  const sel = selAleatorio.has(p.id);
+                  return (
+                    <div key={p.id} onClick={() => {
+                      const s = new Set(selAleatorio);
+                      sel ? s.delete(p.id) : s.add(p.id);
+                      setSelAleatorio(s);
+                      setPreviewAleatorio(null);
+                    }} style={{ display:"flex", alignItems:"center", gap:10, padding:"8px 0", borderBottom:`1px solid ${D.border}`, cursor:"pointer" }}>
+                      <div style={{ width:22, height:22, borderRadius:6, border:`2px solid ${sel?D.gold:D.border}`, background:sel?D.goldDim:"transparent", display:"flex", alignItems:"center", justifyContent:"center", fontSize:12, color:D.gold, fontWeight:700 }}>
+                        {sel ? "✓" : ""}
+                      </div>
+                      <Avatar name={p.name} id={p.id} size={26} />
+                      <div style={{ flex:1, fontSize:13, fontWeight:600 }}>{p.name}</div>
+                      <div style={{ fontSize:11, color:D.textSub }}>HC {p.hc}</div>
+                    </div>
+                  );
+                })}
+              </div>
+            </Card>
+
+            {selAleatorio.size >= 2 && (
+              <Card>
+                <SLabel>Número de grupos</SLabel>
+                {selAleatorio.size < nGruposAleatorio && (
+                  <div style={{ padding:8, background:D.redBg, borderRadius:8, fontSize:11, color:D.danger, marginBottom:8 }}>
+                    ⚠️ No hay suficientes jugadores ({selAleatorio.size}) para {nGruposAleatorio} grupos
+                  </div>
+                )}
+                <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:12 }}>
+                  <button onClick={() => { setNGruposAleatorio(n=>Math.max(2,n-1)); setPreviewAleatorio(null); }}
+                    style={{ width:36,height:36,borderRadius:"50%",border:`1px solid ${D.border}`,background:D.surface,color:D.text,fontSize:20,cursor:"pointer",fontWeight:700 }}>-</button>
+                  <div style={{ flex:1, textAlign:"center" }}>
+                    <div style={{ fontSize:36, fontWeight:900, color:D.gold }}>{nGruposAleatorio}</div>
+                    <div style={{ fontSize:10, color:D.textSub }}>grupos</div>
+                  </div>
+                  <button onClick={() => { setNGruposAleatorio(n=>Math.min(selAleatorio.size,n+1)); setPreviewAleatorio(null); }}
+                    style={{ width:36,height:36,borderRadius:"50%",border:`1px solid ${D.gold}`,background:D.goldDim,color:D.gold,fontSize:20,cursor:"pointer",fontWeight:700 }}>+</button>
+                </div>
+                {/* Vista previa de distribución */}
+                <div style={{ background:D.surface, borderRadius:8, padding:"8px 12px", marginBottom:12, fontSize:11, color:D.textSub }}>
+                  {selAleatorio.size + " jugadores → " + nGruposAleatorio + " grupos"}
+                  {Array.from({length:nGruposAleatorio}).map((_,i) => {
+                    const base = Math.floor(selAleatorio.size/nGruposAleatorio);
+                    const extra = selAleatorio.size % nGruposAleatorio;
+                    const size = base + (i < extra ? 1 : 0);
+                    return <div key={i} style={{ color:D.text }}>{"Grupo "+(i+1)+" — "+size+" jugadores"}</div>;
+                  })}
+                </div>
+                <div style={{ display:"flex", gap:8 }}>
+                  <button onClick={generarPreview} disabled={selAleatorio.size < nGruposAleatorio}
+                    style={{ flex:1, padding:"10px", border:`1px solid ${D.gold}`, borderRadius:10, background:D.goldDim, color:D.gold, fontSize:13, fontWeight:700, cursor:"pointer", opacity:selAleatorio.size<nGruposAleatorio?0.5:1 }}>
+                    🎲 Sortear grupos
+                  </button>
+                </div>
+              </Card>
+            )}
+
+            {/* Preview del sorteo */}
+            {previewAleatorio && (
+              <Card style={{ border:`1px solid ${D.gold}44` }}>
+                <SLabel>Vista previa del sorteo</SLabel>
+                {previewAleatorio.map((g, i) => (
+                  <div key={i} style={{ padding:"8px 0", borderBottom:`1px solid ${D.border}` }}>
+                    <div style={{ fontSize:12, fontWeight:700, color:D.gold, marginBottom:4 }}>
+                      {g.nombre} — {g.players.length} jugadores
+                    </div>
+                    {g.players.map(p => (
+                      <div key={p.id} style={{ fontSize:11, color:D.textSub, paddingLeft:8 }}>
+                        {"• "+p.name+" (HC "+p.hc+")"}
+                      </div>
+                    ))}
+                  </div>
+                ))}
+                <div style={{ display:"flex", gap:8, marginTop:10 }}>
+                  <button onClick={generarPreview}
+                    style={{ flex:1, padding:"10px", border:`1px solid ${D.border}`, borderRadius:10, background:"transparent", color:D.textSub, fontSize:12, cursor:"pointer" }}>
+                    🔄 Volver a sortear
+                  </button>
+                  <button onClick={confirmarAleatorio}
+                    style={{ flex:1, padding:"10px", border:"none", borderRadius:10, background:D.gold, color:"#000", fontSize:12, fontWeight:700, cursor:"pointer" }}>
+                    ✓ Confirmar sorteo
+                  </button>
+                </div>
+              </Card>
+            )}
+          </>)}
+          {/* ── MODO MANUAL ── */}
+          {modoGrupos === "manual" && (<>
+          {/* Tabs de grupos */}
+          <div style={{ display:"flex", gap:6, marginBottom:12, overflowX:"auto" }}>
+            {grupos.map((g, i) => (
+              <button key={i} onClick={() => setGrupoActivo(i)} style={{ padding:"8px 12px", border:`1px solid ${grupoActivo===i?D.gold:D.border}`, borderRadius:10, background:grupoActivo===i?D.goldDim:"transparent", color:grupoActivo===i?D.gold:D.textSub, fontSize:12, fontWeight:700, cursor:"pointer", whiteSpace:"nowrap" }}>
+                {g.nombre || `Grupo ${i+1}`} ({g.players.length})
+              </button>
+            ))}
+            <button onClick={addGrupo} style={{ padding:"8px 10px", border:`1px dashed ${D.gold}`, borderRadius:10, background:"transparent", color:D.gold, fontSize:12, fontWeight:600, cursor:"pointer" }}>+ Grupo</button>
+          </div>
+
+          {/* Nombre del grupo activo */}
+          <Card>
+            <SLabel>Nombre del grupo {grupoActivo+1}</SLabel>
+            <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+              <input value={grupos[grupoActivo]?.nombre||""} onChange={e=>setGrupoNombre(grupoActivo,e.target.value)} placeholder={`Grupo ${grupoActivo+1} — Ej: Salida 8am`}
+                style={{ flex:1, padding:"10px 12px", border:`1px solid ${D.border}`, borderRadius:10, background:D.surface, color:D.text, fontSize:14 }} />
+              {grupos.length > 2 && <button onClick={() => { removeGrupo(grupoActivo); setGrupoActivo(Math.max(0,grupoActivo-1)); }} style={{ padding:"8px 10px", border:`1px solid ${D.danger}44`, borderRadius:8, background:"transparent", color:D.danger, fontSize:12, cursor:"pointer" }}>Eliminar</button>}
+            </div>
+          </Card>
+
+          <Card>
+            <SLabel>Hoyo de salida</SLabel>
+            <div style={{ display:"flex", alignItems:"center", gap:12 }}>
+              <button onClick={() => setGrupoHoyoSalida(grupoActivo, Math.max(1, (grupos[grupoActivo]?.hoyoSalida||1)-1))}
+                style={{ width:36,height:36,borderRadius:"50%",border:`1px solid ${D.border}`,background:D.surface,color:D.text,fontSize:20,cursor:"pointer",fontWeight:700 }}>-</button>
+              <div style={{ flex:1,textAlign:"center" }}>
+                <div style={{ fontSize:36,fontWeight:900,color:D.gold }}>{grupos[grupoActivo]?.hoyoSalida||1}</div>
+                <div style={{ fontSize:10,color:D.textSub }}>hoyo de salida (orden ciclico)</div>
+              </div>
+              <button onClick={() => setGrupoHoyoSalida(grupoActivo, Math.min(nHoles, (grupos[grupoActivo]?.hoyoSalida||1)+1))}
+                style={{ width:36,height:36,borderRadius:"50%",border:`1px solid ${D.gold}`,background:D.goldDim,color:D.gold,fontSize:20,cursor:"pointer",fontWeight:700 }}>+</button>
+            </div>
+          </Card>
+
+          {/* Asignar jugadores */}
+          <Card>
+            <SLabel>Jugadores del grupo {grupoActivo+1} ({grupoActualPlayers.length} seleccionados)</SLabel>
+            {dir.length === 0 && <div style={{ textAlign:"center", color:D.textSub, padding:12, fontSize:13 }}>No hay jugadores en el directorio</div>}
+            {dir.slice().sort((a,b)=>a.name.localeCompare(b.name)).map((p, idx) => {
+              const enEsteGrupo = grupoActualPlayers.find(pl=>pl.id===p.id);
+              const enOtroGrupoIdx = playerEnGrupo(p);
+              const enOtroGrupo = enOtroGrupoIdx !== -1 && enOtroGrupoIdx !== grupoActivo;
+              return (
+                <div key={p.id} onClick={() => !enOtroGrupo && togglePlayerInGrupo(grupoActivo, p)}
+                  style={{ display:"flex", alignItems:"center", gap:10, padding:"9px 0", borderBottom:idx<dir.length-1?`1px solid ${D.border}`:"none", cursor:enOtroGrupo?"default":"pointer", opacity:enOtroGrupo?0.4:1 }}>
+                  <div style={{ width:22, height:22, borderRadius:6, border:`2px solid ${enEsteGrupo?D.gold:D.border}`, background:enEsteGrupo?D.goldDim:"transparent", display:"flex", alignItems:"center", justifyContent:"center", fontSize:13, color:D.gold, flexShrink:0 }}>
+                    {enEsteGrupo?"✓":""}
+                  </div>
+                  <Avatar name={p.name} id={p.id} size={30} />
+                  <div style={{ flex:1 }}>
+                    <div style={{ fontSize:13, fontWeight:600 }}>{p.name}</div>
+                    <div style={{ fontSize:11, color:D.textSub }}>HC {hcEf(p.hc, nHoles)}</div>
+                  </div>
+                  {enOtroGrupo && <div style={{ fontSize:10, color:D.textDim }}>En {grupos[enOtroGrupoIdx]?.nombre||`Grupo ${enOtroGrupoIdx+1}`}</div>}
+                </div>
+              );
+            })}
+          </Card>
+
+          <Btn onClick={crearTorneo} disabled={creando || grupos.some(g=>g.players.length < 2)}>
+            {creando ? "Creando..." : grupos.some(g=>g.players.length < 2) ? "Cada grupo necesita al menos 2 jugadores" : `🏆 Crear torneo con ${grupos.length} grupos`}
+          </Btn>
+          </>)}
+
+          {/* Botón crear torneo siempre visible cuando hay grupos válidos */}
+          {modoGrupos === "aleatorio" && grupos.length >= 2 && !grupos.some(g=>g.players.length < 2) && (
+            <Btn onClick={crearTorneo} disabled={creando}>
+              {creando ? "Creando..." : `🏆 Crear torneo con ${grupos.length} grupos`}
+            </Btn>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // ── PASO 3: Compartir códigos por grupo ──
+  if (paso === 3) {
+    const torneoUrl = `${window.location.origin}${window.location.pathname}?torneo=${torneoId}`;
+    return (
+      <div style={appStyle}>
+        <div style={{ background:D.surface, borderBottom:`1px solid ${D.border}`, padding:"16px 16px 12px", textAlign:"center" }}>
+          <div style={{ fontSize:22, fontWeight:900, color:D.gold }}>🏆 ¡Torneo creado!</div>
+          <div style={{ fontSize:13, color:D.textSub, marginTop:2 }}>{nombre || "Torneo"}</div>
+          <div style={{ fontSize:11, color:D.textDim, marginTop:2 }}>Código: <span style={{ color:D.gold, fontWeight:700 }}>{torneoId}</span></div>
+        </div>
+        <div style={{ padding:"12px" }}>
+
+          {/* PANEL DEL ADMIN GENERAL */}
+          <Card style={{ border:`2px solid ${D.gold}` }}>
+            <SLabel>🎖️ Tu panel de Admin General</SLabel>
+            <div style={{ fontSize:12, color:D.textSub, marginBottom:10 }}>Guarda este link para ver y controlar todo el torneo:</div>
+            <div style={{ display:"flex", gap:8 }}>
+              <button onClick={() => {
+                const msg = `🏆 H19 — ${nombre||"Torneo"} (Admin General)\nVer torneo completo: ${torneoUrl}`;
+                if (navigator.clipboard) navigator.clipboard.writeText(torneoUrl);
+                window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, "_blank");
+              }} style={{ flex:1, padding:"10px", border:"none", borderRadius:10, background:"#25D366", color:"#fff", fontSize:12, fontWeight:700, cursor:"pointer" }}>
+                💬 Guardar link del torneo
+              </button>
+              <button onClick={() => {
+                window.open(torneoUrl, "_blank");
+              }} style={{ flex:1, padding:"10px", border:`1px solid ${D.gold}`, borderRadius:10, background:D.goldDim, color:D.gold, fontSize:12, fontWeight:700, cursor:"pointer" }}>
+                👁️ Ver torneo ahora
+              </button>
+            </div>
+          </Card>
+
+          {/* Códigos por grupo */}
+          <div style={{ fontSize:12, color:D.textSub, margin:"8px 0", textAlign:"center" }}>
+            Envía a cada admin el código de su grupo:
+          </div>
+          {grupos.map((g, i) => (
+            <Card key={i}>
+              <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:6 }}>
+                <SLabel style={{ marginBottom:0 }}>Grupo {i+1}: {g.nombre}</SLabel>
+                <div style={{ fontSize:11, color:D.textSub }}>{g.players?.length||0} jugadores</div>
+              </div>
+              <div style={{ fontSize:28, fontWeight:900, letterSpacing:4, color:D.gold, textAlign:"center", padding:"8px 0" }}>{g.id}</div>
+              <div style={{ display:"flex", gap:8 }}>
+                <button onClick={() => {
+                  const playersStr = (g.players||[]).map(p=>`- ${p.name} (HC ${p.hc})`).join('\n');
+                  const msg = `🏌️ H19 Golf — *${nombre||"Torneo"}*\n*Tu grupo: ${g.nombre}*\nJugadores:\n${playersStr}\n\n*Código para ingresar: ${g.id}*\nAbre la app: ${window.location.origin}\n-> "Entrar con código de grupo"\nVer torneo en vivo: ${torneoUrl}`;
+                  window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, "_blank");
+                }} style={{ flex:1, padding:"10px", border:"none", borderRadius:10, background:"#25D366", color:"#fff", fontSize:12, fontWeight:700, cursor:"pointer" }}>
+                  💬 WhatsApp al admin
+                </button>
+                <button onClick={() => {
+                  if (navigator.clipboard) navigator.clipboard.writeText(g.id);
+                }} style={{ flex:1, padding:"10px", border:`1px solid ${D.gold}`, borderRadius:10, background:D.goldDim, color:D.gold, fontSize:12, fontWeight:700, cursor:"pointer" }}>
+                  📋 Copiar código
+                </button>
+              </div>
+            </Card>
+          ))}
+
+          <Btn onClick={() => onIniciarGrupo({ ...torneoData, grupoId: grupos[0].id, grupoNombre: grupos[0].nombre })}>
+            🏌️ Iniciar mi grupo ({grupos[0]?.nombre}) ->
+          </Btn>
+          <Btn outline onClick={() => onExit(torneoData)} style={{ marginTop:8 }}>Volver al inicio</Btn>
+        </div>
+      </div>
+    );
+  }
+}
+
+// ─── TORNEO: UNIRSE ────────────────────────────────
+function TorneoUnirse({ onExit, appStyle }) {
+  const [codigo, setCodigo] = useState("");
+  const [torneoConfig, setTorneoConfig] = useState(null);
+  const [error, setError] = useState("");
+  const [buscando, setBuscando] = useState(false);
+
+  const buscar = async () => {
+    if (!codigo.trim()) return;
+    setBuscando(true); setError("");
+    const gid = codigo.trim().toUpperCase();
+    try {
+      const grupoSnap = await get(ref(db, `codigosGrupo/${gid}`));
+      if (!grupoSnap.exists()) {
+        setBuscando(false);
+        setError("Código no encontrado. Verifica con el organizador.");
+        return;
+      }
+      const { torneoId, grupoId, grupoNombre, players, status: grupoStatus } = grupoSnap.val();
+      // Bloquear acceso si el grupo ya finalizó
+      if (grupoStatus === "finalizado") {
+        setBuscando(false);
+        setError("Este grupo ya terminó su ronda. El acceso está bloqueado. Contacta al administrador general del torneo.");
+        return;
+      }
+      const torneoSnap = await get(ref(db, `torneos/${torneoId}`));
+      if (!torneoSnap.exists()) { setBuscando(false); setError("Error al cargar el torneo."); return; }
+      const t = torneoSnap.val();
+
+      // Verificar si ya existe una ronda activa para este grupo en Firebase
+      const grupoActivoSnap = await get(ref(db, `torneos/${torneoId}/grupos/${grupoId}`));
+      let playersPreasignados = players || [];
+      let rondaActiva = null;
+      if (grupoActivoSnap.exists()) {
+        const gData = grupoActivoSnap.val();
+        if (gData.status === "en_juego" && gData.players && gData.scores) {
+          // Hay una ronda en curso — la retomamos
+          rondaActiva = gData;
+          playersPreasignados = Array.isArray(gData.players)
+            ? gData.players
+            : Object.values(gData.players);
+        }
+      }
+
+      setBuscando(false);
+      // Obtener hoyoSalida del grupoConfig
+      const grupoConfig = t.gruposConfig
+        ? (Array.isArray(t.gruposConfig) ? t.gruposConfig : Object.values(t.gruposConfig)).find(g => g.id === grupoId)
+        : null;
+      const hoyoSalida = grupoConfig?.hoyoSalida || 1;
+      setTorneoConfig({
+        torneoId, grupoId, grupoNombre,
+        campo: t.campo, nHoles: t.nHoles,
+        apuesta: t.apuesta, marcaVal: t.marcaVal, tarjetaVal: t.tarjetaVal,
+        nombre: t.nombre,
+        playersPreasignados,
+        hoyoSalida,
+        rondaActiva,
+      });
+    } catch(e) {
+      setBuscando(false);
+      setError("Error de conexión. Intenta de nuevo.");
+    }
+  };
+
+  if (torneoConfig) {
+    return <AdminApp onExit={onExit} torneoConfig={torneoConfig} />;
+  }
+
+  return (
+    <div style={{ ...appStyle, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:24, gap:14 }}>
+      <div style={{ fontSize:40, fontWeight:900, color:D.gold }}>H19</div>
+      <div style={{ fontSize:14, color:D.textSub, marginBottom:4, textAlign:"center", fontWeight:700 }}>Admin de Grupo</div>
+      <div style={{ fontSize:12, color:D.textSub, marginBottom:8, textAlign:"center" }}>Ingresa el código que te envió el organizador</div>
+      <input value={codigo} onChange={e=>setCodigo(e.target.value.toUpperCase())} placeholder="Código de grupo"
+        style={{ width:"100%", padding:14, border:`1px solid ${error?D.danger:D.border}`, borderRadius:12, background:D.surface, color:D.text, fontSize:20, textAlign:"center", letterSpacing:4, fontWeight:700 }} />
+      {error && <div style={{ color:D.danger, fontSize:13, textAlign:"center" }}>{error}</div>}
+      <Btn onClick={buscar} disabled={buscando}>{buscando?"Buscando...":"🔗 Entrar a mi grupo"}</Btn>
+      <button onClick={onExit} style={{ fontSize:13, color:D.textSub, background:"none", border:"none", cursor:"pointer" }}>Volver</button>
+    </div>
+  );
+}
+
+// ─── CERRAR TORNEO ────────────────────────────────
+function CerrarTorneoPanel({ torneoId, torneo, grupos, allPlayers, ranked, pars, onCerrado }) {
+  const [hcUpdates, setHcUpdates] = useState(null);
+  const [guardando, setGuardando] = useState(false);
+  const [cerrado, setCerrado] = useState(false);
+
+  useEffect(() => {
+    // Calcular ajuste de HC: usar el ganador global (menor vsParHC)
+    // y el segundo lugar si aplica regla 10+
+    const conScore = ranked.filter(p => p.vsParHC !== null);
+    if (conScore.length === 0) return;
+
+    // Para calcular HC necesitamos los scores completos
+    // Usamos fullScores aproximados (reemplazando null con par)
+    const playersGlobal = allPlayers.map(p => ({
+      ...p, id: p.id || p.name,
+      opts: p.opts || {score:true,marcas:true,tarjetas:true}
+    }));
+    const scoresGlobal = allPlayers.map(p => pars.map((par,h) => {
+      const v = p.scores[h];
+      return (v===null||v===undefined) ? par : v;
+    }));
+
+    const r = calcMoney(playersGlobal, scoresGlobal, torneo.apuesta||50, 0, torneo.nHoles||18);
+    // Solo contar jugadores que participan en score para la regla 10+
+    const playsScoreCount = playersGlobal.filter(p => p.opts?.score !== false).length;
+    const siParaHC = (playsScoreCount >= 10 && r.fi.length === 1) ? r.si : [];
+    // Solo calcular HC para jugadores con score
+    const hc = calcHC(playersGlobal.filter(p => p.opts?.score !== false),
+                      scoresGlobal.filter((_,i) => playersGlobal[i].opts?.score !== false),
+                      siParaHC, torneo.nHoles||18);
+    setHcUpdates(hc);
+  }, []);
+
+  const guardarYCerrar = async (guardarHC) => {
+    setGuardando(true);
+    try {
+      await set(ref(db, `torneos/${torneoId}/status`), "finalizado");
+
+      const fecha = new Date();
+      const fechaStr = `${fecha.getDate().toString().padStart(2,'0')}/${(fecha.getMonth()+1).toString().padStart(2,'0')}`;
+
+      // ── Construir datos globales de todos los jugadores ──
+      // Usamos el prop allPlayers (ya tiene opts correctos de Firebase + scores)
+      // y añadimos fullScores (reemplazando null con par) para el cálculo.
+      const allPlayersCalc = allPlayers.map(p => {
+        const fullScores = pars.map((par, h) => {
+          const v = p.scores[h];
+          return (v === null || v === undefined) ? par : v;
+        });
+        return { ...p, fullScores };
+      });
+      // Alias para compatibilidad con el código que sigue
+      const allPlayersLocal = allPlayersCalc;
+
+      // Score global entre todos
+      const scoresGlobal = allPlayersLocal.map(p => p.fullScores);
+      const rGlobal = calcMoney(allPlayersLocal, scoresGlobal, torneo.apuesta||50, 0, torneo.nHoles||18);
+
+      // Peor score global (solo entre jugadores que apuestan)
+      const tv = torneo.tarjetaVal||10;
+      const conScoreIdx = allPlayersLocal.map((p,i) => p.opts?.score !== false ? i : -1).filter(i=>i>=0);
+      const netsGlobal = allPlayersLocal.map((p,i) => scoresGlobal[i].reduce((a,b)=>a+b,0) - hcEf(p.hc, torneo.nHoles||18));
+      const netsConScore = conScoreIdx.map(i => netsGlobal[i]);
+      const peorNeto = netsConScore.length > 0 ? Math.max(...netsConScore) : null;
+      const peoresIdx = peorNeto !== null ? conScoreIdx.filter(i=>netsGlobal[i]===peorNeto) : [];
+      const peorMoneyArr = allPlayersLocal.map((p,i) => {
+        if (p.opts?.score === false) return 0; // sin apuesta: no participa en peor score
+        if (peoresIdx.includes(i)) return -((conScoreIdx.length-peoresIdx.length)*tv/peoresIdx.length);
+        return tv;
+      });
+
+      // Marcas y tarjetas por grupo: usamos allPlayersLocal para respetar opts correctos
+      const TARJETAS_SIN_PS = TARJETAS.filter(t=>t.key!=="peorscore");
+      const marcasMoneyArr = new Array(allPlayersLocal.length).fill(0);
+      const tarjetasMoneyArr = new Array(allPlayersLocal.length).fill(0);
+      let offset = 0;
+      grupos.forEach(([gid,g]) => {
+        // Tomar jugadores desde allPlayersLocal para preservar opts reales
+        const gPlCount = (Array.isArray(g.players)?g.players:Object.values(g.players||{})).length;
+        const gPs = allPlayersLocal.slice(offset, offset + gPlCount);
+        const gMarcas = g.marcas?(Array.isArray(g.marcas)?g.marcas:Object.values(g.marcas)).map(h=>h?({...h,multi:Array.isArray(h.multi)?h.multi:Object.values(h.multi||{})}):h):null;
+        const gTarjetas = g.tarjetas||null;
+        if (gMarcas) {
+          const mm = calcMarcasMoney(gPs, gMarcas, torneo.marcaVal||10);
+          gPs.forEach((_,pi)=>{ marcasMoneyArr[offset+pi]=mm[pi]; });
+        }
+        if (gTarjetas) {
+          const tarjetasSinPS = {...gTarjetas, peorscore:null};
+          const count = gPs.map((_,i)=>{
+            let c=0; TARJETAS_SIN_PS.forEach(t=>{ const o=tarjetasSinPS[t.key];
+              c+=Array.isArray(o)?o.includes(i)?1/o.length:0:o===i?1:0; }); return c;
+          });
+          const tm = gPs.map((_,i)=>{
+            let b=0; gPs.forEach((_,j)=>{ if(i!==j){b-=count[i]*tv;b+=count[j]*tv;} }); return Math.round(b);
+          });
+          gPs.forEach((_,pi)=>{ tarjetasMoneyArr[offset+pi]=tm[pi]; });
+        }
+        offset += gPs.length;
+      });
+
+      // Clasificación global final
+      const jugadoresGlobal = allPlayersLocal.map((p,i) => {
+        const noScore = p.opts?.score === false;
+        const sm = noScore ? 0 : (rGlobal.money[i] ?? 0);
+        const mm = noScore ? 0 : (marcasMoneyArr[i] ?? 0);
+        const tm = noScore ? 0 : ((tarjetasMoneyArr[i] ?? 0) + (peorMoneyArr[i] ?? 0));
+        return {
+          name: p.name, hc: p.hc,
+          grupoNombre: p.grupoNombre,
+          bruto: scoresGlobal[i].reduce((a,b)=>a+b,0),
+          neto: noScore ? null : (rGlobal.nets[i] ?? null),
+          scoreMoney: sm,
+          marcasMoney: mm,
+          tarjetasMoney: tm,
+          total: sm + mm + tm,
+        };
+      }).sort((a,b) => {
+        // Jugadores sin score van al final
+        if (a.neto === null && b.neto === null) return 0;
+        if (a.neto === null) return 1;
+        if (b.neto === null) return -1;
+        return a.neto - b.neto;
+      });
+
+      const ganadorGlobal = jugadoresGlobal.find(j => j.neto !== null) || jugadoresGlobal[0];
+
+      // Guardar resumen global en el torneo
+      await set(ref(db, `torneos/${torneoId}/resumenGlobal`), {
+        jugadores: jugadoresGlobal,
+        ganador: ganadorGlobal?.name,
+        netGanador: ganadorGlobal?.neto,
+        fechaTs: Date.now(), fecha: fechaStr,
+        pars, campo: torneo.campo, nHoles: torneo.nHoles,
+        apuesta: torneo.apuesta, marcaVal: torneo.marcaVal, tarjetaVal: torneo.tarjetaVal,
+      });
+
+      // Guardar desglose por grupo (tarjeta hoyo×hoyo, marcas, tarjetas)
+      let grpOffset = 0;
+      for (const [gid, g] of grupos) {
+        try {
+          const rawGPs = (Array.isArray(g.players)?g.players:Object.values(g.players||{}));
+          // Usar los jugadores de allPlayersLocal para preservar opts correctos
+          const gPsLocal = allPlayersLocal.slice(grpOffset, grpOffset + rawGPs.length);
+          const gScRaw = Array.isArray(g.scores)?g.scores:Object.values(g.scores||{});
+          const gMarcas = g.marcas?(Array.isArray(g.marcas)?g.marcas:Object.values(g.marcas)).map(h=>h?({...h,multi:Array.isArray(h.multi)?h.multi:Object.values(h.multi||{})}):h):null;
+          const gFullScores = gPsLocal.map((p,pi)=>{ const r=Array.isArray(gScRaw[pi])?gScRaw[pi]:Object.values(gScRaw[pi]||{}); return pars.map((par,h)=>{const v=r[h];return(v===null||v===undefined)?par:v;}); });
+          const ganRes = calcMoney(gPsLocal, gFullScores, torneo.apuesta||50);
+          await set(ref(db, `torneos/${torneoId}/grupos/${gid}/resumenFinal`), {
+            ganador: ganRes.fi.map(i=>gPsLocal[i].name).join(" · "),
+            pars, playerNames: gPsLocal.map(p=>p.name),
+            scoresPorHoyo: gFullScores,
+            marcas: gMarcas, tarjetas: g.tarjetas||null,
+          });
+          grpOffset += rawGPs.length;
+        } catch(e) { grpOffset += (Array.isArray(g.players)?g.players:Object.values(g.players||{})).length; }
+      }
+
+      if (guardarHC && hcUpdates) {
+        const dirSnap = await get(clubRef("directorio"));
+        if (dirSnap.exists()) {
+          const dirData = dirSnap.val();
+          const updatedPlayers = (dirData.players||[]).map(p => {
+            const upd = hcUpdates.find(u=>u.name===p.name);
+            return upd ? {...p,hc:upd.after} : p;
+          });
+          const updatedDir = {...dirData, players:updatedPlayers};
+          // Fase 3: dual-write
+          await set(clubRef("directorio"), updatedDir);
+          await set(ref(db, "directorio"), updatedDir);
+        }
+      }
+
+      setCerrado(true);
+      setTimeout(() => onCerrado(), 2000);
+    } catch(e) {
+      setGuardando(false);
+      alert("Error al cerrar torneo: " + e.message);
+    }
+  };
+
+  if (cerrado) return (
+    <div style={{ background:"#E8F5E9", border:`2px solid ${D.success}`, borderRadius:12, padding:"20px", marginBottom:12, textAlign:"center" }}>
+      <div style={{ fontSize:32, marginBottom:8 }}>✅</div>
+      <div style={{ fontSize:16, fontWeight:700, color:D.success }}>¡Torneo cerrado!</div>
+      <div style={{ fontSize:12, color:D.textSub, marginTop:4 }}>Regresando al inicio...</div>
+    </div>
+  );
+
+  return (
+    <div style={{ background:"#E8F5E9", border:`2px solid ${D.success}`, borderRadius:12, padding:"16px", marginBottom:12 }}>
+      <div style={{ fontSize:15, fontWeight:700, color:D.success, marginBottom:4, textAlign:"center" }}>✅ Todos los grupos han finalizado</div>
+      <div style={{ fontSize:12, color:D.textSub, marginBottom:12, textAlign:"center" }}>Como admin general, elige cómo cerrar el torneo:</div>
+
+      {/* Ajuste de HC */}
+      {hcUpdates && hcUpdates.some(u => u.delta !== 0) && (
+        <Card style={{ marginBottom:10 }}>
+          <SLabel>📈 Ajuste de Handicaps</SLabel>
+          {hcUpdates.filter(u => u.delta !== 0).map((u, i) => {
+            const up = u.delta > 0, dn = u.delta < 0;
+            return (
+              <div key={u.name} style={{ display:"flex", alignItems:"center", gap:8, padding:"7px 0", borderBottom:i<hcUpdates.filter(x=>x.delta!==0).length-1?`1px solid ${D.border}`:"none" }}>
+                <div style={{ flex:1, fontSize:13, fontWeight:600 }}>{u.name}</div>
+                <div style={{ fontSize:11, color:D.textSub }}>HC {u.before}</div>
+                <div style={{ fontSize:12, padding:"3px 10px", borderRadius:10, fontWeight:700,
+                  background:up?D.redBg:D.greenBg, color:up?D.danger:D.success,
+                  border:`1px solid ${up?D.danger+"44":D.success+"44"}` }}>
+                  {up?`+${u.delta} -> HC ${u.after}`:`${u.delta} -> HC ${u.after}`}
+                </div>
+              </div>
+            );
+          })}
+        </Card>
+      )}
+
+      <div style={{ display:"flex", gap:8, flexDirection:"column" }}>
+        <button onClick={() => guardarYCerrar(true)} disabled={guardando}
+          style={{ width:"100%", padding:"12px", border:"none", borderRadius:10, background:D.success, color:"#fff", fontSize:14, fontWeight:700, cursor:"pointer" }}>
+          {guardando ? "Guardando..." : "✅ Cerrar torneo y guardar handicaps"}
+        </button>
+        <button onClick={() => guardarYCerrar(false)} disabled={guardando}
+          style={{ width:"100%", padding:"12px", border:`1px solid ${D.border}`, borderRadius:10, background:"transparent", color:D.textSub, fontSize:13, fontWeight:600, cursor:"pointer" }}>
+          Cerrar torneo sin guardar handicaps
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── TORNEO: SPECTATOR ────────────────────────────────
+// ─── ERROR BOUNDARY ────────────────────────────────
+class ErrorBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { error: null }; }
+  static getDerivedStateFromError(e) { return { error: e }; }
+  componentDidCatch(e) { console.error("ErrorBoundary:", e); }
+  render() {
+    if (this.state.error) return (
+      <div style={{ padding:24, textAlign:"center" }}>
+        <div style={{ fontSize:28, marginBottom:8 }}>⚠️</div>
+        <div style={{ color:"#C62828", fontWeight:700, marginBottom:8 }}>Error en la aplicación</div>
+        <div style={{ fontSize:11, color:"#666", background:"#f5f5f5", padding:12, borderRadius:8, textAlign:"left", wordBreak:"break-all", marginBottom:12 }}>
+          {this.state.error.message || String(this.state.error)}
+        </div>
+        <button onClick={() => window.location.reload()} style={{ padding:"10px 20px", background:"#1A5C24", color:"#fff", border:"none", borderRadius:8, cursor:"pointer", fontWeight:700 }}>
+          🔄 Recargar
+        </button>
+      </div>
+    );
+    return this.props.children;
+  }
+}
+
+function TorneoSpectator({ torneoId, appStyle, isAdmin = false }) {
+  const [torneo, setTorneo] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [showSplash, setShowSplash] = useState(true);
+  const [splashPhase, setSplashPhase] = useState(0);
+  const [marcandoFinalizado, setMarcandoFinalizado] = useState(null); // grupoId siendo marcado
+
+  useEffect(() => {
+    const unsub = onValue(ref(db, `torneos/${torneoId}`), snap => {
+      setTorneo(snap.exists() ? snap.val() : null);
+      setLoading(false);
+    });
+    return () => unsub();
+  }, [torneoId]);
+
+  useEffect(() => {
+    setTimeout(() => setSplashPhase(1), 400);
+    setTimeout(() => setSplashPhase(2), 1600);
+    setTimeout(() => setShowSplash(false), 2200);
+  }, []);
+
+  // Marcar un grupo como finalizado manualmente (cuando admin edición lo dejó en en_juego)
+  const marcarGrupoFinalizado = async (grupoId) => {
+    setMarcandoFinalizado(grupoId);
+    try {
+      await set(ref(db, `torneos/${torneoId}/grupos/${grupoId}/status`), "finalizada");
+      await set(ref(db, `torneos/${torneoId}/grupos/${grupoId}/updatedAt`), Date.now());
+    } catch(e) {
+      console.error("Error al marcar grupo finalizado:", e);
+    } finally {
+      setMarcandoFinalizado(null);
+    }
+  };
+
+  if (showSplash) return <SplashScreen phase={splashPhase} appStyle={appStyle} />;
+
+  if (loading) return (
+    <div style={{ ...appStyle, display:"flex", alignItems:"center", justifyContent:"center", flexDirection:"column", gap:12 }}>
+      <div style={{ fontSize:32 }}>⛳</div>
+      <div style={{ color:D.gold, fontWeight:700 }}>Cargando torneo...</div>
+    </div>
+  );
+
+  if (!torneo) return (
+    <div style={{ ...appStyle, display:"flex", alignItems:"center", justifyContent:"center", flexDirection:"column", gap:12 }}>
+      <div style={{ fontSize:32 }}>🏌️</div>
+      <div style={{ color:D.textSub }}>Torneo no encontrado</div>
+    </div>
+  );
+
+  // ── COMPUTAR DATOS ──
+  const grupos = Object.entries(torneo.grupos || {});
+  const campoConfig = CAMPOS[torneo.campo] || CAMPOS["huerta"] || { pares: Array(9).fill(3) };
+  const nHolesSafe = torneo.nHoles || 9;
+  const pars = (campoConfig.pares || Array(nHolesSafe).fill(3)).slice(0, nHolesSafe);
+  const parTotal = pars.reduce((a,b)=>a+b,0);
+
+  const allPlayers = grupos.flatMap(([gid, g]) => {
+    if (!g || !g.players) return [];
+    const gPlayers = Array.isArray(g.players) ? g.players : Object.values(g.players||{});
+    const gScoresRaw = Array.isArray(g.scores) ? g.scores : Object.values(g.scores||{});
+    const grupoConfig = torneo.gruposConfig
+      ? (Array.isArray(torneo.gruposConfig) ? torneo.gruposConfig : Object.values(torneo.gruposConfig)).find(gc => gc.id === gid)
+      : null;
+    const hoyoSalida = g.hoyoSalida || grupoConfig?.hoyoSalida || 1;
+    return gPlayers.map((p, pi) => {
+      const rowRaw = gScoresRaw[pi];
+      const row = toArr(rowRaw);
+      const scores = Array(nHolesSafe).fill(null).map((_, h) => row[h] ?? null);
+      return { ...p, grupoId:gid, grupoNombre: g.nombre || `Grupo ${gid.slice(-3)}`, scores, marcas: g.marcas, tarjetas: g.tarjetas, grupoStatus: g.status, hoyoSalida };
+    });
+  });
+
+  const fmtVs = (v) => v === null ? "-" : v === 0 ? "E" : v > 0 ? `+${v}` : `${v}`;
+  const vsColor = (v) => v === null ? D.textDim : v < 0 ? D.success : v > 0 ? D.danger : D.text;
+  const fmtMoney = (n) => n >= 0 ? `+$${n}` : `-$${Math.abs(n)}`;
+  const moneyColor = (n) => n > 0 ? D.success : n < 0 ? D.danger : D.textSub;
+
+  const ranked = allPlayers.map(p => {
+    const jugados = toArr(p.scores).filter(s => s !== null && s !== undefined);
+    const bruto = jugados.length > 0 ? jugados.reduce((a,b)=>a+b,0) : null;
+    // Solo sumar el par de los hoyos que realmente se jugaron (no null)
+    const parJugados = p.scores.reduce((sum, s, i) => s!==null&&s!==undefined ? sum+(pars[i]||0) : sum, 0);
+    const vsPar = bruto !== null ? bruto - parJugados : null;
+    const vsParHC = vsPar !== null ? vsPar - hcEf(p.hc, nHolesSafe) : null;
+    return { ...p, bruto, vsPar, vsParHC };
+  }).sort((a,b) => {
+    if (a.vsParHC===null && b.vsParHC===null) return 0;
+    if (a.vsParHC===null) return 1;
+    if (b.vsParHC===null) return -1;
+    return a.vsParHC - b.vsParHC;
+  });
+
+  const todosAbandonos = [];
+  grupos.forEach(([gid, g]) => {
+    const abs = g.abandonos ? (Array.isArray(g.abandonos) ? g.abandonos : Object.values(g.abandonos)) : [];
+    abs.forEach(a => todosAbandonos.push({ ...a, grupoId: gid }));
+  });
+  const extraPotAbandonos = todosAbandonos.filter(a=>a.conCastigo).reduce((a,c)=>a+c.scorePago,0);
+  const totalTarjetaAbandonos = todosAbandonos.filter(a=>a.conCastigo).reduce((a,c)=>a+c.tarjetaPago,0);
+  const gananciaXCastigoGlobal = allPlayers.length > 0 ? Math.round(totalTarjetaAbandonos / allPlayers.length) : 0;
+
+  const playersForCalc = allPlayers.map(p => ({ ...p, opts: p.opts || {score:true,marcas:true,tarjetas:true} }));
+  const fullScoresForCalc = allPlayers.map(p => pars.map((par,h) => {
+    const v = p.scores[h];
+    return (v===null||v===undefined) ? par : v;
+  }));
+  const moneyGlobal = allPlayers.length >= 2
+    ? calcMoney(playersForCalc, fullScoresForCalc, torneo.apuesta || 50, extraPotAbandonos, nHolesSafe).money
+    : allPlayers.map(() => 0);
+
+  // peorscore y anaconda se excluyen del cálculo local: ambos pagan global (a todo el torneo)
+  const TARJETAS_SIN_PEORSCORE = TARJETAS.filter(t => t.key !== "peorscore" && t.key !== "anaconda");
+  const marcasMoneyMap = {};
+  const tarjetasMoneyMap = {};
+  grupos.forEach(([gid, g]) => {
+    const gPlayers = (Array.isArray(g.players) ? g.players : Object.values(g.players||{})).map(p=>({...p, opts: p.opts || {score:true,marcas:true,tarjetas:true}}));
+    const gMarcas = g.marcas ? (Array.isArray(g.marcas) ? g.marcas : Object.values(g.marcas)).map(h=>h?({...h,multi:Array.isArray(h.multi)?h.multi:Object.values(h.multi||{})}):h) : null;
+    const gTarjetas = normalizeTarjetas(g.tarjetas);
+    if (gMarcas && gPlayers.length > 0) {
+      const mm = calcMarcasMoney(gPlayers, gMarcas, torneo.marcaVal || 10);
+      gPlayers.forEach((p, pi) => { marcasMoneyMap[`${gid}-${pi}`] = mm[pi]; });
+    }
+    if (gPlayers.length > 0) {
+      const tarjetasSinPeor = { ...gTarjetas, peorscore: null };
+      const count = gPlayers.map((_, i) => {
+        let c = 0;
+        TARJETAS_SIN_PEORSCORE.forEach(t => {
+          const owner = tarjetasSinPeor[t.key];
+          if (Array.isArray(owner)) { if (owner.includes(i)) c += 1/owner.length; }
+          else if (owner === i) c += 1;
+        });
+        return c;
+      });
+      const playsTarjetas = gPlayers.map(p => p.opts ? p.opts.tarjetas !== false : true);
+      const tm = gPlayers.map((_, i) => {
+        if (!playsTarjetas[i]) return 0;
+        let b = 0;
+        gPlayers.forEach((_, j) => {
+          if (i !== j && playsTarjetas[j]) { b -= count[i]*(torneo.tarjetaVal||10); b += count[j]*(torneo.tarjetaVal||10); }
+        });
+        return Math.round(b);
+      });
+      gPlayers.forEach((p, pi) => { tarjetasMoneyMap[`${gid}-${pi}`] = tm[pi]; });
+    }
+  });
+
+  const conScoreGlobal = ranked.filter(p => p.vsParHC !== null && p.opts?.score !== false);
+  const peorVsParHCGlobal = conScoreGlobal.length > 0 ? Math.max(...conScoreGlobal.map(p => p.vsParHC)) : null;
+  const peoresGlobal = peorVsParHCGlobal !== null ? conScoreGlobal.filter(p => p.vsParHC === peorVsParHCGlobal) : [];
+  const totalJugadoresConScore = conScoreGlobal.length;
+  const peorScoreMoneyGlobal = {};
+  if (peoresGlobal.length > 0 && totalJugadoresConScore > peoresGlobal.length) {
+    const tv = torneo.tarjetaVal || 10;
+    peoresGlobal.forEach(peor => {
+      const pagoTotal = (totalJugadoresConScore - peoresGlobal.length) * tv;
+      peorScoreMoneyGlobal[`${peor.grupoId}-${peor.id}`] = -(pagoTotal / peoresGlobal.length);
+    });
+    conScoreGlobal.forEach(p => {
+      const key = `${p.grupoId}-${p.id}`;
+      if (!peorScoreMoneyGlobal[key]) peorScoreMoneyGlobal[key] = tv;
+    });
+  }
+
+  // Anaconda global: cada grupo puede tener un jugador con >3 culebras que paga a TODOS del torneo
+  const anacondaMoneyGlobal = {};
+  {
+    const tv = torneo.tarjetaVal || 10;
+    // Jugadores que participan en tarjetas (opts.tarjetas !== false)
+    const conTarjetas = allPlayers.filter(p => p.opts?.tarjetas !== false);
+    const totalConTarjetas = conTarjetas.length;
+    // Recolectar todos los jugadores con anaconda (de cualquier grupo)
+    const anacondas = [];
+    grupos.forEach(([gid, g]) => {
+      const gPlayersRaw = Array.isArray(g.players) ? g.players : Object.values(g.players||{});
+      const gTarjetas = normalizeTarjetas(g.tarjetas);
+      const owner = gTarjetas.anaconda;
+      if (owner === null || owner === undefined) return;
+      const ownerIdxs = Array.isArray(owner) ? owner : [owner];
+      ownerIdxs.forEach(idx => {
+        const p = gPlayersRaw[idx];
+        if (p) anacondas.push({ grupoId: gid, id: p.id, idx });
+      });
+    });
+    if (anacondas.length > 0) {
+      const nAnacondas = anacondas.length;
+      anacondas.forEach(a => {
+        const pago = (totalConTarjetas - nAnacondas) * tv;
+        anacondaMoneyGlobal[`${a.grupoId}-${a.id}`] = -pago;
+      });
+      conTarjetas.forEach(p => {
+        const key = `${p.grupoId}-${p.id}`;
+        if (!anacondaMoneyGlobal[key]) anacondaMoneyGlobal[key] = tv * anacondas.length;
+      });
+    }
+  }
+
+  const rankedWithMoney = ranked.map((p) => {
+    const scoreM = moneyGlobal[allPlayers.findIndex(ap => ap.grupoId===p.grupoId && ap.id===p.id)] || 0;
+    const grupoData = torneo.grupos?.[p.grupoId];
+    const gPlayers = grupoData ? (Array.isArray(grupoData.players) ? grupoData.players : Object.values(grupoData.players||{})) : [];
+    const piInGrupo = gPlayers.findIndex(gp => gp.id === p.id);
+    const marcasM = marcasMoneyMap[`${p.grupoId}-${piInGrupo}`] || 0;
+    const tarjetasLocalesM = tarjetasMoneyMap[`${p.grupoId}-${piInGrupo}`] || 0;
+    const peorM = peorScoreMoneyGlobal[`${p.grupoId}-${p.id}`] || 0;
+    const anacondaM = anacondaMoneyGlobal[`${p.grupoId}-${p.id}`] || 0;
+    const tarjetasM = tarjetasLocalesM + peorM + anacondaM;
+    const castigoM = gananciaXCastigoGlobal;
+    return { ...p, scoreM, marcasM, tarjetasM, castigoM, totalM: scoreM + marcasM + tarjetasM + castigoM };
+  });
+
+  return (
+    <div style={appStyle}>
+      <div style={{ background:D.surface, borderBottom:`1px solid ${D.border}`, padding:"16px 16px 12px", textAlign:"center" }}>
+        <div style={{ fontSize:24, fontWeight:900, color:D.gold }}>H19 - Torneo</div>
+        <div style={{ fontSize:13, color:D.textSub, marginTop:2 }}>{torneo.nombre}</div>
+        <div style={{ fontSize:11, color:D.textSub, marginTop:2 }}>{CAMPOS[torneo.campo]?.nombre} · {nHolesSafe} hoyos · {grupos.length} grupos · {allPlayers.length} jugadores</div>
+      </div>
+      <div style={{ padding:"12px 12px 32px" }}>
+        {/* Marcador global */}
+        <Card>
+          <SLabel>🏆 Clasificación general</SLabel>
+          <div style={{ overflowX:"auto" }}>
+            <table style={{ borderCollapse:"collapse", width:"100%", fontSize:11 }}>
+              <thead>
+                <tr>
+                  <td style={{ padding:"6px 6px", fontWeight:700, color:D.gold, fontSize:10, position:"sticky", left:0, background:D.surface, borderBottom:`1px solid ${D.border}`, minWidth:80 }}>Jugador</td>
+                  {pars.map((_,i) => {
+                    const gruposConfig = torneo.gruposConfig
+                      ? (Array.isArray(torneo.gruposConfig) ? torneo.gruposConfig : Object.values(torneo.gruposConfig))
+                      : [];
+                    const gruposQueArrancan = grupos.filter(([gid, g]) => {
+                      const hs = g.hoyoSalida || gruposConfig.find(gc=>gc.id===gid)?.hoyoSalida || 1;
+                      return hs - 1 === i;
+                    });
+                    const esSalida = gruposQueArrancan.length > 0;
+                    return (
+                      <td key={i} style={{ padding:"5px 2px", textAlign:"center", fontWeight:700, color:D.textSub, borderBottom:`1px solid ${D.border}`, minWidth:22, fontSize:10 }}>
+                        {i+1}
+                      </td>
+                    );
+                  })}
+                  <td style={{ padding:"5px 4px", textAlign:"center", fontWeight:700, color:D.gold, borderBottom:`1px solid ${D.border}`, minWidth:28, borderLeft:`1px solid ${D.border}` }}>TOT</td>
+                  <td style={{ padding:"5px 3px", textAlign:"center", fontWeight:700, color:D.textSub, borderBottom:`1px solid ${D.border}`, minWidth:22 }}>HC</td>
+                  <td style={{ padding:"5px 4px", textAlign:"center", fontWeight:700, color:"#1A5C24", borderBottom:`1px solid ${D.border}`, minWidth:32, borderLeft:`1px solid ${D.border}` }}>VS Par</td>
+                  <td style={{ padding:"5px 4px", textAlign:"center", fontWeight:700, color:D.gold, borderBottom:`1px solid ${D.border}`, minWidth:40, borderLeft:`1px solid ${D.border}` }}>VS Par-HC</td>
+                </tr>
+                <tr>
+                  <td style={{ padding:"3px 6px", fontSize:10, color:D.textDim, position:"sticky", left:0, background:D.card, borderBottom:`1px solid ${D.border}` }}>PAR</td>
+                  {pars.map((p,i) => <td key={i} style={{ padding:"3px 2px", textAlign:"center", fontSize:10, color:D.textSub, borderBottom:`1px solid ${D.border}` }}>{p}</td>)}
+                  <td style={{ padding:"3px 4px", textAlign:"center", fontSize:10, color:D.textSub, borderBottom:`1px solid ${D.border}`, borderLeft:`1px solid ${D.border}` }}>{parTotal}</td>
+                  <td style={{ borderBottom:`1px solid ${D.border}` }}></td>
+                  <td style={{ borderBottom:`1px solid ${D.border}`, borderLeft:`1px solid ${D.border}` }}></td>
+                  <td style={{ borderBottom:`1px solid ${D.border}`, borderLeft:`1px solid ${D.border}` }}></td>
+                </tr>
+              </thead>
+              <tbody>
+                {rankedWithMoney.map(({ name, id, hc, scores: sc, grupoNombre, bruto, vsPar, vsParHC, scoreM, marcasM, tarjetasM, totalM, hoyoSalida: pHoyoSalida }, pos) => (
+                  <tr key={`${grupoNombre}-${name}`} style={{ borderBottom:`1px solid ${D.border}`, background:pos===0&&vsParHC!==null?D.goldDim+"55":"transparent" }}>
+                    <td style={{ padding:"6px 6px", position:"sticky", left:0, background:pos===0&&vsParHC!==null?D.goldDim+"55":D.card, zIndex:1 }}>
+                      <div style={{ display:"flex", alignItems:"center", gap:4 }}>
+                        <span style={{ fontSize:10, fontWeight:700, color:pos===0?D.gold:D.textSub, minWidth:12 }}>{pos+1}</span>
+                        <Avatar name={String(name||'?')} id={id||pos} size={18} />
+                        <div>
+                          <div style={{ fontSize:11, fontWeight:600, whiteSpace:"nowrap" }}>{name}</div>
+                          <div style={{ fontSize:9, color:D.textDim }}>{grupoNombre}</div>
+                        </div>
+                      </div>
+                    </td>
+                    {pars.map((par, hi) => {
+                      const esSalida = hi === (pHoyoSalida || 1) - 1;
+                      return (
+                        <td key={hi} style={{ textAlign:"center", padding:"2px 1px", background:"transparent" }}>
+                          <ScoreCell s={sc[hi]??null} par={par} size={20} isSalida={esSalida} />
+                        </td>
+                      );
+                    })}
+                    <td style={{ textAlign:"center", padding:"5px 4px", fontWeight:700, fontSize:11, borderLeft:`1px solid ${D.border}` }}>{bruto??'—'}</td>
+                    <td style={{ textAlign:"center", padding:"5px 3px", fontSize:11, color:D.textSub }}>{hc}</td>
+                    <td style={{ textAlign:"center", padding:"5px 4px", fontWeight:700, fontSize:11, color:vsColor(vsPar), borderLeft:`1px solid ${D.border}` }}>{fmtVs(vsPar)}</td>
+                    <td style={{ textAlign:"center", padding:"5px 4px", fontWeight:900, fontSize:12, color:vsColor(vsParHC), borderLeft:`1px solid ${D.border}` }}>{fmtVs(vsParHC)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <ScoreLegend />
+          </div>
+        </Card>
+
+        {/* Anaconda global */}
+        {Object.keys(anacondaMoneyGlobal).length > 0 && (() => {
+          const anacondaPagadores = allPlayers.filter(p => (anacondaMoneyGlobal[`${p.grupoId}-${p.id}`] || 0) < 0);
+          const tv = torneo.tarjetaVal || 10;
+          const totalConTarjetas = allPlayers.filter(p => p.opts?.tarjetas !== false).length;
+          return (
+            <Card style={{ border:`1px solid #8A3A0A44` }}>
+              <SLabel>🦎 Anaconda global {anacondaPagadores.length > 1 ? `(empate — ${anacondaPagadores.length} jugadores)` : ""}</SLabel>
+              {anacondaPagadores.map((p, i) => (
+                <div key={`${p.grupoId}-${p.id}`} style={{ display:"flex", alignItems:"center", gap:10, padding:"8px 0", borderBottom:i<anacondaPagadores.length-1?`1px solid ${D.border}`:"none" }}>
+                  <Avatar name={String(p.name||'?')} id={p.id||0} size={32} />
+                  <div style={{ flex:1 }}>
+                    <div style={{ fontSize:14, fontWeight:700, color:"#8A3A0A" }}>{p.name}</div>
+                    <div style={{ fontSize:11, color:D.textSub }}>{p.grupoNombre} · 4+ putts en el hoyo</div>
+                  </div>
+                  <div style={{ fontSize:14, fontWeight:900, color:D.danger }}>
+                    -${Math.abs(anacondaMoneyGlobal[`${p.grupoId}-${p.id}`])}
+                  </div>
+                </div>
+              ))}
+              <div style={{ fontSize:11, color:D.textSub, marginTop:6, textAlign:"center" }}>
+                Paga ${(totalConTarjetas - anacondaPagadores.length) * tv / anacondaPagadores.length} a cada uno de los {totalConTarjetas - anacondaPagadores.length} jugadores restantes del torneo
+              </div>
+            </Card>
+          );
+        })()}
+
+        {/* Peor score global */}
+        {peoresGlobal.length > 0 && (
+          <Card>
+            <SLabel>🪣 MP General global {peoresGlobal.length > 1 ? `(empate — tarjeta repartida entre ${peoresGlobal.length})` : ""}</SLabel>
+            {peoresGlobal.map((p, i) => (
+              <div key={`${p.grupoId}-${p.id}`} style={{ display:"flex", alignItems:"center", gap:10, padding:"8px 0", borderBottom:i<peoresGlobal.length-1?`1px solid ${D.border}`:"none" }}>
+                <Avatar name={String(p.name||'?')} id={p.id||0} size={32} />
+                <div style={{ flex:1 }}>
+                  <div style={{ fontSize:14, fontWeight:700, color:D.danger }}>{p.name}</div>
+                  <div style={{ fontSize:11, color:D.textSub }}>{p.grupoNombre}</div>
+                </div>
+                <div style={{ fontSize:16, fontWeight:900, color:D.danger }}>{fmtVs(p.vsParHC)}</div>
+              </div>
+            ))}
+            {peoresGlobal.length > 1 && (
+              <div style={{ fontSize:11, color:D.textSub, marginTop:6, textAlign:"center" }}>
+                Cada uno paga ${Math.round((totalJugadoresConScore - peoresGlobal.length) * (torneo.tarjetaVal||10) / peoresGlobal.length)} a cada uno de los demás {totalJugadoresConScore - peoresGlobal.length} jugadores
+              </div>
+            )}
+          </Card>
+        )}
+
+        {/* Resumen global de abandonos */}
+        {todosAbandonos.length > 0 && (
+          <Card style={{ border:`1px solid ${D.danger}44` }}>
+            <SLabel>🚪 Jugadores que abandonaron</SLabel>
+            {todosAbandonos.map((a, i) => (
+              <div key={i} style={{ padding:"8px 0", borderBottom:i<todosAbandonos.length-1?`1px solid ${D.border}`:"none" }}>
+                <div style={{ display:"flex", justifyContent:"space-between" }}>
+                  <div style={{ fontSize:13, fontWeight:700 }}>{a.name}</div>
+                  <div style={{ fontSize:14, fontWeight:900, color:D.danger }}>
+                    {a.conCastigo ? "-$"+(a.scorePago+a.tarjetaPago) : "Sin castigo"}
+                  </div>
+                </div>
+                {a.conCastigo && (
+                  <div style={{ fontSize:11, color:D.textSub, marginTop:2 }}>
+                    {"Score: $"+a.scorePago+" · Tarjeta: $"+a.tarjetaPago+" (a todos los jugadores)"}
+                  </div>
+                )}
+              </div>
+            ))}
+            {gananciaXCastigoGlobal > 0 && (
+              <div style={{ marginTop:8, paddingTop:8, borderTop:`1px solid ${D.border}`, fontSize:11, color:D.success, fontWeight:700 }}>
+                {"Cada jugador activo recibe: +$"+gananciaXCastigoGlobal+" por tarjeta de abandono"}
+              </div>
+            )}
+          </Card>
+        )}
+
+        {/* Dinero en vivo */}
+        {rankedWithMoney.some(p => p.vsParHC !== null) && (
+          <Card>
+            <SLabel>💰 ¿Cómo va el dinero? <span style={{ fontSize:10, color:D.textDim, fontWeight:400 }}>(estimado)</span></SLabel>
+            {rankedWithMoney.filter(p => p.vsParHC !== null).map((p, pos) => (
+              <div key={`${p.grupoId}-${p.id}`} style={{ padding:"9px 0", borderBottom:pos<rankedWithMoney.filter(x=>x.vsParHC!==null).length-1?`1px solid ${D.border}`:"none" }}>
+                <div style={{ display:"flex", justifyContent:"space-between", marginBottom:3 }}>
+                  <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                    <Avatar name={String(p.name||'?')} id={p.id||0} size={22} />
+                    <div>
+                      <div style={{ fontSize:13, fontWeight:700 }}>{p.name}</div>
+                      <div style={{ fontSize:10, color:D.textDim }}>{p.grupoNombre}</div>
+                    </div>
+                  </div>
+                  <div style={{ fontSize:14, fontWeight:900, color:moneyColor(p.totalM) }}>{fmtMoney(p.totalM)}</div>
+                </div>
+                <div style={{ fontSize:10, color:D.textSub, paddingLeft:28 }}>
+                  Score {fmtMoney(p.scoreM)} · Marcas {fmtMoney(p.marcasM)} · Tarjetas {fmtMoney(p.tarjetasM)}
+                  {p.castigoM > 0 ? " · Abandono +" + "$" + p.castigoM : ""}
+                </div>
+              </div>
+            ))}
+            <div style={{ fontSize:10, color:D.textDim, textAlign:"center", marginTop:6 }}>Score: global entre todos · Marcas y Tarjetas: dentro de cada grupo</div>
+            {(() => {
+              const totales = rankedWithMoney.filter(p=>p.vsParHC!==null).map(p=>p.totalM);
+              const ganancias = totales.filter(t=>t>0).reduce((a,b)=>a+b,0);
+              const perdidas = totales.filter(t=>t<0).reduce((a,b)=>a+b,0);
+              const cuadra = ganancias + perdidas === 0;
+              return (
+                <div style={{ marginTop:10, paddingTop:10, borderTop:`1px solid ${D.border}`, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                  <div style={{ fontSize:11, color:D.textSub }}>
+                    <span style={{ color:D.success, fontWeight:700 }}>+{"$"+String(ganancias)}</span>
+                    <span style={{ color:D.textDim, margin:"0 6px" }}>vs</span>
+                    <span style={{ color:D.danger, fontWeight:700 }}>-{"$"+String(Math.abs(perdidas))}</span>
+                  </div>
+                  <div style={{ fontSize:11, fontWeight:700, color:cuadra?D.success:D.danger }}>
+                    {cuadra ? "✓ Cuadra" : `⚠️ Dif $${ganancias+perdidas}`}
+                  </div>
+                </div>
+              );
+            })()}
+          </Card>
+        )}
+
+        {/* Resultados por grupo */}
+        {grupos.map(([gid, g]) => {
+          const gPlayers = Array.isArray(g.players) ? g.players : Object.values(g.players||{});
+          const gScores = Array.isArray(g.scores) ? g.scores : Object.values(g.scores||{});
+          const gMarcas = g.marcas ? (Array.isArray(g.marcas) ? g.marcas : Object.values(g.marcas)).map(h=>h?({...h,multi:Array.isArray(h.multi)?h.multi:Object.values(h.multi||{})}):h) : null;
+          return (
+            <Card key={gid}>
+              <SLabel>🏌️ {g.nombre || `Grupo ${gid.slice(-3)}`} · Hoyo {(g.hole||0)+1}</SLabel>
+              {/* Score por jugador */}
+              {gPlayers.map((p, pi) => {
+                const sc = gScores[pi] || [];
+                const jugados = toArr(sc).filter(s=>s!==null&&s!==undefined);
+                const bruto = jugados.length > 0 ? jugados.reduce((a,b)=>a+b,0) : null;
+                return (
+                  <div key={pi} style={{ display:"flex", alignItems:"center", gap:8, padding:"7px 0", borderBottom:pi<gPlayers.length-1?`1px solid ${D.border}`:"none" }}>
+                    <Avatar name={String(p.name||'?')} id={p.id||pi} size={26} />
+                    <div style={{ flex:1, fontSize:13, fontWeight:600 }}>{p.name}</div>
+                    <div style={{ fontSize:11, color:D.textSub }}>HC {hcEf(p.hc, torneo.nHoles||18)}</div>
+                    <div style={{ fontSize:13, fontWeight:700, color:D.gold }}>{bruto??'—'} golpes</div>
+                  </div>
+                );
+              })}
+              {/* Marcas del grupo */}
+              {gMarcas && (() => {
+                const eventos = calcMarcasResumen(gPlayers, gMarcas);
+                return eventos.length > 0 ? (
+                  <div style={{ marginTop:10, paddingTop:10, borderTop:`1px solid ${D.border}` }}>
+                    <div style={{ fontSize:10, fontWeight:700, color:D.gold, textTransform:"uppercase", letterSpacing:1, marginBottom:6 }}>⭐ Marcas</div>
+                    {eventos.map((ev, i) => (
+                      <div key={i} style={{ display:"flex", alignItems:"center", gap:8, padding:"4px 0" }}>
+                        <div style={{ fontSize:10, color:D.textDim, width:42 }}>Hoyo {ev.hole}</div>
+                        <div style={{ flex:1, fontSize:11 }}>{ev.label}</div>
+                        <div style={{ fontSize:11, fontWeight:700, color:D.gold }}>{ev.playerName}</div>
+                      </div>
+                    ))}
+                  </div>
+                ) : null;
+              })()}
+              {/* Tarjetas del grupo */}
+              {(() => {
+                const gTarjetasNorm = normalizeTarjetas(g.tarjetas);
+                const conDueno = TARJETAS.filter(tj => {
+                  const o = gTarjetasNorm[tj.key];
+                  return Array.isArray(o) ? o.length > 0 : (o !== null && o !== undefined);
+                });
+                return conDueno.length > 0 ? (
+                  <div style={{ marginTop:10, paddingTop:10, borderTop:`1px solid ${D.border}` }}>
+                    <div style={{ fontSize:10, fontWeight:700, color:D.danger, textTransform:"uppercase", letterSpacing:1, marginBottom:6 }}>🃏 Tarjetas</div>
+                    {conDueno.map(tj => {
+                      const owner = gTarjetasNorm[tj.key];
+                      const names = Array.isArray(owner)
+                        ? owner.map(i => gPlayers[i]?.name).filter(Boolean).join(" · ")
+                        : gPlayers[owner]?.name || "—";
+                      const esPeorScore = tj.key === "peorscore";
+                      return (
+                        <div key={tj.key} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", fontSize:11, padding:"4px 0", borderBottom:`1px solid ${D.border}44` }}>
+                          <div>
+                            <span style={{ color:D.textSub }}>{tj.label}</span>
+                            {esPeorScore && <span style={{ fontSize:9, color:D.textDim, marginLeft:4 }}>(en este grupo)</span>}
+                          </div>
+                          <span style={{ fontWeight:700, color:D.danger }}>{names}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : null;
+              })()}
+              {/* Abandonos del grupo */}
+              {(() => {
+                const abandonos = g.abandonos ? (Array.isArray(g.abandonos) ? g.abandonos : Object.values(g.abandonos)) : [];
+                return abandonos.length > 0 ? (
+                  <div style={{ marginTop:10, paddingTop:10, borderTop:`1px solid ${D.border}` }}>
+                    <div style={{ fontSize:10, fontWeight:700, color:D.danger, textTransform:"uppercase", letterSpacing:1, marginBottom:6 }}>🚪 Abandonos</div>
+                    {abandonos.map((c, i) => (
+                      <div key={i} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", fontSize:11, padding:"4px 0" }}>
+                        <div>
+                          <span style={{ fontWeight:700 }}>{c.name}</span>
+                          <span style={{ color:D.textSub, marginLeft:4 }}>{c.conCastigo ? "con castigo" : "sin castigo"}</span>
+                        </div>
+                        <span style={{ fontWeight:700, color:D.danger }}>
+                          {c.conCastigo ? "-$"+(c.scorePago+c.tarjetaPago) : "$0"}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                ) : null;
+              })()}
+            </Card>
+          );
+        })}
+
+        {/* Estado de grupos */}
+        <Card>
+          <SLabel>📊 Estado de grupos</SLabel>
+          {grupos.map(([gid, g]) => {
+            const finalizado = g.status === "finalizada";
+            const enJuego = g.status === "en_juego";
+            const tieneScores = (() => {
+              const sc = Array.isArray(g.scores) ? g.scores : Object.values(g.scores||{});
+              return sc.length > 0 && sc.some(row => {
+                const r = Array.isArray(row) ? row : Object.values(row||{});
+                return r.some(v => v !== null && v !== undefined);
+              });
+            })();
+            return (
+              <div key={gid} style={{ padding:"10px 0", borderBottom:`1px solid ${D.border}` }}>
+                <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+                  <div style={{ width:10, height:10, borderRadius:"50%", background:finalizado?D.success:D.gold, flexShrink:0 }} />
+                  <div style={{ flex:1, fontSize:13, fontWeight:600 }}>{g.nombre || `Grupo ${gid.slice(-3)}`}</div>
+                  <div style={{ fontSize:11, color:finalizado?D.success:D.gold, fontWeight:700 }}>
+                    {finalizado ? "✅ Finalizado" : `Hoyo ${(g.hole||0)+1}`}
+                  </div>
+                </div>
+                {isAdmin && (
+                  <div style={{ marginTop:8, paddingLeft:20, display:"flex", gap:8, flexWrap:"wrap" }}>
+                    {finalizado && (
+                      <button onClick={() => {
+                        // Admin general puede entrar al grupo finalizado para revisar/editar
+                        // Nota: al salir el grupo puede quedar en en_juego; usar el botón "Marcar finalizado" para re-cerrarlo
+                        const tc = {
+                          torneoId: torneoId,
+                          grupoId: gid,
+                          grupoNombre: g.nombre || `Grupo ${gid.slice(-3)}`,
+                          campo: torneo.campo, nHoles: torneo.nHoles,
+                          apuesta: torneo.apuesta, marcaVal: torneo.marcaVal, tarjetaVal: torneo.tarjetaVal,
+                          nombre: torneo.nombre,
+                          rondaActiva: { ...g, status: "en_juego" }, // admin puede editar aunque esté finalizado
+                        };
+                        try { localStorage.setItem("h19-admin-grupo-override", JSON.stringify(tc)); } catch(e) {}
+                        window.location.href = `${window.location.pathname}?admingrupo=${gid}`;
+                      }} style={{ fontSize:11, padding:"5px 12px", border:`1px solid ${D.gold}`, borderRadius:8, background:D.goldDim, color:D.gold, fontWeight:700, cursor:"pointer" }}>
+                        🔑 Entrar como Admin General
+                      </button>
+                    )}
+                    {enJuego && tieneScores && (
+                      <button
+                        onClick={() => marcarGrupoFinalizado(gid)}
+                        disabled={marcandoFinalizado === gid}
+                        style={{ fontSize:11, padding:"5px 12px", border:`1px solid ${D.success}`, borderRadius:8, background:D.greenBg||"#1a3a1a", color:D.success, fontWeight:700, cursor:"pointer", opacity: marcandoFinalizado===gid ? 0.6 : 1 }}>
+                        {marcandoFinalizado === gid ? "Marcando..." : "✅ Marcar como Finalizado"}
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </Card>
+
+        {isAdmin && grupos.length > 0 && grupos.every(([,g]) => g.status === "finalizada") && (
+          <CerrarTorneoPanel torneoId={torneoId} torneo={torneo} grupos={grupos} allPlayers={allPlayers} ranked={ranked} pars={pars} onCerrado={() => {
+            try { localStorage.removeItem("h19-torneo-admin"); } catch(e) {}
+            window.location.href = window.location.pathname;
+          }} />
+        )}
+
+        {isAdmin && grupos.some(([,g]) => g.status !== "finalizada") && (
+          <div style={{ background:D.goldDim, border:`1px solid ${D.gold}`, borderRadius:12, padding:"12px", marginBottom:12, textAlign:"center", fontSize:12, color:D.gold }}>
+            ⏳ Esperando que todos los grupos finalicen...
+          </div>
+        )}
+
+        <div style={{ textAlign:"center", fontSize:11, color:D.textDim, marginTop:8 }}>Vista en vivo · Actualización automática</div>
+      </div>
+    </div>
+  );
+}
+
+// ─── TORNEO: VER CÓDIGOS ────────────────────────────────
+function TorneoCodigosView({ torneoAdmin, onExit, appStyle }) {
+  const [grupos, setGrupos] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [cambioHoyo, setCambioHoyo] = useState(null); // { grupoId, hoyoActual, hoyoNuevo }
+  const [guardandoHoyo, setGuardandoHoyo] = useState(false);
+
+  const cargarGrupos = () => {
+    get(ref(db, `torneos/${torneoAdmin.torneoId}`)).then(snap => {
+      if (snap.exists()) {
+        const t = snap.val();
+        const gs = Array.isArray(t.gruposConfig) ? t.gruposConfig : Object.values(t.gruposConfig||{});
+        // Enriquecer con jugadores reales de cada grupo
+        const gruposFirebase = t.grupos || {};
+        const gsEnriquecidos = gs.map(g => {
+          const grupoData = gruposFirebase[g.id] || {};
+          const playersArr = grupoData.players
+            ? (Array.isArray(grupoData.players) ? grupoData.players : Object.values(grupoData.players))
+            : (g.players || []);
+          return { ...g, players: playersArr, status: grupoData.status };
+        });
+        setGrupos(gsEnriquecidos);
+      }
+      setLoading(false);
+    }).catch(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    cargarGrupos();
+    const interval = setInterval(cargarGrupos, 30000);
+    return () => clearInterval(interval);
+  }, [torneoAdmin.torneoId]);
+
+  const cambiarHoyoSalida = async (grupoId, nuevoHoyo) => {
+    setGuardandoHoyo(true);
+    try {
+      const tid = torneoAdmin.torneoId;
+      // 1. Actualizar en gruposConfig (estructura del torneo)
+      const snap = await get(ref(db, `torneos/${tid}/gruposConfig`));
+      if (snap.exists()) {
+        const gc = Array.isArray(snap.val()) ? snap.val() : Object.values(snap.val());
+        const updated = gc.map(g => g.id === grupoId ? { ...g, hoyoSalida: nuevoHoyo } : g);
+        await set(ref(db, `torneos/${tid}/gruposConfig`), updated);
+      }
+      // 2. Actualizar en grupos/{gid}/hoyoSalida (vista en vivo lo lee de aquí)
+      await set(ref(db, `torneos/${tid}/grupos/${grupoId}/hoyoSalida`), nuevoHoyo);
+      // 3. Actualizar codigosGrupo para que el anotador lo lea correcto al entrar
+      await set(ref(db, `codigosGrupo/${grupoId}/hoyoSalida`), nuevoHoyo);
+      // 4. Actualizar estado local sin recargar todo
+      setGrupos(gs => gs.map(g => g.id === grupoId ? { ...g, hoyoSalida: nuevoHoyo } : g));
+      setCambioHoyo(null);
+    } catch(e) {
+      console.error("Error cambiando hoyo:", e);
+    }
+    setGuardandoHoyo(false);
+  };
+
+  const torneoUrl = `${window.location.origin}${window.location.pathname}?torneo=${torneoAdmin.torneoId}`;
+
+  return (
+    <div style={appStyle}>
+      <div style={{ background:D.surface, borderBottom:`1px solid ${D.border}`, padding:"16px 16px 12px", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+        <div>
+          <div style={{ fontSize:18, fontWeight:900, color:D.gold }}>Códigos del torneo</div>
+          <div style={{ fontSize:12, color:D.textSub }}>{torneoAdmin.nombre}</div>
+        </div>
+        <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+          <button onClick={cargarGrupos} style={{ fontSize:12, color:D.gold, background:D.goldDim, border:`1px solid ${D.gold}44`, borderRadius:8, padding:"5px 10px", cursor:"pointer" }}>🔄 Actualizar</button>
+          <button onClick={onExit} style={{ fontSize:12, color:D.textSub, background:"none", border:`1px solid ${D.border}`, borderRadius:8, padding:"5px 10px", cursor:"pointer" }}>Volver</button>
+        </div>
+      </div>
+      <div style={{ padding:"12px" }}>
+        {/* Link del torneo */}
+        <Card>
+          <SLabel>👀 Link del torneo en vivo</SLabel>
+          <div style={{ display:"flex", gap:8 }}>
+            <button onClick={() => {
+              const msg = `🏆 H19 — *${torneoAdmin.nombre}*\nVer todos los grupos en vivo: ${torneoUrl}`;
+              window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, "_blank");
+            }} style={{ flex:1, padding:"10px", border:"none", borderRadius:10, background:"#25D366", color:"#fff", fontSize:12, fontWeight:700, cursor:"pointer" }}>
+              💬 Compartir por WhatsApp
+            </button>
+            <button onClick={() => { if (navigator.clipboard) navigator.clipboard.writeText(torneoUrl); }}
+              style={{ flex:1, padding:"10px", border:`1px solid ${D.gold}`, borderRadius:10, background:D.goldDim, color:D.gold, fontSize:12, fontWeight:700, cursor:"pointer" }}>
+              📋 Copiar link
+            </button>
+          </div>
+        </Card>
+
+        {loading && <div style={{ textAlign:"center", color:D.textSub, padding:20 }}>Cargando grupos...</div>}
+
+        {/* Código por grupo */}
+        {grupos.map((g, i) => (
+          <Card key={g.id||i}>
+            <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:6 }}>
+              <SLabel style={{ marginBottom:0 }}>Grupo {i+1}: {g.nombre}</SLabel>
+              <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                <div style={{ fontSize:10, color: g.status==="finalizada"?D.success:g.status==="en_juego"?D.gold:D.textSub, fontWeight:700 }}>
+                  {g.status==="finalizada"?"✅ Finalizado":g.status==="en_juego"?"🟡 En juego":"⏳ Sin iniciar"}
+                </div>
+                <div style={{ fontSize:11, color:D.textSub }}>{g.players?.length||0} jug.</div>
+              </div>
+            </div>
+            <div style={{ fontSize:30, fontWeight:900, letterSpacing:4, color:D.gold, textAlign:"center", padding:"10px 0" }}>{g.id}</div>
+            <div style={{ textAlign:"center", marginBottom:8 }}><span style={{ fontSize:12, color:D.gold, fontWeight:700, background:D.goldDim, padding:"3px 10px", borderRadius:20 }}>{"Sale del hoyo "+(g.hoyoSalida||1)}</span>
+              <button onClick={() => setCambioHoyo({ grupoId: g.id, hoyoActual: g.hoyoSalida||1, hoyoNuevo: g.hoyoSalida||1 })}
+                style={{ marginLeft:8, fontSize:11, color:D.textSub, background:"transparent", border:`1px solid ${D.border}`, borderRadius:8, padding:"2px 8px", cursor:"pointer" }}>
+                ✏️ Cambiar hoyo
+              </button>
+            </div>
+            {/* Jugadores del grupo */}
+            {(g.players||[]).length > 0 ? (
+              <div style={{ marginBottom:10, background:D.surface, borderRadius:10, padding:"8px 10px" }}>
+                <div style={{ fontSize:10, fontWeight:700, color:D.textSub, textTransform:"uppercase", letterSpacing:1, marginBottom:6 }}>Jugadores</div>
+                {(g.players||[]).map((p,pi) => (
+                  <div key={pi} style={{ display:"flex", alignItems:"center", gap:6, padding:"5px 0", borderBottom:pi<(g.players||[]).length-1?`1px solid ${D.border}`:"none" }}>
+                    <Avatar name={String(p.name||'?')} id={p.id||pi} size={24} />
+                    <span style={{ fontSize:13, fontWeight:600, flex:1 }}>{p.name}</span>
+                    <span style={{ fontSize:11, color:D.gold, fontWeight:700 }}>HC {p.hc}</span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div style={{ marginBottom:10, padding:"8px", background:D.surface, borderRadius:8, textAlign:"center", fontSize:11, color:D.textDim }}>
+                Sin jugadores aún — esperando que el admin del grupo ingrese
+              </div>
+            )}
+            <div style={{ display:"flex", gap:8 }}>
+              <button onClick={() => {
+                const playersStr = (g.players||[]).map(p=>`- ${p.name} (HC ${p.hc})`).join('\n');
+                const msg = `🏌️ H19 Golf — *${torneoAdmin.nombre}*\n*Tu grupo: ${g.nombre}*\n${playersStr ? `Jugadores:\n${playersStr}\n\n` : ""}*Código para ingresar: ${g.id}*\nAbre la app: ${window.location.origin}\n-> "Entrar con código de grupo"\n\nVer torneo en vivo: ${torneoUrl}`;
+                window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, "_blank");
+              }} style={{ flex:1, padding:"10px", border:"none", borderRadius:10, background:"#25D366", color:"#fff", fontSize:12, fontWeight:700, cursor:"pointer" }}>
+                💬 Reenviar por WhatsApp
+              </button>
+              <button onClick={() => { if (navigator.clipboard) navigator.clipboard.writeText(g.id); }}
+                style={{ flex:1, padding:"10px", border:`1px solid ${D.gold}`, borderRadius:10, background:D.goldDim, color:D.gold, fontSize:12, fontWeight:700, cursor:"pointer" }}>
+                📋 Copiar código
+              </button>
+            </div>
+          </Card>
+        ))}
+      </div>
+
+      {/* Modal cambiar hoyo de salida */}
+      {cambioHoyo && (
+        <div style={{ position:"fixed", inset:0, background:"#000a", zIndex:1000, display:"flex", alignItems:"flex-end" }}>
+          <div style={{ background:D.card, borderRadius:"16px 16px 0 0", padding:20, width:"100%", maxHeight:"70vh", overflowY:"auto" }}>
+            <div style={{ fontSize:15, fontWeight:900, color:D.gold, marginBottom:4 }}>Cambiar hoyo de salida</div>
+            <div style={{ fontSize:11, color:D.textSub, marginBottom:16 }}>
+              {"Hoyo actual: " + cambioHoyo.hoyoActual + " → Selecciona el nuevo hoyo"}
+            </div>
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(6,1fr)", gap:8, marginBottom:16 }}>
+              {Array.from({length:18},(_,i)=>i+1).map(h => (
+                <button key={h} onClick={() => setCambioHoyo(c=>({...c,hoyoNuevo:h}))}
+                  style={{ padding:"10px 4px", border:"2px solid "+(cambioHoyo.hoyoNuevo===h?D.gold:D.border), borderRadius:10, background:cambioHoyo.hoyoNuevo===h?D.goldDim:"transparent", color:cambioHoyo.hoyoNuevo===h?D.gold:D.text, fontSize:13, fontWeight:cambioHoyo.hoyoNuevo===h?900:400, cursor:"pointer" }}>
+                  {h}
+                </button>
+              ))}
+            </div>
+            <div style={{ display:"flex", gap:8 }}>
+              <button onClick={() => setCambioHoyo(null)}
+                style={{ flex:1, padding:"12px", border:"1px solid "+D.border, borderRadius:10, background:"transparent", color:D.textSub, fontSize:13, cursor:"pointer" }}>
+                Cancelar
+              </button>
+              <button onClick={() => cambiarHoyoSalida(cambioHoyo.grupoId, cambioHoyo.hoyoNuevo)} disabled={guardandoHoyo}
+                style={{ flex:2, padding:"12px", border:"none", borderRadius:10, background:D.gold, color:"#000", fontSize:13, fontWeight:700, cursor:"pointer", opacity:guardandoHoyo?0.7:1 }}>
+                {guardandoHoyo ? "Guardando..." : "Cambiar al hoyo " + cambioHoyo.hoyoNuevo}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── GESTION DE JUGADORES ────────────────────────────────
+
+
+// ─── PANEL DE JUGADORES ────────────────────────────────
+function JugadoresPanel(props) {
+  const { players, castigos, dir, torneoConfig,
+    jugadoresPinOk, jugadoresPinInput, setJugadoresPinInput,
+    jugadoresPinError, setJugadoresPinError, setJugadoresPinOk,
+    abandonandoIdx, setAbandonandoIdx,
+    agregandoJugador, setAgregandoJugador,
+    totalJugadoresTorneoAdmin, setTotalJugadoresTorneoAdmin,
+    apuesta, tarjetaVal, onEliminar, onAgregar, onToggleOpts } = props;
+
+  // PIN check en modo torneo
+  if (torneoConfig && !jugadoresPinOk) {
+    return (
+      <Card>
+        <SLabel>Acceso restringido</SLabel>
+        <div style={{ fontSize:12, color:D.textSub, marginBottom:12, textAlign:"center" }}>
+          Solo el admin general puede modificar jugadores
+        </div>
+        <input type="password" value={jugadoresPinInput}
+          onChange={e => setJugadoresPinInput(e.target.value)}
+          placeholder="PIN" maxLength={6}
+          style={{ width:"100%", padding:"12px", border:"1px solid "+D.border, borderRadius:10, background:D.surface, color:D.text, fontSize:20, textAlign:"center", letterSpacing:6, fontWeight:700, boxSizing:"border-box", marginBottom:8 }} />
+        {jugadoresPinError && (
+          <div style={{ color:D.danger, fontSize:12, textAlign:"center", marginBottom:8 }}>PIN incorrecto</div>
+        )}
+        <Btn onClick={() => {
+          if (jugadoresPinInput === ADMIN_PIN) {
+            setJugadoresPinOk(true);
+            setJugadoresPinError(false);
+            setJugadoresPinInput("");
+          } else {
+            setJugadoresPinError(true);
+          }
+        }}>Entrar</Btn>
+      </Card>
+    );
+  }
+
+  // Modal de confirmacion abandono
+  if (abandonandoIdx !== null && players[abandonandoIdx]) {
+    const pAbandono = players[abandonandoIdx];
+    const idxAbandono = abandonandoIdx;
+    const totalJ = (torneoConfig && totalJugadoresTorneoAdmin > 0) ? totalJugadoresTorneoAdmin : players.length;
+    const costoScore = apuesta;
+    const costoTarjeta = tarjetaVal * (totalJ - 1);
+    const costoTotal = costoScore + costoTarjeta;
+
+    return (
+      <Card>
+        <SLabel>Eliminar jugador</SLabel>
+        <div style={{ fontSize:14, fontWeight:700, marginBottom:12 }}>{pAbandono.name} abandona la ronda</div>
+        {torneoConfig && (
+          <div style={{ marginBottom:12, padding:12, background:D.goldDim, border:"1px solid "+D.gold+"44", borderRadius:10 }}>
+            <div style={{ fontSize:12, color:D.gold, fontWeight:700, marginBottom:8 }}>
+              ⚠️ Total de jugadores en el torneo completo
+            </div>
+            <div style={{ fontSize:11, color:D.textSub, marginBottom:8 }}>
+              {"Ajusta al número total de jugadores en todos los grupos (actualmente: "+players.length+" en este grupo)"}
+            </div>
+            <div style={{ display:"flex", alignItems:"center", gap:12 }}>
+              <button
+                onClick={() => setTotalJugadoresTorneoAdmin(t => Math.max(players.length, (t || players.length) - 1))}
+                style={{ width:40, height:40, borderRadius:"50%", border:"1px solid "+D.border, background:D.surface, color:D.text, fontSize:22, cursor:"pointer", fontWeight:700 }}>
+                -
+              </button>
+              <div style={{ flex:1, textAlign:"center" }}>
+                <div style={{ fontSize:32, fontWeight:900, color:D.gold }}>
+                  {totalJugadoresTorneoAdmin || players.length}
+                </div>
+                <div style={{ fontSize:10, color:D.textSub }}>jugadores en el torneo</div>
+              </div>
+              <button
+                onClick={() => setTotalJugadoresTorneoAdmin(t => (t || players.length) + 1)}
+                style={{ width:40, height:40, borderRadius:"50%", border:"1px solid "+D.gold, background:D.goldDim, color:D.gold, fontSize:22, cursor:"pointer", fontWeight:700 }}>
+                +
+              </button>
+            </div>
+          </div>
+        )}
+        <div style={{ background:D.redBg, border:"1px solid "+D.danger+"44", borderRadius:10, padding:12, marginBottom:12 }}>
+          <div style={{ fontSize:13, fontWeight:700, color:D.danger, marginBottom:4 }}>Con castigo</div>
+          <div style={{ fontSize:12, color:D.textSub }}>{"Score: $" + costoScore}</div>
+          <div style={{ fontSize:12, color:D.textSub }}>{"Tarjeta: $" + tarjetaVal + " x " + (totalJ-1) + " = $" + costoTarjeta}</div>
+          <div style={{ fontSize:14, fontWeight:900, color:D.danger, marginTop:6 }}>{"Total que paga: $" + costoTotal}</div>
+        </div>
+        <div style={{ display:"flex", gap:8, marginBottom:8 }}>
+          <button
+            onClick={() => onEliminar(idxAbandono, true)}
+            style={{ flex:1, padding:"12px", border:"none", borderRadius:10, background:D.danger, color:"#fff", fontSize:14, fontWeight:700, cursor:"pointer" }}>
+            {"Con castigo -$" + costoTotal}
+          </button>
+          <button
+            onClick={() => onEliminar(idxAbandono, false)}
+            style={{ flex:1, padding:"12px", border:"1px solid "+D.border, borderRadius:10, background:"transparent", color:D.textSub, fontSize:13, cursor:"pointer" }}>
+            Sin castigo
+          </button>
+        </div>
+        <button
+          onClick={() => setAbandonandoIdx(null)}
+          style={{ width:"100%", padding:"8px", border:"none", background:"transparent", color:D.textDim, fontSize:12, cursor:"pointer" }}>
+          Cancelar
+        </button>
+      </Card>
+    );
+  }
+
+  // Pantalla de agregar jugador
+  if (agregandoJugador) {
+    const disponibles = dir.filter(p => !players.find(pl => pl.id === p.id));
+    return (
+      <Card>
+        <SLabel>Agregar jugador</SLabel>
+        {disponibles.length === 0 && (
+          <div style={{ textAlign:"center", color:D.textSub, padding:16 }}>
+            Todos estan en la ronda
+          </div>
+        )}
+        {disponibles.slice().sort((a,b)=>a.name.localeCompare(b.name)).map(p => (
+          <div key={p.id}
+            onClick={() => onAgregar(p)}
+            style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 0", borderBottom:"1px solid "+D.border, cursor:"pointer" }}>
+            <Avatar name={p.name} id={p.id} size={30} />
+            <div style={{ flex:1 }}>
+              <div style={{ fontSize:13, fontWeight:600 }}>{p.name}</div>
+              <div style={{ fontSize:11, color:D.textSub }}>{"HC " + p.hc}</div>
+            </div>
+            <div style={{ fontSize:12, color:D.gold, fontWeight:700 }}>+ Agregar</div>
+          </div>
+        ))}
+        <button
+          onClick={() => setAgregandoJugador(false)}
+          style={{ width:"100%", marginTop:10, padding:"10px", border:"1px solid "+D.border, borderRadius:10, background:"transparent", color:D.textSub, fontSize:13, cursor:"pointer" }}>
+          Cancelar
+        </button>
+      </Card>
+    );
+  }
+
+  // Lista de jugadores activos
+  return (
+    <div>
+      <Card>
+        <SLabel>Jugadores en la ronda</SLabel>
+        <div style={{ display:"flex", alignItems:"center", marginBottom:8, paddingBottom:8, borderBottom:"1px solid "+D.border }}>
+          <div style={{ flex:1, fontSize:10, color:D.textSub }}>Jugador</div>
+          {["Score","Marcas","Tarjetas"].map(o => (
+            <div key={o} style={{ width:50, textAlign:"center", fontSize:9, color:D.gold, fontWeight:700 }}>{o}</div>
+          ))}
+          <div style={{ width:44 }}></div>
+        </div>
+        {players.map((p, pi) => {
+          const opts = p.opts || {score:true, marcas:true, tarjetas:true};
+          return (
+            <div key={p.id||pi} style={{ display:"flex", alignItems:"center", gap:2, padding:"6px 0", borderBottom:"1px solid "+D.border }}>
+              <div style={{ flex:1, display:"flex", alignItems:"center", gap:6 }}>
+                <Avatar name={p.name} id={p.id||pi} size={24} />
+                <div>
+                  <div style={{ fontSize:12, fontWeight:600 }}>{p.name}</div>
+                  <div style={{ fontSize:10, color:D.textSub }}>{"HC "+p.hc}</div>
+                </div>
+              </div>
+              {["score","marcas","tarjetas"].map(key => (
+                <div key={key} style={{ width:50, display:"flex", justifyContent:"center" }}
+                  onClick={() => onToggleOpts(pi, { ...opts, [key]: opts[key]!==false ? false : true })}>
+                  <div style={{ width:26, height:26, borderRadius:6,
+                    border:"2px solid "+(opts[key]!==false ? D.gold : D.border),
+                    background:opts[key]!==false ? D.goldDim : "transparent",
+                    display:"flex", alignItems:"center", justifyContent:"center",
+                    fontSize:13, color:D.gold, fontWeight:700, cursor:"pointer" }}>
+                    {opts[key]!==false ? "✓" : ""}
+                  </div>
+                </div>
+              ))}
+              <button onClick={() => setAbandonandoIdx(pi)}
+                style={{ width:44, padding:"4px 2px", border:"1px solid "+D.danger+"44", borderRadius:8, background:D.redBg, color:D.danger, fontSize:9, fontWeight:700, cursor:"pointer" }}>
+                Salir
+              </button>
+            </div>
+          );
+        })}
+        {castigos.length > 0 && (
+          <div style={{ marginTop:10, paddingTop:10, borderTop:"1px solid "+D.border }}>
+            <div style={{ fontSize:11, fontWeight:700, color:D.danger, marginBottom:6 }}>
+              Jugadores que abandonaron:
+            </div>
+            {castigos.map((c, i) => (
+              <div key={i} style={{ display:"flex", justifyContent:"space-between", fontSize:12, padding:"4px 0" }}>
+                <span style={{ fontWeight:600 }}>{c.name}</span>
+                <span style={{ color:D.danger, fontWeight:700 }}>
+                  {c.conCastigo ? ("-$" + (c.scorePago + c.tarjetaPago)) : "Sin castigo"}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
+      <button
+        onClick={() => setAgregandoJugador(true)}
+        style={{ width:"100%", padding:"12px", border:"1px dashed "+D.gold, borderRadius:12, background:"transparent", color:D.gold, fontSize:13, fontWeight:700, cursor:"pointer", marginBottom:8 }}>
+        Agregar jugador
+      </button>
+    </div>
+  );
+}
+
+// ─── MODAL ABANDONO ────────────────────────────────
+function AbandonoModal({ player, pi, players, apuesta, tarjetaVal, castigos, setCastigos, scores, setScores, marcas, setMarcas, setPlayers, pars, hole, campo, rondaId, grupoNombre, tarjetas, updateGame, onClose }) {
+  const restantes = players.length - 1;
+  const castScore = apuesta;
+  const castTarjeta = tarjetaVal * restantes;
+  const castTotal = castScore + castTarjeta;
+
+  const eliminar = (conCastigo) => {
+    const nuevoCastigos = [...castigos, { name:player.name, conCastigo, scorePago:conCastigo?castScore:0, tarjetaPago:conCastigo?castTarjeta:0 }];
+    setCastigos(nuevoCastigos);
+    const newPlayers = players.filter((_,i)=>i!==pi);
+    const newScores = scores.filter((_,i)=>i!==pi);
+    const newMarcas = marcas.map(m => {
+      if (!m) return m;
+      const newMulti = (Array.isArray(m.multi)?m.multi:Object.values(m.multi||{})).filter((_,i)=>i!==pi);
+      const newOyes = m.oyes===pi?null:(m.oyes>pi?m.oyes-1:m.oyes);
+      const newReg = m.regulation===pi?null:(m.regulation>pi?m.regulation-1:m.regulation);
+      return {...m, multi:newMulti, oyes:newOyes, regulation:newReg};
+    });
+    setPlayers(newPlayers); setScores(newScores); setMarcas(newMarcas);
+    const state = { players:newPlayers, pars, scores:newScores, marcas:newMarcas, tarjetas, hole, campo, status:"en_juego", rondaId, grupoNombre, abandonos:nuevoCastigos };
+    updateGame(state);
+    onClose();
+  };
+
+  return (
+    <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.7)", zIndex:200, display:"flex", alignItems:"center", justifyContent:"center", padding:20 }}>
+      <div style={{ background:D.card, borderRadius:16, padding:24, width:"100%", maxWidth:360 }}>
+        <div style={{ fontSize:16, fontWeight:700, marginBottom:4 }}>🚪 {player.name} abandona</div>
+        <div style={{ fontSize:12, color:D.textSub, marginBottom:16 }}>Elige si el jugador se va con o sin castigo</div>
+        <div style={{ background:D.redBg, border:`1px solid ${D.danger}44`, borderRadius:10, padding:12, marginBottom:12 }}>
+          <div style={{ fontSize:13, fontWeight:700, color:D.danger, marginBottom:6 }}>Con castigo</div>
+          <div style={{ fontSize:12, color:D.textSub }}>
+            Score: <strong style={{color:D.text}}>{"$"+String(castScore)}</strong> + Tarjeta: <strong style={{color:D.text}}>{"$"+String(tarjetaVal)} x {restantes} = {"$"+String(castTarjeta)}</strong>
+          </div>
+          <div style={{ fontSize:13, fontWeight:900, color:D.danger, marginTop:4 }}>Total que paga: {"$"+String(castTotal)}</div>
+          <div style={{ fontSize:10, color:D.textDim, marginTop:4 }}>Repartido entre los {restantes} jugadores restantes</div>
+        </div>
+        <div style={{ display:"flex", gap:8, marginBottom:12 }}>
+          <button onClick={() => eliminar(true)} style={{ flex:1, padding:"10px", border:"none", borderRadius:10, background:D.danger, color:"#fff", fontSize:13, fontWeight:700, cursor:"pointer" }}>
+            Con castigo
+          </button>
+          <button onClick={() => eliminar(false)} style={{ flex:1, padding:"10px", border:`1px solid ${D.border}`, borderRadius:10, background:"transparent", color:D.textSub, fontSize:13, fontWeight:600, cursor:"pointer" }}>
+            Sin castigo
+          </button>
+        </div>
+        <button onClick={onClose} style={{ width:"100%", padding:"8px", border:"none", background:"transparent", color:D.textDim, fontSize:12, cursor:"pointer" }}>
+          Cancelar
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── BAR ADMIN SCREEN ─────────────────────────────
+function BarAdminScreen({ onExit }) {
+  const D_BAR = { bg:"#0A0A0A", surface:"#161616", border:"#2A2A2A", text:"#F5F5F5", textSub:"#888", gold:"#D4A843", goldDim:"rgba(212,168,67,0.12)", danger:"#C62828", success:"#4CAF50" };
+  const [whatsapp, setWhatsapp] = useState("");
+  const [smsNumber, setSmsNumber] = useState("");
+  const [menu, setMenu] = useState({ bebidas:[], comida:[], snacks:[] });
+  const [newItem, setNewItem] = useState({ bebidas:"", comida:"", snacks:"" });
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [savingSms, setSavingSms] = useState(false);
+  const [tab, setTab] = useState("bebidas");
+
+  const toArr = (x) => {
+    if (!x) return [];
+    if (Array.isArray(x)) return x;
+    if (typeof x === 'object') return Object.values(x);
+    return [];
+  };
+
+  useEffect(() => {
+    const r = ref(db, "bar");
+    const unsub = onValue(r, snap => {
+      const val = snap.val() || {};
+      const rawMenu = val.menu || {};
+      setMenu({
+        bebidas: toArr(rawMenu.bebidas),
+        comida:  toArr(rawMenu.comida),
+        snacks:  toArr(rawMenu.snacks),
+      });
+      setWhatsapp(val.config?.whatsapp || "");
+      setSmsNumber(val.config?.sms || "");
+      setLoading(false);
+    }, (err) => {
+      console.error("BarAdmin Firebase error:", err);
+      setLoading(false);
+    });
+    // Fallback: si Firebase no responde en 5s, mostrar pantalla vacía
+    const timer = setTimeout(() => setLoading(false), 5000);
+    return () => { unsub(); clearTimeout(timer); };
+  }, []);
+
+  const saveWhatsapp = async () => {
+    setSaving(true);
+    await set(ref(db, "bar/config/whatsapp"), whatsapp.replace(/\s/g,""));
+    setSaving(false);
+  };
+
+  const saveSms = async () => {
+    setSavingSms(true);
+    await set(ref(db, "bar/config/sms"), smsNumber.replace(/\s/g,""));
+    setSavingSms(false);
+  };
+
+  const addItem = async (cat) => {
+    const texto = newItem[cat].trim();
+    if (!texto) return;
+    // Actualizar optimistamente el estado local
+    const listaActual = menu[cat] || [];
+    const listaNueva = [...listaActual, texto];
+    setMenu(prev => ({ ...prev, [cat]: listaNueva }));
+    setNewItem(prev => ({ ...prev, [cat]: "" }));
+    try {
+      await set(ref(db, `bar/menu/${cat}`), listaNueva);
+    } catch(e) {
+      console.error("Error guardando en Firebase:", e);
+      // Revertir si falla
+      setMenu(prev => ({ ...prev, [cat]: listaActual }));
+      alert("Error al guardar: " + e.message);
+    }
+  };
+
+  const removeItem = async (cat, idx) => {
+    const listaActual = menu[cat] || [];
+    const listaNueva = listaActual.filter((_,i) => i !== idx);
+    setMenu(prev => ({ ...prev, [cat]: listaNueva }));
+    try {
+      await set(ref(db, `bar/menu/${cat}`), listaNueva.length > 0 ? listaNueva : null);
+    } catch(e) {
+      console.error("Error eliminando de Firebase:", e);
+      setMenu(prev => ({ ...prev, [cat]: listaActual }));
+      alert("Error al eliminar: " + e.message);
+    }
+  };
+
+  const tabLabels = { bebidas:"🍺 Bebidas", comida:"🍽 Comida", snacks:"🍿 Snacks" };
+
+  if (loading) return (
+    <div style={{ minHeight:"100vh", background:D_BAR.bg, display:"flex", alignItems:"center", justifyContent:"center" }}>
+      <div style={{ color:D_BAR.textSub }}>Cargando...</div>
+    </div>
+  );
+
+  return (
+    <div style={{ fontFamily:"-apple-system,sans-serif", background:D_BAR.bg, minHeight:"100vh", maxWidth:420, margin:"0 auto" }}>
+      <div style={{ background:D_BAR.surface, borderBottom:`1px solid ${D_BAR.border}`, padding:"16px 16px 12px", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+        <div>
+          <div style={{ fontSize:20, fontWeight:900, color:D_BAR.gold }}>🍹 Admin · BAR</div>
+          <div style={{ fontSize:11, color:D_BAR.textSub }}>Configuración del menú y contacto</div>
+        </div>
+        <button onClick={onExit} style={{ fontSize:12, color:D_BAR.textSub, background:"none", border:`1px solid ${D_BAR.border}`, borderRadius:8, padding:"5px 10px", cursor:"pointer" }}>Salir</button>
+      </div>
+
+      <div style={{ padding:"12px 16px" }}>
+        {/* WhatsApp del bar */}
+        <div style={{ background:D_BAR.surface, borderRadius:12, padding:"14px", marginBottom:14, border:`1px solid ${D_BAR.border}` }}>
+          <div style={{ fontSize:12, fontWeight:700, color:D_BAR.gold, marginBottom:8 }}>💬 WhatsApp del BAR</div>
+          <div style={{ fontSize:11, color:D_BAR.textSub, marginBottom:8 }}>Número al que se enviarán los pedidos (incluir código de país, ej: 522221234567)</div>
+          <div style={{ display:"flex", gap:8 }}>
+            <input value={whatsapp} onChange={e => setWhatsapp(e.target.value)} placeholder="52XXXXXXXXXX" type="tel"
+              style={{ flex:1, padding:"10px 12px", border:`1px solid ${D_BAR.border}`, borderRadius:10, background:D_BAR.bg, color:D_BAR.text, fontSize:14 }} />
+            <button onClick={saveWhatsapp} disabled={saving} style={{ padding:"10px 14px", border:"none", borderRadius:10, background:"#25D366", color:"#fff", fontSize:13, fontWeight:700, cursor:"pointer" }}>
+              {saving ? "..." : "Guardar"}
+            </button>
+          </div>
+          {whatsapp && <div style={{ fontSize:11, color:D_BAR.success, marginTop:6 }}>✓ wa.me/{whatsapp.replace(/\D/g,"")}</div>}
+        </div>
+
+        {/* SMS del bar */}
+        <div style={{ background:D_BAR.surface, borderRadius:12, padding:"14px", marginBottom:14, border:`1px solid ${D_BAR.border}` }}>
+          <div style={{ fontSize:12, fontWeight:700, color:"#4FC3F7", marginBottom:8 }}>📱 SMS del BAR</div>
+          <div style={{ fontSize:11, color:D_BAR.textSub, marginBottom:8 }}>Número para pedidos por SMS (incluir código de país, ej: 522221234567)</div>
+          <div style={{ display:"flex", gap:8 }}>
+            <input value={smsNumber} onChange={e => setSmsNumber(e.target.value)} placeholder="52XXXXXXXXXX" type="tel"
+              style={{ flex:1, padding:"10px 12px", border:`1px solid ${D_BAR.border}`, borderRadius:10, background:D_BAR.bg, color:D_BAR.text, fontSize:14 }} />
+            <button onClick={saveSms} disabled={savingSms} style={{ padding:"10px 14px", border:"none", borderRadius:10, background:"#0288D1", color:"#fff", fontSize:13, fontWeight:700, cursor:"pointer" }}>
+              {savingSms ? "..." : "Guardar"}
+            </button>
+          </div>
+          {smsNumber && <div style={{ fontSize:11, color:"#4FC3F7", marginTop:6 }}>✓ SMS a +{smsNumber.replace(/\D/g,"")}</div>}
+        </div>
+
+        {/* Tabs de categorías */}
+        <div style={{ display:"flex", borderBottom:`1px solid ${D_BAR.border}`, marginBottom:12 }}>
+          {Object.entries(tabLabels).map(([k, label]) => (
+            <button key={k} onClick={() => setTab(k)} style={{ flex:1, padding:"9px 4px", border:"none", background:"transparent", color: tab===k ? D_BAR.gold : D_BAR.textSub, fontSize:11, fontWeight: tab===k ? 700 : 400, borderBottom: tab===k ? `2px solid ${D_BAR.gold}` : "2px solid transparent", cursor:"pointer" }}>
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {/* Lista de items */}
+        <div style={{ background:D_BAR.surface, borderRadius:12, padding:"12px 14px", marginBottom:12, border:`1px solid ${D_BAR.border}` }}>
+          <div style={{ fontSize:12, fontWeight:700, color:D_BAR.gold, marginBottom:10 }}>{tabLabels[tab]}</div>
+          {menu[tab].length === 0 && <div style={{ fontSize:12, color:D_BAR.textSub, textAlign:"center", padding:12 }}>Sin productos. Agrega el primero.</div>}
+          {menu[tab].map((item, i) => (
+            <div key={i} style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"8px 0", borderBottom:`1px solid ${D_BAR.border}` }}>
+              <span style={{ fontSize:13, color:D_BAR.text }}>{item}</span>
+              <button onClick={() => removeItem(tab, i)} style={{ padding:"4px 10px", border:`1px solid ${D_BAR.danger}44`, borderRadius:8, background:"transparent", color:D_BAR.danger, fontSize:12, cursor:"pointer" }}>✕</button>
+            </div>
+          ))}
+          <div style={{ display:"flex", gap:8, marginTop:12 }}>
+            <input value={newItem[tab]} onChange={e => setNewItem(prev => ({...prev,[tab]:e.target.value}))} placeholder={`Nuevo ${tab.slice(0,-1)}...`} onKeyDown={e => e.key==="Enter" && addItem(tab)}
+              style={{ flex:1, padding:"10px 12px", border:`1px solid ${D_BAR.border}`, borderRadius:10, background:D_BAR.bg, color:D_BAR.text, fontSize:13 }} />
+            <button onClick={() => addItem(tab)} style={{ padding:"10px 14px", border:`1px solid ${D_BAR.gold}`, borderRadius:10, background:D_BAR.goldDim, color:D_BAR.gold, fontSize:13, fontWeight:700, cursor:"pointer" }}>+ Agregar</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── BAR VIEW ─────────────────────────────────────
+function BarView({ onExit, appStyle }) {
+  const D_BAR = { bg:"#0A0A0A", surface:"#161616", border:"#2A2A2A", text:"#F5F5F5", textSub:"#888", gold:"#D4A843", goldDim:"rgba(212,168,67,0.12)", danger:"#C62828", success:"#4CAF50" };
+  const [tab, setTab] = useState("bebidas");
+  const [menu, setMenu] = useState({ bebidas:[], comida:[], snacks:[] });
+  const [cantidades, setCantidades] = useState({});
+  const [hoyo, setHoyo] = useState(null); // null = sin selección, número 1-9
+  const [nombre, setNombre] = useState("");
+  const [whatsapp, setWhatsapp] = useState("");
+  const [smsNumber, setSmsNumber] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [enviando, setEnviando] = useState(false);
+  const [enviado, setEnviado] = useState(false);
+  const [canal, setCanal] = useState("whatsapp"); // "whatsapp" | "sms"
+
+  const toArr = (x) => {
+    if (!x) return [];
+    if (Array.isArray(x)) return x;
+    if (typeof x === 'object') return Object.values(x);
+    return [];
+  };
+
+  useEffect(() => {
+    const r = ref(db, "bar");
+    const unsub = onValue(r, snap => {
+      const val = snap.val() || {};
+      const rawMenu = val.menu || {};
+      setMenu({
+        bebidas: toArr(rawMenu.bebidas),
+        comida:  toArr(rawMenu.comida),
+        snacks:  toArr(rawMenu.snacks),
+      });
+      setWhatsapp(val.config?.whatsapp || "");
+      setSmsNumber(val.config?.sms || "");
+      setLoading(false);
+    }, (err) => {
+      console.error("BarView Firebase error:", err);
+      setLoading(false);
+    });
+    const timer = setTimeout(() => setLoading(false), 5000);
+    return () => { unsub(); clearTimeout(timer); };
+  }, []);
+
+  const setCantidad = (key, delta) => {
+    setCantidades(prev => {
+      const cur = prev[key] || 0;
+      const next = Math.max(0, cur + delta);
+      return { ...prev, [key]: next };
+    });
+  };
+
+  const buildMensaje = () => {
+    const cats = [
+      { label: "🍺 Bebidas", items: menu.bebidas },
+      { label: "🍽 Comida",  items: menu.comida  },
+      { label: "🍿 Snacks",  items: menu.snacks  },
+    ];
+    let lineas = [];
+    cats.forEach(({ label, items }) => {
+      items.forEach((item, i) => {
+        const key = `${label}-${i}`;
+        const qty = cantidades[key] || 0;
+        if (qty > 0) lineas.push(`  ${item}: ${qty}`);
+      });
+    });
+    if (lineas.length === 0) return null;
+    const hoyoStr = hoyo ? `\nHoyo: *${hoyo}*` : "";
+    const nombreStr = nombre.trim() ? `\nNombre: *${nombre.trim()}*` : "";
+    return `🏌️ *Pedido H19 Golf*${hoyoStr}${nombreStr}\n\n${lineas.join("\n")}`;
+  };
+
+  const handleEnviar = () => {
+    const msg = buildMensaje();
+    if (!msg) { alert("Agrega al menos un producto"); return; }
+    if (!hoyo) { alert("Selecciona el número de hoyo"); return; }
+    const msgPlain = msg.replace(/\*/g, "");
+    if (canal === "whatsapp") {
+      if (!whatsapp) { alert("El número de WhatsApp del bar no está configurado"); return; }
+      const num = whatsapp.replace(/\D/g, "");
+      window.open(`https://wa.me/${num}?text=${encodeURIComponent(msg)}`, "_blank");
+    } else {
+      if (!smsNumber) { alert("El número SMS del bar no está configurado"); return; }
+      const num = smsNumber.replace(/\D/g, "");
+      window.open(`sms:+${num}?body=${encodeURIComponent(msgPlain)}`, "_blank");
+    }
+    setEnviando(true);
+    setTimeout(() => { setEnviado(true); setEnviando(false); }, 800);
+  };
+
+  const resetPedido = () => {
+    setCantidades({});
+    setHoyo(null);
+    setNombre("");
+    setEnviado(false);
+  };
+
+  const tabLabels = { bebidas:"🍺 Bebidas", comida:"🍽 Comida", snacks:"🍿 Snacks" };
+  const currentItems = menu[tab] || [];
+  const totalItems = Object.values(cantidades).reduce((a,b)=>a+b,0);
+
+  if (loading) return (
+    <div style={{ ...appStyle, display:"flex", alignItems:"center", justifyContent:"center", minHeight:"100vh", background:D_BAR.bg }}>
+      <div style={{ color:D_BAR.textSub, fontSize:14 }}>Cargando menú...</div>
+    </div>
+  );
+
+  if (enviado) return (
+    <div style={{ ...appStyle, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", minHeight:"100vh", padding:24, gap:16, background:D_BAR.bg }}>
+      <div style={{ fontSize:64 }}>✅</div>
+      <div style={{ fontSize:22, fontWeight:800, color:D_BAR.success }}>¡Pedido enviado!</div>
+      <div style={{ fontSize:14, color:D_BAR.textSub, textAlign:"center" }}>Tu orden fue enviada al bar vía {canal === "whatsapp" ? "WhatsApp" : "SMS"}. En breve te la llevarán al hoyo {hoyo}{nombre ? `, ${nombre}` : ""}.</div>
+      <button onClick={resetPedido} style={{ marginTop:8, padding:"12px 28px", border:"none", borderRadius:12, background:D_BAR.gold, color:"#000", fontSize:15, fontWeight:700, cursor:"pointer" }}>Nuevo pedido</button>
+      <button onClick={onExit} style={{ fontSize:13, color:D_BAR.textSub, background:"none", border:"none", cursor:"pointer" }}>Volver</button>
+    </div>
+  );
+
+  return (
+    <div style={{ ...appStyle, minHeight:"100vh", background:D_BAR.bg, color:D_BAR.text }}>
+      {/* Header */}
+      <div style={{ background:D_BAR.surface, borderBottom:`1px solid ${D_BAR.border}`, padding:"16px 16px 12px", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+        <div>
+          <div style={{ fontSize:24, fontWeight:900, color:D_BAR.gold }}>🍹 BAR</div>
+          <div style={{ fontSize:11, color:D_BAR.textSub, letterSpacing:2, textTransform:"uppercase" }}>H19 Golf · Pedidos</div>
+        </div>
+        <div style={{ display:"flex", gap:8 }}>
+          {totalItems > 0 && <div style={{ background:D_BAR.gold, color:"#000", borderRadius:"50%", width:22, height:22, display:"flex", alignItems:"center", justifyContent:"center", fontSize:12, fontWeight:800 }}>{totalItems}</div>}
+          <button onClick={onExit} style={{ fontSize:12, color:D_BAR.textSub, background:"none", border:`1px solid ${D_BAR.border}`, borderRadius:8, padding:"5px 10px", cursor:"pointer" }}>Salir</button>
+        </div>
+      </div>
+
+      {/* Tabs */}
+      <div style={{ display:"flex", borderBottom:`1px solid ${D_BAR.border}`, background:D_BAR.surface }}>
+        {Object.entries(tabLabels).map(([k, label]) => (
+          <button key={k} onClick={() => setTab(k)} style={{ flex:1, padding:"10px 4px", border:"none", background:"transparent", color: tab===k ? D_BAR.gold : D_BAR.textSub, fontSize:12, fontWeight: tab===k ? 700 : 400, borderBottom: tab===k ? `2px solid ${D_BAR.gold}` : "2px solid transparent", cursor:"pointer" }}>
+            {label}
+          </button>
+        ))}
+      </div>
+
+      <div style={{ padding:"12px 16px", paddingBottom:220 }}>
+        {/* Productos */}
+        {currentItems.length === 0 ? (
+          <div style={{ textAlign:"center", color:D_BAR.textSub, padding:32, fontSize:13 }}>Sin productos en esta categoría</div>
+        ) : currentItems.map((item, i) => {
+          const key = `${tabLabels[tab]}-${i}`;
+          const qty = cantidades[key] || 0;
+          return (
+            <div key={key} style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"12px 0", borderBottom:`1px solid ${D_BAR.border}` }}>
+              <div style={{ fontSize:14, color:D_BAR.text, flex:1, fontWeight:500 }}>{item}</div>
+              <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                <button onClick={() => setCantidad(key, -1)} disabled={qty===0} style={{ width:32, height:32, borderRadius:"50%", border:`2px solid ${qty===0?"#444":D_BAR.gold}`, background: qty===0?"transparent":D_BAR.goldDim, color: qty===0?"#444":D_BAR.gold, cursor: qty===0?"default":"pointer", fontSize:20, fontWeight:900, opacity:qty===0?0.35:1, display:"flex", alignItems:"center", justifyContent:"center" }}>−</button>
+                <span style={{ fontSize:17, fontWeight:800, color:qty>0?D_BAR.gold:"#555", minWidth:28, textAlign:"center" }}>{qty}</span>
+                <button onClick={() => setCantidad(key, 1)} style={{ width:32, height:32, borderRadius:"50%", border:`2px solid ${D_BAR.gold}`, background:D_BAR.gold, color:"#000", cursor:"pointer", fontSize:20, fontWeight:900, display:"flex", alignItems:"center", justifyContent:"center" }}>+</button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Footer fijo */}
+      <div style={{ position:"fixed", bottom:0, left:"50%", transform:"translateX(-50%)", width:"100%", maxWidth:420, background:D_BAR.surface, borderTop:`1px solid ${D_BAR.border}`, padding:"12px 16px", zIndex:100 }}>
+
+        {/* Nombre */}
+        <div style={{ display:"flex", gap:8, marginBottom:8, alignItems:"center" }}>
+          <span style={{ fontSize:13, color:D_BAR.textSub, minWidth:70 }}>👤 Nombre:</span>
+          <input type="text" value={nombre} onChange={e => setNombre(e.target.value)} placeholder="Tu nombre" style={{ flex:1, padding:"7px 10px", border:`1px solid ${D_BAR.border}`, borderRadius:8, background:D_BAR.bg, color:D_BAR.text, fontSize:14 }} />
+        </div>
+
+        {/* Hoyo — cuadrícula 1-9 */}
+        <div style={{ marginBottom:10 }}>
+          <div style={{ fontSize:12, color:D_BAR.textSub, marginBottom:5 }}>⛳ Hoyo de entrega:</div>
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(9,1fr)", gap:4 }}>
+            {[1,2,3,4,5,6,7,8,9].map(n => (
+              <button key={n} onClick={() => setHoyo(hoyo===n ? null : n)}
+                style={{ padding:"7px 0", border:`2px solid ${hoyo===n ? D_BAR.gold : D_BAR.border}`, borderRadius:8, background: hoyo===n ? D_BAR.gold : "transparent", color: hoyo===n ? "#000" : D_BAR.textSub, fontSize:14, fontWeight:800, cursor:"pointer", textAlign:"center" }}>
+                {n}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Canal de envío */}
+        <div style={{ display:"flex", gap:6, marginBottom:10 }}>
+          <button onClick={() => setCanal("whatsapp")} style={{ flex:1, padding:"7px 4px", border:`2px solid ${canal==="whatsapp" ? "#25D366" : D_BAR.border}`, borderRadius:8, background: canal==="whatsapp" ? "rgba(37,211,102,0.15)" : "transparent", color: canal==="whatsapp" ? "#25D366" : D_BAR.textSub, fontSize:12, fontWeight:700, cursor:"pointer" }}>
+            💬 WhatsApp
+          </button>
+          <button onClick={() => setCanal("sms")} style={{ flex:1, padding:"7px 4px", border:`2px solid ${canal==="sms" ? "#4FC3F7" : D_BAR.border}`, borderRadius:8, background: canal==="sms" ? "rgba(79,195,247,0.15)" : "transparent", color: canal==="sms" ? "#4FC3F7" : D_BAR.textSub, fontSize:12, fontWeight:700, cursor:"pointer" }}>
+            📱 SMS
+          </button>
+        </div>
+
+        {/* Botón enviar */}
+        <button onClick={handleEnviar} disabled={enviando || totalItems===0} style={{ width:"100%", padding:"13px", border:"none", borderRadius:12, background: totalItems===0 ? D_BAR.border : canal==="whatsapp" ? `linear-gradient(135deg,#25D366,#128C7E)` : `linear-gradient(135deg,#4FC3F7,#0288D1)`, color:"#fff", fontSize:15, fontWeight:700, cursor: totalItems===0 ? "default" : "pointer", opacity: totalItems===0 ? 0.5 : 1, display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}>
+          {enviando ? "Enviando..." : `${canal==="whatsapp"?"💬":"📱"} Enviar por ${canal==="whatsapp"?"WhatsApp":"SMS"}${totalItems>0 ? ` (${totalItems})` : ""}`}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── APP PRINCIPAL ────────────────────────────────
+function H19() {
+  const [mode, setMode] = useState(null);
+  const [pinInput, setPinInput] = useState("");
+  const [pinError, setPinError] = useState(false);
+  const [rondaId, setRondaId] = useState(null);
+  const [spectatorInput, setSpectatorInput] = useState("");
+  const [showSplash, setShowSplash] = useState(true);
+  const [splashPhase, setSplashPhase] = useState(0);
+  const [activeTorneoConfig, setActiveTorneoConfig] = useState(null);
+  const [torneoIsAdmin, setTorneoIsAdmin] = useState(false);
+  const [savedTorneoAdmin, setSavedTorneoAdmin] = useState(null);
+  const [barOpen, setBarOpen] = useState(false);
+  // Fase 1: uid anónimo de Firebase — disponible para sesiones en Fase 2+
+  const [anonUid, setAnonUid] = useState(null);
+  // Fase 4: jugador autenticado con NIP
+  const [activeJugador, setActiveJugador] = useState(null);
+
+  useEffect(() => {
+    // Escuchar cambios de auth; si el login anónimo aún no completó al montar
+    // este componente, onAuthStateChanged lo captura cuando esté listo.
+    const unsub = onAuthStateChanged(auth, (user) => {
+      if (user) setAnonUid(user.uid);
+    });
+    // Fase 2: inicializar nodo del club si no existe (silencioso, en background)
+    initClubH19();
+    return () => unsub();
+  }, []);
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("h19-torneo-admin");
+      if (saved) setSavedTorneoAdmin(JSON.parse(saved));
+    } catch(e) {}
+  }, []);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const rid = params.get("ronda");
+    const tid = params.get("torneo");
+    const agid = params.get("admingrupo");
+    if (rid) { setRondaId(rid); setMode("spectator"); setShowSplash(false); return; }
+    if (tid) { setRondaId(tid); setMode("torneo-spectator"); setShowSplash(false); return; }
+    if (agid) {
+      // Admin general entrando a un grupo específico
+      try {
+        const tc = JSON.parse(localStorage.getItem("h19-admin-grupo-override") || "null");
+        if (tc && tc.grupoId === agid) {
+          setActiveTorneoConfig(tc);
+          setMode("torneo-admin");
+          setShowSplash(false);
+          return;
+        }
+      } catch(e) {}
+    }
+    else setMode("home");
+    // Splash animation sequence
+    setTimeout(() => setSplashPhase(1), 600);
+    setTimeout(() => setSplashPhase(2), 2800);
+    setTimeout(() => setShowSplash(false), 3600);
+  }, []);
+
+  const appStyle = { fontSize:14, fontFamily:"-apple-system,sans-serif", color:D.text, background:D.bg, minHeight:"100vh", maxWidth:420, margin:"0 auto" };
+
+  // ── SPLASH SCREEN ──
+  if (showSplash) {
+    return <SplashScreen phase={splashPhase} appStyle={appStyle} />;
+  }
+
+  const BarBtn = () => (
+    <button onClick={() => setBarOpen(true)} style={{ position:"fixed", bottom:20, right:16, zIndex:9999, background:"linear-gradient(135deg,#5C4200,#8B6914)", color:"#D4A843", border:"none", borderRadius:28, padding:"10px 18px", fontSize:14, fontWeight:800, cursor:"pointer", boxShadow:"0 4px 16px rgba(0,0,0,0.6)", letterSpacing:1 }}>🍹 BAR</button>
+  );
+
+  if (barOpen) return <BarView onExit={() => setBarOpen(false)} appStyle={appStyle} />;
+
+  if (mode === "spectator" && rondaId) return <SpectatorView rondaId={rondaId} />;
+
+  if (mode === "home") {
+    return (
+      <div style={{ ...appStyle, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:24, gap:12 }}>
+        <div style={{ fontSize:64, fontWeight:900, letterSpacing:-3, color:D.gold }}>H19</div>
+        <div style={{ fontSize:18, color:D.textSub, letterSpacing:3, textTransform:"uppercase", marginBottom:8 }}>Chacales Team</div>
+        {savedTorneoAdmin && (
+          <div style={{ width:"100%", background:"#E8F5E9", border:`1px solid ${D.success}`, borderRadius:12, padding:"12px 14px", marginBottom:4 }}>
+            <div style={{ fontSize:12, fontWeight:700, color:D.success, marginBottom:6 }}>🏆 Torneo activo: {savedTorneoAdmin.nombre}</div>
+            <div style={{ display:"flex", gap:6 }}>
+              <button onClick={() => setMode("pin-torneo-ver")}
+                style={{ flex:1, padding:"8px", border:"none", borderRadius:8, background:D.success, color:"#fff", fontSize:12, fontWeight:700, cursor:"pointer" }}>
+                👁️ Ver torneo
+              </button>
+              <button onClick={() => setMode("pin-torneo-codigos")}
+                style={{ flex:1, padding:"8px", border:`1px solid ${D.success}`, borderRadius:8, background:"transparent", color:D.success, fontSize:12, fontWeight:700, cursor:"pointer" }}>
+                🔑 Ver códigos
+              </button>
+            </div>
+          </div>
+        )}
+        {/* Fase 4: acceso por NIP de jugador */}
+        <Btn onClick={() => setMode("jugador-login")} style={{ background:`linear-gradient(135deg,#1A1A2E,#16213E)`, border:`1px solid ${D.gold}44` }}>🔑 Entrar como jugador</Btn>
+        <div style={{ width:"100%", borderTop:`1px solid ${D.border}`, margin:"4px 0" }} />
+        <Btn onClick={() => setMode("pin")}>🏌️ Admin - Única salida</Btn>
+        <Btn onClick={() => setMode("pin-torneo")} style={{ background:`linear-gradient(135deg,#1A5C24,#2E7D32)` }}>🏌️🏌️ Admin - Crear torneo</Btn>
+        <Btn outline onClick={() => setMode("torneo-unirse")}>🔗 Entrar con código de grupo</Btn>
+        <div style={{ width:"100%", borderTop:`1px solid ${D.border}`, margin:"4px 0" }} />
+        <Btn outline onClick={() => setMode("spectator-input")}>👀 Ver ronda en vivo</Btn>
+        <Btn outline onClick={() => setMode("torneo-spectator-input")}>🏆 Ver torneo en vivo</Btn>
+        <div style={{ width:"100%", borderTop:`1px solid ${D.border}`, margin:"4px 0" }} />
+        <Btn outline onClick={() => setMode("estadisticas")}>📈 Estadísticas de jugadores</Btn>
+        <Btn outline onClick={() => setMode("whs")}>🏌️ Handicap WHS (Fase 1)</Btn>
+        <div style={{ width:"100%", borderTop:`1px solid ${D.border}`, margin:"4px 0" }} />
+        <button onClick={() => setBarOpen(true)} style={{ width:"100%", padding:"14px", border:"none", borderRadius:14, background:"linear-gradient(135deg,#5C4200,#8B6914)", color:"#D4A843", fontSize:16, fontWeight:800, cursor:"pointer", letterSpacing:2 }}>🍹 BAR</button>
+      </div>
+    );
+  }
+
+  if (mode === "pin-torneo") {
+    return (
+      <>
+      <div style={{ ...appStyle, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:24, gap:14 }}>
+        <div style={{ fontSize:40, fontWeight:900, color:D.gold }}>H19</div>
+        <div style={{ fontSize:14, color:D.textSub, marginBottom:8 }}>PIN de administrador</div>
+        <input type="password" value={pinInput} onChange={e => setPinInput(e.target.value)} placeholder="PIN" maxLength={6}
+          style={{ width:"100%", padding:14, border:`1px solid ${pinError?D.danger:D.border}`, borderRadius:12, background:D.surface, color:D.text, fontSize:22, textAlign:"center", letterSpacing:8, fontWeight:700 }} />
+        {pinError && <div style={{ color:D.danger, fontSize:13 }}>PIN incorrecto</div>}
+        <Btn onClick={() => { if (pinInput===ADMIN_PIN) { setMode("torneo-menu"); setPinError(false); } else setPinError(true); }}>Entrar</Btn>
+        <button onClick={() => { setMode("home"); setPinInput(""); setPinError(false); }} style={{ fontSize:13, color:D.textSub, background:"none", border:"none", cursor:"pointer" }}>Volver</button>
+      </div>
+      <BarBtn />
+      </>
+    );
+  }
+
+  if (mode === "pin-torneo-ver") {
+    return (
+      <>
+      <div style={{ ...appStyle, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:24, gap:14 }}>
+        <div style={{ fontSize:40, fontWeight:900, color:D.gold }}>H19</div>
+        <div style={{ fontSize:14, color:D.textSub, marginBottom:4, textAlign:"center", fontWeight:700 }}>Panel Admin General</div>
+        <div style={{ fontSize:12, color:D.textSub, marginBottom:8 }}>{savedTorneoAdmin?.nombre}</div>
+        <input type="password" value={pinInput} onChange={e => setPinInput(e.target.value)} placeholder="PIN" maxLength={6}
+          style={{ width:"100%", padding:14, border:`1px solid ${pinError?D.danger:D.border}`, borderRadius:12, background:D.surface, color:D.text, fontSize:22, textAlign:"center", letterSpacing:8, fontWeight:700 }} />
+        {pinError && <div style={{ color:D.danger, fontSize:13 }}>PIN incorrecto</div>}
+        <Btn onClick={() => { if (pinInput===ADMIN_PIN) { setRondaId(savedTorneoAdmin.torneoId); setTorneoIsAdmin(true); setMode("torneo-spectator"); setPinError(false); setPinInput(""); } else setPinError(true); }}>Ver torneo</Btn>
+        <button onClick={() => { setMode("home"); setPinInput(""); setPinError(false); }} style={{ fontSize:13, color:D.textSub, background:"none", border:"none", cursor:"pointer" }}>Volver</button>
+      </div>
+      <BarBtn />
+      </>
+    );
+  }
+
+  if (mode === "pin-torneo-codigos") {
+    return (
+      <>
+      <div style={{ ...appStyle, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:24, gap:14 }}>
+        <div style={{ fontSize:40, fontWeight:900, color:D.gold }}>H19</div>
+        <div style={{ fontSize:14, color:D.textSub, marginBottom:4, textAlign:"center", fontWeight:700 }}>Ver códigos del torneo</div>
+        <div style={{ fontSize:12, color:D.textSub, marginBottom:8 }}>{savedTorneoAdmin?.nombre}</div>
+        <input type="password" value={pinInput} onChange={e => setPinInput(e.target.value)} placeholder="PIN" maxLength={6}
+          style={{ width:"100%", padding:14, border:`1px solid ${pinError?D.danger:D.border}`, borderRadius:12, background:D.surface, color:D.text, fontSize:22, textAlign:"center", letterSpacing:8, fontWeight:700 }} />
+        {pinError && <div style={{ color:D.danger, fontSize:13 }}>PIN incorrecto</div>}
+        <Btn onClick={() => { if (pinInput===ADMIN_PIN) { setMode("torneo-codigos"); setPinError(false); setPinInput(""); } else setPinError(true); }}>Ver códigos</Btn>
+        <button onClick={() => { setMode("home"); setPinInput(""); setPinError(false); }} style={{ fontSize:13, color:D.textSub, background:"none", border:"none", cursor:"pointer" }}>Volver</button>
+      </div>
+      <BarBtn />
+      </>
+    );
+  }
+
+  if (mode === "torneo-codigos" && savedTorneoAdmin) return (
+    <>
+      <TorneoCodigosView torneoAdmin={savedTorneoAdmin} onExit={() => setMode("home")} appStyle={appStyle} />
+      <BarBtn />
+    </>
+  );
+
+  if (mode === "torneo-menu") {
+    return (
+      <>
+      <div style={{ ...appStyle, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:24, gap:16 }}>
+        <div style={{ fontSize:40, fontWeight:900, color:D.gold }}>H19</div>
+        <div style={{ fontSize:14, color:D.textSub, marginBottom:8, textAlign:"center" }}>Modo Varias Salidas</div>
+        <Btn onClick={() => setMode("torneo-crear")} style={{ background:`linear-gradient(135deg,#1A5C24,#2E7D32)` }}>🆕 Crear nuevo torneo</Btn>
+        <Btn outline onClick={() => setMode("torneo-unirse")}>🔗 Unirse a torneo existente</Btn>
+        <button onClick={() => setMode("home")} style={{ fontSize:13, color:D.textSub, background:"none", border:"none", cursor:"pointer" }}>Volver</button>
+      </div>
+      <BarBtn />
+      </>
+    );
+  }
+
+  if (mode === "torneo-crear") return <TorneoCrear
+    onExit={(td) => { if (td?.torneoId) setSavedTorneoAdmin(td); setMode("home"); }}
+    onIniciarGrupo={(tc) => { setActiveTorneoConfig(tc); setSavedTorneoAdmin(tc); setMode("torneo-admin"); }}
+    appStyle={appStyle} />;
+  if (mode === "whs") return <HandicapWHSScreen onExit={() => setMode("home")} appStyle={appStyle} />;
+  if (mode === "estadisticas") return <EstadisticasScreen onExit={() => setMode("home")} appStyle={appStyle} />;
+  if (mode === "torneo-unirse") return <TorneoUnirse onExit={() => setMode("home")} appStyle={appStyle} />;
+  if (mode === "torneo-admin") return <AdminApp onExit={() => setMode("home")} torneoConfig={activeTorneoConfig} />;
+
+  if (mode === "torneo-spectator-input") {
+    return (
+      <>
+      <div style={{ ...appStyle, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:24, gap:14 }}>
+        <div style={{ fontSize:40, fontWeight:900, color:D.gold }}>H19</div>
+        <div style={{ fontSize:14, color:D.textSub, marginBottom:8, textAlign:"center" }}>Ingresa el código del torneo</div>
+        <input value={spectatorInput} onChange={e => setSpectatorInput(e.target.value.toUpperCase())} placeholder="Código torneo" maxLength={10}
+          style={{ width:"100%", padding:14, border:`1px solid ${D.border}`, borderRadius:12, background:D.surface, color:D.text, fontSize:20, textAlign:"center", letterSpacing:4, fontWeight:700 }} />
+        <Btn onClick={() => { if (spectatorInput.trim()) { setRondaId(spectatorInput.trim()); setTorneoIsAdmin(false); setMode("torneo-spectator"); } }}>Ver torneo</Btn>
+        <button onClick={() => setMode("home")} style={{ fontSize:13, color:D.textSub, background:"none", border:"none", cursor:"pointer" }}>Volver</button>
+      </div>
+      <BarBtn />
+      </>
+    );
+  }
+
+  if (mode === "torneo-spectator" && rondaId) return (
+    <>
+      <ErrorBoundary><TorneoSpectator torneoId={rondaId} appStyle={appStyle} isAdmin={torneoIsAdmin} /></ErrorBoundary>
+      <BarBtn />
+    </>
+  );
+
+  if (mode === "pin") {
+    return (
+      <>
+      <div style={{ ...appStyle, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:24, gap:14 }}>
+        <div style={{ fontSize:40, fontWeight:900, color:D.gold }}>H19</div>
+        <div style={{ fontSize:14, color:D.textSub, marginBottom:8 }}>Ingresa tu PIN de administrador</div>
+        <input type="password" value={pinInput} onChange={e => setPinInput(e.target.value)} placeholder="PIN" maxLength={6}
+          style={{ width:"100%", padding:14, border:`1px solid ${pinError?D.danger:D.border}`, borderRadius:12, background:D.surface, color:D.text, fontSize:22, textAlign:"center", letterSpacing:8, fontWeight:700 }} />
+        {pinError && <div style={{ color:D.danger, fontSize:13 }}>PIN incorrecto</div>}
+        <Btn onClick={() => { if (pinInput===ADMIN_PIN) { setMode("admin"); setPinError(false); } else setPinError(true); }}>Entrar</Btn>
+        <button onClick={() => { setMode("home"); setPinInput(""); setPinError(false); }} style={{ fontSize:13, color:D.textSub, background:"none", border:"none", cursor:"pointer" }}>Volver</button>
+      </div>
+      <BarBtn />
+      </>
+    );
+  }
+
+  if (mode === "spectator-input") {
+    return (
+      <>
+      <div style={{ ...appStyle, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:24, gap:14 }}>
+        <div style={{ fontSize:40, fontWeight:900, color:D.gold }}>H19</div>
+        <div style={{ fontSize:14, color:D.textSub, marginBottom:8, textAlign:"center" }}>Ingresa el código de ronda</div>
+        <input value={spectatorInput} onChange={e => setSpectatorInput(e.target.value.toUpperCase())} placeholder="Código" maxLength={8}
+          style={{ width:"100%", padding:14, border:`1px solid ${D.border}`, borderRadius:12, background:D.surface, color:D.text, fontSize:20, textAlign:"center", letterSpacing:4, fontWeight:700 }} />
+        <Btn onClick={() => { if (spectatorInput.trim()) { setRondaId(spectatorInput.trim()); setMode("spectator"); } }}>Ver ronda</Btn>
+        <button onClick={() => setMode("home")} style={{ fontSize:13, color:D.textSub, background:"none", border:"none", cursor:"pointer" }}>Volver</button>
+      </div>
+      <BarBtn />
+      </>
+    );
+  }
+
+  if (mode === "admin") return (
+    <>
+      <AdminApp onExit={() => setMode("home")} />
+      <button onClick={() => setBarOpen(true)} style={{ position:"fixed", bottom:20, right:16, zIndex:9999, background:"linear-gradient(135deg,#5C4200,#8B6914)", color:"#D4A843", border:"none", borderRadius:28, padding:"10px 18px", fontSize:14, fontWeight:800, cursor:"pointer", boxShadow:"0 4px 16px rgba(0,0,0,0.6)", letterSpacing:1 }}>🍹 BAR</button>
+    </>
+  );
+
+  // ── Fase 4: login por NIP de jugador ──────────────────────────────────────
+  if (mode === "jugador-login") {
+    return <JugadorLoginScreen appStyle={appStyle} onExit={() => setMode("home")}
+      onSuccess={(jugador) => { setMode("jugador-home"); setPinInput(""); setPinError(false); setActiveJugador(jugador); }} />;
+  }
+
+  if (mode === "jugador-home" && activeJugador) {
+    return <JugadorHomeScreen jugador={activeJugador} appStyle={appStyle}
+      onExit={() => { setMode("home"); setActiveJugador(null); }} />;
+  }
+
+  return null;
+}
+
+// ─── FASE 4: LOGIN POR NIP ─────────────────────────────────────────────────
+
+function JugadorLoginScreen({ appStyle, onExit, onSuccess }) {
+  const [dir, setDir] = React.useState([]);
+  const [selectedId, setSelectedId] = React.useState(null);
+  const [nipInput, setNipInput] = React.useState("");
+  const [error, setError] = React.useState(null);
+  const [loading, setLoading] = React.useState(false);
+  const [loadingDir, setLoadingDir] = React.useState(true);
+
+  React.useEffect(() => {
+    get(clubRef("directorio")).then(snap => {
+      if (snap.exists()) setDir(snap.val().players || []);
+      setLoadingDir(false);
+    }).catch(() => setLoadingDir(false));
+  }, []);
+
+  const handleLogin = async () => {
+    if (!selectedId || nipInput.length < 4) return;
+    setLoading(true); setError(null);
+    try {
+      const jugador = dir.find(p => p.id === selectedId);
+      if (!jugador?.nipHash) { setError("Este jugador aún no tiene NIP asignado. Pide al admin que te asigne uno."); setLoading(false); return; }
+      const hash = await hashNIP(nipInput, CLUB_H19_ID, selectedId);
+      if (hash === jugador.nipHash) {
+        onSuccess(jugador);
+      } else {
+        setError("NIP incorrecto");
+      }
+    } catch(e) { setError("Error al verificar NIP"); }
+    setLoading(false);
+  };
+
+  const jugadoresConNip = dir.filter(p => p.nipHash);
+  const jugadoresSinNip = dir.filter(p => !p.nipHash);
+  const selected = dir.find(p => p.id === selectedId);
+
+  return (
+    <div style={{ ...appStyle, display:"flex", flexDirection:"column", alignItems:"center", padding:24, gap:14, minHeight:"100vh", justifyContent:"center" }}>
+      <div style={{ fontSize:48, fontWeight:900, color:D.gold }}>H19</div>
+      <div style={{ fontSize:15, fontWeight:700, color:D.text }}>¿Quién eres?</div>
+      <div style={{ fontSize:12, color:D.textSub, marginBottom:4, textAlign:"center" }}>Selecciona tu nombre e ingresa tu NIP personal</div>
+
+      {loadingDir ? (
+        <div style={{ color:D.textSub, fontSize:13 }}>Cargando jugadores…</div>
+      ) : jugadoresConNip.length === 0 ? (
+        <div style={{ background:D.surface, border:`1px solid ${D.border}`, borderRadius:12, padding:16, textAlign:"center" }}>
+          <div style={{ fontSize:13, color:D.textSub, marginBottom:8 }}>Ningún jugador tiene NIP asignado aún.</div>
+          <div style={{ fontSize:12, color:D.textSub }}>El admin debe asignar NIPs desde el Directorio.</div>
+        </div>
+      ) : (
+        <>
+          {/* Selector de jugador */}
+          <div style={{ width:"100%", display:"flex", flexDirection:"column", gap:8 }}>
+            <div style={{ fontSize:12, color:D.textSub, fontWeight:600 }}>Jugadores con NIP:</div>
+            <div style={{ display:"flex", flexWrap:"wrap", gap:8 }}>
+              {jugadoresConNip.sort((a,b)=>a.name.localeCompare(b.name)).map(p => (
+                <button key={p.id} onClick={() => { setSelectedId(p.id); setNipInput(""); setError(null); }}
+                  style={{ padding:"10px 16px", border:`2px solid ${selectedId===p.id?D.gold:D.border}`, borderRadius:20, background:selectedId===p.id?D.goldDim:"transparent", color:selectedId===p.id?D.gold:D.text, fontSize:14, fontWeight:selectedId===p.id?700:400, cursor:"pointer", transition:"all 0.15s" }}>
+                  {p.name}
+                </button>
+              ))}
+            </div>
+            {jugadoresSinNip.length > 0 && (
+              <div style={{ fontSize:11, color:D.textSub, marginTop:2 }}>Sin NIP: {jugadoresSinNip.map(p=>p.name).join(", ")}</div>
+            )}
+          </div>
+
+          {/* Input NIP */}
+          {selectedId && (
+            <div style={{ width:"100%", display:"flex", flexDirection:"column", gap:10 }}>
+              <div style={{ fontSize:13, color:D.gold, fontWeight:700, textAlign:"center" }}>NIP de {selected?.name}</div>
+              <input type="password" inputMode="numeric" maxLength={6} value={nipInput}
+                onChange={e => { setNipInput(e.target.value.replace(/\D/g,"")); setError(null); }}
+                placeholder="••••"
+                style={{ width:"100%", padding:16, border:`2px solid ${error?D.danger:D.gold}44`, borderRadius:14, background:D.surface, color:D.text, fontSize:28, textAlign:"center", letterSpacing:10, fontWeight:700, boxSizing:"border-box" }}
+                onKeyDown={e => e.key==="Enter" && handleLogin()} autoFocus />
+              {error && <div style={{ color:D.danger, fontSize:13, textAlign:"center", fontWeight:600 }}>{error}</div>}
+              <button onClick={handleLogin} disabled={loading||nipInput.length<4}
+                style={{ width:"100%", padding:14, border:"none", borderRadius:14, background:nipInput.length>=4?D.gold:"#555", color:nipInput.length>=4?"#000":"#999", fontSize:16, fontWeight:800, cursor:nipInput.length>=4?"pointer":"default" }}>
+                {loading ? "Verificando…" : "Entrar →"}
+              </button>
+            </div>
+          )}
+        </>
+      )}
+
+      <button onClick={onExit} style={{ fontSize:13, color:D.textSub, background:"none", border:"none", cursor:"pointer", marginTop:8 }}>← Volver</button>
+    </div>
+  );
+}
+
+// ─── JUGADOR HOME SCREEN (expandido con Perfil, Grupos, Notificaciones) ───────
+
+function JugadorPerfilEditor({ jugador, onSaved, onCancel }) {
+  const [nombre, setNombre] = React.useState(jugador.name || "");
+  const [email, setEmail]   = React.useState(jugador.email || "");
+  const [tel, setTel]       = React.useState(jugador.tel || "");
+  const [saving, setSaving] = React.useState(false);
+  const [error, setError]   = React.useState("");
+
+  const handleSave = async () => {
+    if (!nombre.trim()) { setError("El nombre no puede estar vacío."); return; }
+    setSaving(true);
+    try {
+      // Guardar en directorio (nombre visible en app)
+      const dirSnap = await get(clubRef("directorio"));
+      if (dirSnap.exists()) {
+        const dir = dirSnap.val();
+        const players = dir.players || [];
+        const idx = players.findIndex(p => p.id === jugador.id);
+        if (idx >= 0) {
+          players[idx] = { ...players[idx], name: nombre.trim(), email: email.trim(), tel: tel.trim() };
+          await set(clubRef("directorio"), { ...dir, players });
+          await set(ref(db, "directorio"), { ...dir, players }); // dual-write
+        }
+      }
+      // Guardar en nodo jugadores (datos extendidos)
+      await set(clubRef(`jugadores/${jugador.id}`), {
+        id: jugador.id,
+        name: nombre.trim(),
+        email: email.trim(),
+        tel: tel.trim(),
+        hc: jugador.hc,
+        whs: jugador.whs || 0,
+        updatedAt: Date.now()
+      });
+      onSaved({ ...jugador, name: nombre.trim(), email: email.trim(), tel: tel.trim() });
+    } catch(e) {
+      setError("Error al guardar. Intenta de nuevo.");
+    }
+    setSaving(false);
+  };
+
+  const inp = { background:D.surface, border:`1px solid ${D.border}`, borderRadius:10, color:D.text, fontSize:14, padding:"10px 12px", width:"100%", boxSizing:"border-box" };
+  return (
+    <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
+      <div style={{ fontSize:13, color:D.textSub, marginBottom:4 }}>Puedes actualizar tu nombre, teléfono y correo. Tu ID de jugador y handicap no son editables aquí.</div>
+      <div>
+        <div style={{ fontSize:12, color:D.textSub, marginBottom:4 }}>Nombre</div>
+        <input style={inp} value={nombre} onChange={e => setNombre(e.target.value)} placeholder="Tu nombre" />
+      </div>
+      <div>
+        <div style={{ fontSize:12, color:D.textSub, marginBottom:4 }}>Correo electrónico</div>
+        <input style={inp} value={email} onChange={e => setEmail(e.target.value)} placeholder="correo@ejemplo.com" type="email" />
+      </div>
+      <div>
+        <div style={{ fontSize:12, color:D.textSub, marginBottom:4 }}>Teléfono</div>
+        <input style={inp} value={tel} onChange={e => setTel(e.target.value)} placeholder="+52 55 1234 5678" type="tel" />
+      </div>
+      <div style={{ display:"flex", gap:10, flexDirection:"column", marginTop:4 }}>
+        <div style={{ background:D.surface, border:`1px solid ${D.border}`, borderRadius:10, padding:"10px 12px", display:"flex", justifyContent:"space-between" }}>
+          <span style={{ fontSize:13, color:D.textSub }}>ID Jugador</span>
+          <span style={{ fontSize:13, color:D.text, fontWeight:600 }}>#{jugador.id}</span>
+        </div>
+        <div style={{ background:D.surface, border:`1px solid ${D.border}`, borderRadius:10, padding:"10px 12px", display:"flex", justifyContent:"space-between" }}>
+          <span style={{ fontSize:13, color:D.textSub }}>HC (Ventajas)</span>
+          <span style={{ fontSize:13, color:D.gold, fontWeight:700 }}>{jugador.hc}</span>
+        </div>
+        <div style={{ background:D.surface, border:`1px solid ${D.border}`, borderRadius:10, padding:"10px 12px", display:"flex", justifyContent:"space-between" }}>
+          <span style={{ fontSize:13, color:D.textSub }}>WHS</span>
+          <span style={{ fontSize:13, color:D.text }}>{jugador.whs ?? "—"}</span>
+        </div>
+      </div>
+      {error && <div style={{ color:"#e74c3c", fontSize:12 }}>{error}</div>}
+      <div style={{ display:"flex", gap:10 }}>
+        <button onClick={onCancel} style={{ flex:1, padding:"11px", border:`1px solid ${D.border}`, borderRadius:10, background:"transparent", color:D.textSub, fontSize:14, cursor:"pointer" }}>Cancelar</button>
+        <button onClick={handleSave} disabled={saving} style={{ flex:2, padding:"11px", border:"none", borderRadius:10, background:`linear-gradient(135deg,${D.gold},#B8860B)`, color:"#000", fontSize:14, fontWeight:700, cursor:"pointer" }}>
+          {saving ? "Guardando…" : "💾 Guardar cambios"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── PANEL DE GRUPOS ──────────────────────────────────────────────────────────
+function GruposPanel({ jugador }) {
+  const [grupos, setGrupos]       = React.useState([]);
+  const [directorio, setDir]      = React.useState([]);
+  const [loading, setLoading]     = React.useState(true);
+  const [vista, setVista]         = React.useState("lista"); // "lista" | "crear" | "detalle"
+  const [grupoActivo, setGrupoActivo] = React.useState(null);
+
+  React.useEffect(() => {
+    // Cargar grupos donde el jugador es miembro o creador
+    get(clubRef("grupos")).then(snap => {
+      if (!snap.exists()) { setLoading(false); return; }
+      const todos = Object.entries(snap.val()).map(([k,v]) => ({ ...v, _key:k }));
+      const misGrupos = todos.filter(g =>
+        g.creadorId === jugador.id ||
+        (g.miembros && Object.keys(g.miembros).includes(String(jugador.id)))
+      );
+      setGrupos(misGrupos);
+      setLoading(false);
+    }).catch(() => setLoading(false));
+    get(clubRef("directorio")).then(snap => {
+      if (snap.exists()) setDir(snap.val().players || []);
+    });
+  }, [jugador.id]);
+
+  const refrescarGrupos = async () => {
+    const snap = await get(clubRef("grupos"));
+    if (!snap.exists()) { setGrupos([]); return; }
+    const todos = Object.entries(snap.val()).map(([k,v]) => ({ ...v, _key:k }));
+    setGrupos(todos.filter(g =>
+      g.creadorId === jugador.id ||
+      (g.miembros && Object.keys(g.miembros).includes(String(jugador.id)))
+    ));
+  };
+
+  if (loading) return <div style={{ textAlign:"center", color:D.textSub, padding:32 }}>Cargando grupos…</div>;
+
+  if (vista === "crear") {
+    return <GrupoCrear jugador={jugador} directorio={directorio}
+      onCreado={() => { refrescarGrupos(); setVista("lista"); }}
+      onCancel={() => setVista("lista")} />;
+  }
+
+  if (vista === "detalle" && grupoActivo) {
+    return <GrupoDetalle grupo={grupoActivo} jugador={jugador} directorio={directorio}
+      onBack={() => { refrescarGrupos(); setVista("lista"); }} />;
+  }
+
+  return (
+    <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+      <button onClick={() => setVista("crear")}
+        style={{ padding:"12px", border:`1px dashed ${D.gold}88`, borderRadius:12, background:`${D.gold}11`, color:D.gold, fontSize:14, fontWeight:600, cursor:"pointer", textAlign:"center" }}>
+        ➕ Crear nuevo grupo
+      </button>
+      {grupos.length === 0 ? (
+        <div style={{ textAlign:"center", color:D.textSub, padding:24, fontSize:13 }}>No perteneces a ningún grupo aún.</div>
+      ) : grupos.map(g => {
+        const numMiembros = g.miembros ? Object.keys(g.miembros).length : 0;
+        const esMio = g.creadorId === jugador.id;
+        return (
+          <div key={g._key} onClick={() => { setGrupoActivo(g); setVista("detalle"); }}
+            style={{ background:D.surface, border:`1px solid ${esMio ? D.gold+"55" : D.border}`, borderRadius:12, padding:"14px 16px", cursor:"pointer", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+            <div>
+              <div style={{ fontSize:15, fontWeight:700, color:esMio?D.gold:D.text }}>{g.nombre}</div>
+              <div style={{ fontSize:11, color:D.textSub, marginTop:2 }}>{numMiembros} miembro{numMiembros!==1?"s":""} · {esMio?"Tú lo creaste":"Miembro"}</div>
+            </div>
+            <div style={{ fontSize:18, color:D.textSub }}>›</div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function GrupoCrear({ jugador, directorio, onCreado, onCancel }) {
+  const [nombre, setNombre] = React.useState("");
+  const [selIds, setSelIds] = React.useState(new Set());
+  const [saving, setSaving] = React.useState(false);
+  const [error, setError]   = React.useState("");
+
+  const otros = directorio.filter(p => String(p.id) !== String(jugador.id) && p.nipHash);
+
+  const toggleSel = (id) => {
+    setSelIds(prev => {
+      const s = new Set(prev);
+      s.has(id) ? s.delete(id) : s.add(id);
+      return s;
+    });
+  };
+
+  const handleCrear = async () => {
+    if (!nombre.trim()) { setError("El grupo necesita un nombre."); return; }
+    if (selIds.size === 0) { setError("Selecciona al menos un jugador para invitar."); return; }
+    setSaving(true);
+    try {
+      const grupoId = `g_${Date.now()}_${jugador.id}`;
+      const miembros = {};
+      miembros[String(jugador.id)] = { nombre: jugador.name, estado: "activo", joinedAt: Date.now() };
+
+      // Crear el grupo
+      await set(clubRef(`grupos/${grupoId}`), {
+        nombre: nombre.trim(),
+        creadorId: jugador.id,
+        creadorNombre: jugador.name,
+        creadoAt: Date.now(),
+        miembros
+      });
+
+      // Enviar invitaciones a los seleccionados
+      for (const id of selIds) {
+        const p = otros.find(x => String(x.id) === String(id));
+        if (!p) continue;
+        const notifId = `n_${Date.now()}_${id}`;
+        await set(clubRef(`notificaciones/${id}/${notifId}`), {
+          tipo: "invitacion_grupo",
+          grupoId,
+          grupoNombre: nombre.trim(),
+          deId: jugador.id,
+          deNombre: jugador.name,
+          estado: "pendiente",
+          creadaAt: Date.now()
+        });
+      }
+      onCreado();
+    } catch(e) {
+      setError("Error al crear el grupo.");
+    }
+    setSaving(false);
+  };
+
+  const inp = { background:D.surface, border:`1px solid ${D.border}`, borderRadius:10, color:D.text, fontSize:14, padding:"10px 12px", width:"100%", boxSizing:"border-box" };
+  return (
+    <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
+      <div style={{ fontSize:15, fontWeight:700, color:D.gold }}>Nuevo grupo</div>
+      <div>
+        <div style={{ fontSize:12, color:D.textSub, marginBottom:4 }}>Nombre del grupo</div>
+        <input style={inp} value={nombre} onChange={e => setNombre(e.target.value)} placeholder="Ej: Los Chacales del Jueves" />
+      </div>
+      <div>
+        <div style={{ fontSize:12, color:D.textSub, marginBottom:8 }}>Invitar jugadores (deben aceptar)</div>
+        {otros.length === 0 ? (
+          <div style={{ color:D.textSub, fontSize:13 }}>No hay más jugadores registrados.</div>
+        ) : otros.map(p => (
+          <div key={p.id} onClick={() => toggleSel(String(p.id))}
+            style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 12px", marginBottom:6, background:selIds.has(String(p.id))?`${D.gold}22`:D.surface, border:`1px solid ${selIds.has(String(p.id))?D.gold:D.border}`, borderRadius:10, cursor:"pointer" }}>
+            <Avatar name={p.name} id={p.id} size={32} />
+            <div style={{ flex:1 }}>
+              <div style={{ fontSize:14, fontWeight:600 }}>{p.name}</div>
+              <div style={{ fontSize:11, color:D.textSub }}>HC {p.hc} · #{p.id}</div>
+            </div>
+            <div style={{ fontSize:18 }}>{selIds.has(String(p.id)) ? "✅" : "⬜"}</div>
+          </div>
+        ))}
+      </div>
+      {error && <div style={{ color:"#e74c3c", fontSize:12 }}>{error}</div>}
+      <div style={{ display:"flex", gap:10 }}>
+        <button onClick={onCancel} style={{ flex:1, padding:"11px", border:`1px solid ${D.border}`, borderRadius:10, background:"transparent", color:D.textSub, fontSize:14, cursor:"pointer" }}>Cancelar</button>
+        <button onClick={handleCrear} disabled={saving} style={{ flex:2, padding:"11px", border:"none", borderRadius:10, background:`linear-gradient(135deg,${D.gold},#B8860B)`, color:"#000", fontSize:14, fontWeight:700, cursor:"pointer" }}>
+          {saving ? "Creando…" : "🤝 Crear grupo"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function GrupoDetalle({ grupo, jugador, directorio, onBack }) {
+  const [saving, setSaving]     = React.useState(false);
+  const [invitando, setInvitando] = React.useState(false);
+  const [selIds, setSelIds]     = React.useState(new Set());
+  const [msg, setMsg]           = React.useState("");
+
+  const esDueno = grupo.creadorId === jugador.id;
+  const miembros = grupo.miembros ? Object.entries(grupo.miembros) : [];
+  const miembrosIds = new Set(miembros.map(([id]) => String(id)));
+  const noMiembros = directorio.filter(p => !miembrosIds.has(String(p.id)) && p.nipHash);
+
+  const handleEliminarGrupo = async () => {
+    if (!window.confirm(`¿Eliminar el grupo "${grupo.nombre}"? Esta acción no se puede deshacer.`)) return;
+    setSaving(true);
+    await set(clubRef(`grupos/${grupo._key}`), null);
+    onBack();
+  };
+
+  const toggleSel = (id) => {
+    setSelIds(prev => { const s = new Set(prev); s.has(id)?s.delete(id):s.add(id); return s; });
+  };
+
+  const handleInvitar = async () => {
+    if (selIds.size === 0) return;
+    setSaving(true);
+    for (const id of selIds) {
+      const p = noMiembros.find(x => String(x.id) === String(id));
+      if (!p) continue;
+      const notifId = `n_${Date.now()}_${id}`;
+      await set(clubRef(`notificaciones/${id}/${notifId}`), {
+        tipo: "invitacion_grupo",
+        grupoId: grupo._key,
+        grupoNombre: grupo.nombre,
+        deId: jugador.id,
+        deNombre: jugador.name,
+        estado: "pendiente",
+        creadaAt: Date.now()
+      });
+    }
+    setMsg(`✅ Invitación enviada a ${selIds.size} jugador(es).`);
+    setSelIds(new Set());
+    setInvitando(false);
+    setSaving(false);
+  };
+
+  return (
+    <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
+      <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+        <button onClick={onBack} style={{ border:"none", background:"transparent", color:D.gold, fontSize:18, cursor:"pointer" }}>‹</button>
+        <div style={{ fontSize:16, fontWeight:800, color:D.gold }}>{grupo.nombre}</div>
+      </div>
+      <div style={{ fontSize:12, color:D.textSub }}>
+        Creado por {grupo.creadorNombre} · {new Date(grupo.creadoAt||0).toLocaleDateString("es-MX")}
+      </div>
+      <div style={{ fontSize:13, fontWeight:700, color:D.text, marginBottom:4 }}>Miembros ({miembros.length})</div>
+      {miembros.map(([id, m]) => (
+        <div key={id} style={{ display:"flex", alignItems:"center", gap:10, background:D.surface, border:`1px solid ${D.border}`, borderRadius:10, padding:"10px 12px" }}>
+          <Avatar name={m.nombre||id} id={id} size={32} />
+          <div style={{ flex:1 }}>
+            <div style={{ fontSize:14 }}>{m.nombre||id}</div>
+            <div style={{ fontSize:11, color:D.textSub }}>#{id} · {m.estado==="activo"?"Activo":"Pendiente"}</div>
+          </div>
+          {String(grupo.creadorId)===String(id) && <div style={{ fontSize:11, color:D.gold }}>👑 Creador</div>}
+        </div>
+      ))}
+      {msg && <div style={{ color:"#2ecc71", fontSize:13 }}>{msg}</div>}
+      {esDueno && !invitando && noMiembros.length > 0 && (
+        <button onClick={() => setInvitando(true)}
+          style={{ padding:"11px", border:`1px dashed ${D.gold}88`, borderRadius:10, background:`${D.gold}11`, color:D.gold, fontSize:13, fontWeight:600, cursor:"pointer" }}>
+          ➕ Invitar más jugadores
+        </button>
+      )}
+      {invitando && (
+        <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+          <div style={{ fontSize:12, color:D.textSub }}>Selecciona jugadores a invitar:</div>
+          {noMiembros.map(p => (
+            <div key={p.id} onClick={() => toggleSel(String(p.id))}
+              style={{ display:"flex", alignItems:"center", gap:10, padding:"9px 12px", background:selIds.has(String(p.id))?`${D.gold}22`:D.surface, border:`1px solid ${selIds.has(String(p.id))?D.gold:D.border}`, borderRadius:10, cursor:"pointer" }}>
+              <Avatar name={p.name} id={p.id} size={28} />
+              <div style={{ flex:1, fontSize:13 }}>{p.name}</div>
+              <div>{selIds.has(String(p.id))?"✅":"⬜"}</div>
+            </div>
+          ))}
+          <div style={{ display:"flex", gap:8 }}>
+            <button onClick={() => { setInvitando(false); setSelIds(new Set()); }} style={{ flex:1, padding:"10px", border:`1px solid ${D.border}`, borderRadius:10, background:"transparent", color:D.textSub, fontSize:13, cursor:"pointer" }}>Cancelar</button>
+            <button onClick={handleInvitar} disabled={saving||selIds.size===0} style={{ flex:2, padding:"10px", border:"none", borderRadius:10, background:`linear-gradient(135deg,${D.gold},#B8860B)`, color:"#000", fontSize:13, fontWeight:700, cursor:"pointer" }}>
+              {saving?"Enviando…":"Enviar invitaciones"}
+            </button>
+          </div>
+        </div>
+      )}
+      {esDueno && (
+        <button onClick={handleEliminarGrupo} disabled={saving}
+          style={{ padding:"11px", border:`1px solid #c0392b44`, borderRadius:10, background:"#c0392b11", color:"#e74c3c", fontSize:13, cursor:"pointer", marginTop:8 }}>
+          🗑️ Eliminar grupo
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ─── NOTIFICACIONES ───────────────────────────────────────────────────────────
+function NotificacionesPanel({ jugador, onBadgeChange }) {
+  const [notifs, setNotifs]   = React.useState([]);
+  const [loading, setLoading] = React.useState(true);
+  const [saving, setSaving]   = React.useState(null);
+
+  const cargar = React.useCallback(async () => {
+    const snap = await get(clubRef(`notificaciones/${jugador.id}`));
+    if (!snap.exists()) { setNotifs([]); setLoading(false); return; }
+    const lista = Object.entries(snap.val())
+      .map(([k,v]) => ({ ...v, _key:k }))
+      .filter(n => n.estado === "pendiente")
+      .sort((a,b) => (b.creadaAt||0)-(a.creadaAt||0));
+    setNotifs(lista);
+    if (onBadgeChange) onBadgeChange(lista.length);
+    setLoading(false);
+  }, [jugador.id]);
+
+  React.useEffect(() => { cargar(); }, [cargar]);
+
+  const responder = async (notif, respuesta) => {
+    setSaving(notif._key);
+    try {
+      // Actualizar estado de la notificación
+      await set(clubRef(`notificaciones/${jugador.id}/${notif._key}/estado`), respuesta);
+
+      if (respuesta === "aceptada") {
+        // Agregar al jugador como miembro del grupo
+        await set(clubRef(`grupos/${notif.grupoId}/miembros/${jugador.id}`), {
+          nombre: jugador.name,
+          estado: "activo",
+          joinedAt: Date.now()
+        });
+      }
+      await cargar();
+    } catch(e) {}
+    setSaving(null);
+  };
+
+  if (loading) return <div style={{ textAlign:"center", color:D.textSub, padding:32 }}>Cargando notificaciones…</div>;
+
+  return (
+    <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+      {notifs.length === 0 ? (
+        <div style={{ textAlign:"center", color:D.textSub, padding:32, fontSize:13 }}>
+          <div style={{ fontSize:32, marginBottom:8 }}>🔔</div>
+          Sin notificaciones pendientes.
+        </div>
+      ) : notifs.map(n => (
+        <div key={n._key} style={{ background:D.surface, border:`1px solid ${D.gold}44`, borderRadius:12, padding:"14px 16px" }}>
+          <div style={{ fontSize:14, fontWeight:700, color:D.text, marginBottom:4 }}>
+            📩 Invitación a grupo
+          </div>
+          <div style={{ fontSize:13, color:D.textSub, marginBottom:10 }}>
+            <b style={{ color:D.text }}>{n.deNombre}</b> te invita al grupo <b style={{ color:D.gold }}>{n.grupoNombre}</b>
+          </div>
+          <div style={{ display:"flex", gap:8 }}>
+            <button onClick={() => responder(n, "rechazada")} disabled={saving===n._key}
+              style={{ flex:1, padding:"9px", border:`1px solid #c0392b44`, borderRadius:8, background:"#c0392b11", color:"#e74c3c", fontSize:13, cursor:"pointer" }}>
+              ✕ Rechazar
+            </button>
+            <button onClick={() => responder(n, "aceptada")} disabled={saving===n._key}
+              style={{ flex:2, padding:"9px", border:"none", borderRadius:8, background:`linear-gradient(135deg,${D.gold},#B8860B)`, color:"#000", fontSize:13, fontWeight:700, cursor:"pointer" }}>
+              {saving===n._key ? "…" : "✓ Aceptar invitación"}
+            </button>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ─── JUGADOR HOME SCREEN ──────────────────────────────────────────────────────
+function JugadorHomeScreen({ jugador: jugadorInicial, appStyle, onExit }) {
+  const [jugador, setJugador]   = React.useState(jugadorInicial);
+  const [historial, setHistorial] = React.useState([]);
+  const [loading, setLoading]   = React.useState(true);
+  const [tab, setTab]           = React.useState("resumen");
+  const [editandoPerfil, setEditandoPerfil] = React.useState(false);
+  const [notifBadge, setNotifBadge] = React.useState(0);
+
+  React.useEffect(() => {
+    get(clubRef("historial")).then(snap => {
+      if (!snap.exists()) { setLoading(false); return; }
+      const todas = Object.values(snap.val());
+      const misRondas = todas
+        .filter(r => r.playerNames && r.playerNames.includes(jugador.name))
+        .sort((a,b) => (b.fechaTs||0) - (a.fechaTs||0));
+      setHistorial(misRondas);
+      setLoading(false);
+    }).catch(() => setLoading(false));
+  }, [jugador.name]);
+
+  // Cargar badge de notificaciones pendientes al montar
+  React.useEffect(() => {
+    get(clubRef(`notificaciones/${jugador.id}`)).then(snap => {
+      if (!snap.exists()) return;
+      const count = Object.values(snap.val()).filter(n => n.estado==="pendiente").length;
+      setNotifBadge(count);
+    }).catch(()=>{});
+  }, [jugador.id]);
+
+  const totalRondas = historial.length;
+  const mejorScore = historial.length > 0 ? Math.min(...historial.map(r => {
+    const idx = (r.playerNames||[]).indexOf(jugador.name);
+    return idx >= 0 && r.totalScores ? (r.totalScores[idx] ?? 999) : 999;
+  }).filter(s => s < 999)) : null;
+  const avgScore = historial.length > 0 ? (() => {
+    const scores = historial.map(r => {
+      const idx = (r.playerNames||[]).indexOf(jugador.name);
+      return idx >= 0 && r.totalScores ? r.totalScores[idx] : null;
+    }).filter(s => s !== null && s > 0);
+    return scores.length > 0 ? (scores.reduce((a,b)=>a+b,0)/scores.length).toFixed(1) : null;
+  })() : null;
+
+  const TABS = [
+    ["resumen","📊","Resumen"],
+    ["rondas","⛳","Rondas"],
+    ["perfil","👤","Perfil"],
+    ["grupos","🤝","Grupos"],
+    ["notifs","🔔","Notifs"],
+  ];
+
+  return (
+    <div style={{ ...appStyle, display:"flex", flexDirection:"column", minHeight:"100vh" }}>
+      {/* Header */}
+      <div style={{ background:`linear-gradient(135deg,#1A1200,#2A1E00)`, padding:"20px 16px 14px", borderBottom:`1px solid ${D.gold}33` }}>
+        <div style={{ display:"flex", alignItems:"center", gap:12 }}>
+          <Avatar name={jugador.name} id={jugador.id} size={44} />
+          <div style={{ flex:1 }}>
+            <div style={{ fontSize:18, fontWeight:800, color:D.gold }}>{jugador.name}</div>
+            <div style={{ fontSize:12, color:D.textSub }}>HC {jugador.hc} · #{jugador.id} · Chacales Team</div>
+          </div>
+          <button onClick={onExit} style={{ padding:"5px 10px", border:`1px solid ${D.border}`, borderRadius:8, background:"transparent", color:D.textSub, fontSize:11, cursor:"pointer" }}>Salir</button>
+        </div>
+      </div>
+
+      {/* Tabs */}
+      <div style={{ display:"flex", borderBottom:`1px solid ${D.border}`, overflowX:"auto" }}>
+        {TABS.map(([t,icon,label]) => (
+          <button key={t} onClick={() => { setTab(t); setEditandoPerfil(false); }}
+            style={{ flex:"1 0 auto", padding:"10px 6px", border:"none", borderBottom:`2px solid ${tab===t?D.gold:"transparent"}`, background:"transparent", color:tab===t?D.gold:D.textSub, fontSize:11, fontWeight:tab===t?700:400, cursor:"pointer", position:"relative", whiteSpace:"nowrap" }}>
+            {icon}{t==="notifs" && notifBadge>0 && (
+              <span style={{ position:"absolute", top:6, right:4, background:"#e74c3c", color:"#fff", fontSize:9, borderRadius:"50%", width:14, height:14, display:"flex", alignItems:"center", justifyContent:"center", fontWeight:700 }}>{notifBadge}</span>
+            )}
+            <br/><span style={{ fontSize:10 }}>{label}</span>
+          </button>
+        ))}
+      </div>
+
+      <div style={{ flex:1, padding:"16px", overflow:"auto" }}>
+        {/* RESUMEN */}
+        {tab === "resumen" && (
+          loading ? <div style={{ textAlign:"center", color:D.textSub, padding:32 }}>Cargando…</div> : (
+          <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10 }}>
+              {[["Rondas",totalRondas,"⛳"],["HC",jugador.hc,"🏌️"],["Mejor",mejorScore??"-","🏆"]].map(([label,val,icon]) => (
+                <div key={label} style={{ background:D.surface, border:`1px solid ${D.border}`, borderRadius:12, padding:"14px 8px", textAlign:"center" }}>
+                  <div style={{ fontSize:20 }}>{icon}</div>
+                  <div style={{ fontSize:20, fontWeight:800, color:D.gold, marginTop:4 }}>{val}</div>
+                  <div style={{ fontSize:10, color:D.textSub, marginTop:2 }}>{label}</div>
+                </div>
+              ))}
+            </div>
+            {avgScore && (
+              <div style={{ background:D.surface, border:`1px solid ${D.border}`, borderRadius:12, padding:"12px 16px", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                <div style={{ fontSize:13, color:D.textSub }}>Score promedio</div>
+                <div style={{ fontSize:18, fontWeight:700, color:D.text }}>{avgScore}</div>
+              </div>
+            )}
+            {totalRondas === 0 && <div style={{ textAlign:"center", color:D.textSub, padding:24, fontSize:13 }}>Aún no hay rondas para {jugador.name}.</div>}
+          </div>
+          )
+        )}
+
+        {/* RONDAS */}
+        {tab === "rondas" && (
+          loading ? <div style={{ textAlign:"center", color:D.textSub, padding:32 }}>Cargando…</div> : (
+          <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+            {historial.length === 0 ? (
+              <div style={{ textAlign:"center", color:D.textSub, padding:24, fontSize:13 }}>Sin rondas registradas.</div>
+            ) : historial.map((r, i) => {
+              const idx = (r.playerNames||[]).indexOf(jugador.name);
+              const score = idx >= 0 && r.totalScores ? r.totalScores[idx] : null;
+              const fecha = r.fechaTs ? new Date(r.fechaTs).toLocaleDateString("es-MX",{day:"2-digit",month:"short",year:"numeric"}) : "—";
+              return (
+                <div key={i} style={{ background:D.surface, border:`1px solid ${D.border}`, borderRadius:12, padding:"12px 14px", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                  <div>
+                    <div style={{ fontSize:13, fontWeight:600 }}>{r.campo || "Campo"}</div>
+                    <div style={{ fontSize:11, color:D.textSub }}>{fecha}</div>
+                  </div>
+                  <div style={{ textAlign:"right" }}>
+                    <div style={{ fontSize:18, fontWeight:800, color:D.gold }}>{score ?? "—"}</div>
+                    <div style={{ fontSize:10, color:D.textSub }}>golpes</div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          )
+        )}
+
+        {/* PERFIL */}
+        {tab === "perfil" && (
+          editandoPerfil ? (
+            <JugadorPerfilEditor jugador={jugador}
+              onSaved={(jActualizado) => { setJugador(jActualizado); setEditandoPerfil(false); }}
+              onCancel={() => setEditandoPerfil(false)} />
+          ) : (
+            <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+              <div style={{ background:D.surface, border:`1px solid ${D.border}`, borderRadius:12, padding:"16px", display:"flex", flexDirection:"column", gap:10 }}>
+                {[
+                  ["Nombre",jugador.name],
+                  ["Correo",jugador.email||"—"],
+                  ["Teléfono",jugador.tel||"—"],
+                  ["ID Jugador",`#${jugador.id}`],
+                  ["HC (Ventajas)",jugador.hc],
+                  ["WHS",jugador.whs??"—"],
+                ].map(([k,v]) => (
+                  <div key={k} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", paddingBottom:8, borderBottom:`1px solid ${D.border}44` }}>
+                    <span style={{ fontSize:13, color:D.textSub }}>{k}</span>
+                    <span style={{ fontSize:13, color:D.text, fontWeight:600 }}>{v}</span>
+                  </div>
+                ))}
+              </div>
+              <button onClick={() => setEditandoPerfil(true)}
+                style={{ padding:"12px", border:`1px solid ${D.gold}55`, borderRadius:12, background:`${D.gold}11`, color:D.gold, fontSize:14, fontWeight:600, cursor:"pointer" }}>
+                ✏️ Editar mis datos
+              </button>
+            </div>
+          )
+        )}
+
+        {/* GRUPOS */}
+        {tab === "grupos" && <GruposPanel jugador={jugador} />}
+
+        {/* NOTIFICACIONES */}
+        {tab === "notifs" && (
+          <NotificacionesPanel jugador={jugador}
+            onBadgeChange={count => setNotifBadge(count)} />
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── ADMIN APP ────────────────────────────────────
+// ─── ESTADÍSTICAS DE JUGADORES ────────────────────────────────
+
+// ════════════════════════════════════════════════════════════════
+// HANDICAP ENGINE — FASE 1 — World Handicap System (WHS)
+// Solo lectura. No modifica el HC actual de la app.
+// CR=54.9, Slope=106 para Club de Golf La Huerta (9 hoyos)
+// Stroke Index: PENDIENTE — no se inventan valores
+// ════════════════════════════════════════════════════════════════
+
+const WHS_CAMPO_CONFIG = {
+  huerta: {
+    courseRating18: 54.9,   // CR oficial para 18 hoyos (campo de 9 jugado 2 veces)
+    courseRating9:  27.45,  // CR para 9 hoyos reales = 54.9 / 2
+    slopeRating9:   106,    // Slope (mismo para 9h y 18h)
+    par9:           29,     // Par total 9 hoyos
+    par18:          58,     // Par total 18 hoyos
+    nHoles:         9,
+    // Stroke Index oficial (18 hoyos). Fuente: configuracion oficial proporcionada.
+    strokeIndex: [4,16,6,18,12,2,10,14,8,3,15,5,17,11,1,9,13,7],
+    // Hoyo:         1  2  3   4  5  6   7   8  9 10  11 12  13  14 15 16  17 18
+    pares: [4,3,3,3,3,4,3,3,3], // 9 hoyos — se repiten para 18
+  },
+};
+
+// Tabla oficial WHS — Rules of Handicapping 2024, Section 5.2
+const WHS_TABLE = [
+  { min:3,  max:3,  use:1, adj:-2.0 },
+  { min:4,  max:4,  use:1, adj:-1.0 },
+  { min:5,  max:5,  use:1, adj:0.0  },
+  { min:6,  max:6,  use:2, adj:-1.0 },
+  { min:7,  max:8,  use:2, adj:0.0  },
+  { min:9,  max:11, use:3, adj:0.0  },
+  { min:12, max:14, use:4, adj:0.0  },
+  { min:15, max:16, use:5, adj:0.0  },
+  { min:17, max:18, use:6, adj:0.0  },
+  { min:19, max:19, use:7, adj:0.0  },
+  { min:20, max:20, use:8, adj:0.0  },
+];
+
+function whs_calcScoreDifferential9({ adjustedScore, courseRating, slopeRating, pcc = 0 }) {
+  if (adjustedScore == null || courseRating == null || slopeRating == null) return null;
+  return Math.round(((113 / slopeRating) * (adjustedScore - courseRating - pcc)) * 10) / 10;
+}
+
+function whs_calcExpectedDiff9({ handicapIndex, courseRating, slopeRating, par }) {
+  if (handicapIndex == null || courseRating == null || slopeRating == null || par == null) return null;
+  return Math.round(((handicapIndex / 2) * (slopeRating / 113) + (courseRating - par)) * 10) / 10;
+}
+
+function whs_combine9HoleDiffs(diff9, expectedDiff9) {
+  if (diff9 == null || expectedDiff9 == null) return null;
+  return Math.round((diff9 + expectedDiff9) * 10) / 10;
+}
+
+function whs_applyCapProcedure(calculatedHI, lowHI) {
+  if (calculatedHI == null) return { hi: null, softCapApplied: false, hardCapApplied: false };
+  if (lowHI == null) return { hi: Math.min(54.0, Math.round(calculatedHI * 10) / 10), softCapApplied: false, hardCapApplied: false };
+  let hi = calculatedHI;
+  let softCapApplied = false;
+  let hardCapApplied = false;
+  if (hi > lowHI + 3.0) { softCapApplied = true; hi = lowHI + 3.0 + (hi - lowHI - 3.0) * 0.5; }
+  if (hi > lowHI + 5.0) { hardCapApplied = true; hi = lowHI + 5.0; }
+  return { hi: Math.min(54.0, Math.round(hi * 10) / 10), softCapApplied, hardCapApplied };
+}
+
+function whs_applyESR(scoreDiff, handicapIndex) {
+  if (scoreDiff == null || handicapIndex == null) return 0;
+  const delta = handicapIndex - scoreDiff;
+  if (delta >= 10.0) return -2.0;
+  if (delta >= 7.0)  return -1.0;
+  return 0;
+}
+
+function whs_calculateHandicapIndex(validDiffs) {
+  const n = validDiffs.length;
+  if (n < 3) return null;
+  const row = WHS_TABLE.find(r => n >= r.min && n <= r.max);
+  if (!row) return null;
+  const sorted = [...validDiffs].sort((a, b) => a.diff18 - b.diff18);
+  const best = sorted.slice(0, row.use);
+  const avg = best.reduce((s, r) => s + r.diff18, 0) / best.length;
+  return Math.min(54.0, Math.max(0, Math.round((avg + row.adj) * 10) / 10));
+}
+
+function whs_buildScoringRecord(rondas, campoKey) {
+  const cfg = WHS_CAMPO_CONFIG[campoKey];
+  if (!cfg) return { error: "Campo no configurado", records: [], currentHI: null, lowHI: null, hiEstablecido: false, totalHoyosAcumulados: 0 };
+  const sorted = [...rondas].sort((a, b) => (a.fechaTs || 0) - (b.fechaTs || 0));
+  const records = [];
+  let currentHI = null;
+  let lowHI = null;
+  let totalHoyos = 0;
+  let hiEstablecido = false;
+  const siPendiente = cfg.strokeIndex === null;
+
+  for (const ronda of sorted) {
+    const adj = ronda.bruto;
+    if (adj == null) continue;
+    totalHoyos += (ronda.nHoles || 9);
+    const diff9 = whs_calcScoreDifferential9({ adjustedScore: adj, courseRating: cfg.courseRating9, slopeRating: cfg.slopeRating9, pcc: ronda.pcc || 0 });
+    const base = { fecha: ronda.fecha, fechaTs: ronda.fechaTs, campo: campoKey, nHoles: 9, scoreOriginal: ronda.bruto, scoreAjustado: adj, courseRating: cfg.courseRating9, slopeRating: cfg.slopeRating9, par: cfg.par9, pcc: ronda.pcc || null, diff9, strokeIndexPendiente: siPendiente };
+
+    if (!hiEstablecido) {
+      records.push({ ...base, expectedDiff9: null, diff18: null, scoreType: "9H-INICIAL", hiAntes: null, hiDespues: null, lowHI: null, esrReduction: 0, softCapApplied: false, hardCapApplied: false, nota: totalHoyos < 54 ? "Acumulando: " + totalHoyos + "/54 hoyos" : "Estableciendo HI inicial" });
+      if (totalHoyos >= 54) {
+        // Emparejar records para obtener diferenciales de 18h
+        const diffs = [];
+        for (let i = 0; i + 1 < records.length; i += 2) {
+          if (records[i].diff9 != null && records[i+1].diff9 != null) {
+            diffs.push({ diff18: Math.round((records[i].diff9 + records[i+1].diff9) * 10) / 10 });
+          }
+        }
+        if (records.length % 2 === 1 && records[records.length-1].diff9 != null) {
+          diffs.push({ diff18: Math.round(records[records.length-1].diff9 * 2 * 10) / 10 });
+        }
+        currentHI = whs_calculateHandicapIndex(diffs);
+        lowHI = currentHI;
+        hiEstablecido = true;
+        records[records.length - 1].hiDespues = currentHI;
+        records[records.length - 1].lowHI = lowHI;
+        records[records.length - 1].nota = "HI inicial establecido";
+      }
+      continue;
+    }
+
+    const expectedDiff9 = whs_calcExpectedDiff9({ handicapIndex: currentHI, courseRating: cfg.courseRating9, slopeRating: cfg.slopeRating9, par: cfg.par9 });
+    const diff18 = whs_combine9HoleDiffs(diff9, expectedDiff9);
+    const esrReduction = whs_applyESR(diff18, currentHI);
+    const validDiffs = [...records.filter(r => r.diff18 != null).map(r => ({ diff18: r.diff18 })), { diff18: diff18 + esrReduction }];
+    const rawHI = whs_calculateHandicapIndex(validDiffs.slice(-20));
+    if (rawHI != null && (lowHI == null || rawHI < lowHI)) lowHI = rawHI;
+    const { hi: hiDespues, softCapApplied, hardCapApplied } = whs_applyCapProcedure(rawHI, lowHI);
+    const hiAntes = currentHI;
+    currentHI = hiDespues;
+    records.push({ ...base, expectedDiff9, diff18, scoreType: "N", hiAntes, hiDespues, lowHI, esrReduction, softCapApplied, hardCapApplied, nota: siPendiente ? "Score ajustado = bruto (Stroke Index pendiente)" : null });
+  }
+  return { records, currentHI, lowHI, hiEstablecido, totalHoyosAcumulados: totalHoyos };
+}
+
+// ─── PANTALLA WHS ────────────────────────────────
+
+// ════════════════════════════════════════════════════════════════
+// HANDICAP ENGINE — FASE 2A — World Handicap System (WHS)
+// Mejoras sin requerir Stroke Index
+// ════════════════════════════════════════════════════════════════
+
+/**
+ * Validaciones WHS para aceptar un score de 9 hoyos
+ * Fuente: Rules of Handicapping 2024, Section 2.1
+ * Devuelve { elegible: bool, motivos: string[] }
+ */
+function whs_validarScore(ronda, campoKey) {
+  const cfg = WHS_CAMPO_CONFIG[campoKey];
+  const motivos = [];
+
+  if (!ronda.fecha && !ronda.fechaTs) motivos.push("Fecha no disponible");
+  if (!ronda.bruto && ronda.bruto !== 0) motivos.push("Score bruto no disponible");
+  if (ronda.bruto != null && ronda.bruto < 1) motivos.push("Score bruto invalido (menor a 1)");
+  if (!campoKey || !cfg) motivos.push("Campo no configurado en WHS");
+  if (cfg && !cfg.courseRating9) motivos.push("Course Rating no disponible");
+  if (cfg && !cfg.slopeRating9) motivos.push("Slope Rating no disponible");
+  if (cfg && cfg.strokeIndex === null) motivos.push("Stroke Index pendiente — Net Double Bogey no aplicable (score ajustado = bruto)");
+  if (ronda.nHoles && ronda.nHoles !== 9) motivos.push("Ronda no es de 9 hoyos — campo configurado solo para 9 hoyos");
+  if (ronda.bruto != null && cfg && ronda.bruto < cfg.par9) motivos.push("Score menor al par del campo — verificar");
+
+  // Advertencias (no bloquean elegibilidad)
+  const advertencias = motivos.filter(m => m.includes("Stroke Index") || m.includes("verificar"));
+  const bloqueantes = motivos.filter(m => !m.includes("Stroke Index") && !m.includes("verificar"));
+
+  return {
+    elegible: bloqueantes.length === 0,
+    motivos: bloqueantes,
+    advertencias,
+    scoreAjustado: ronda.bruto, // Fase 2A: sin SI, score ajustado = bruto
+    scoreAjustadoCompleto: cfg?.strokeIndex !== null, // true cuando SI esté configurado
+  };
+}
+
+/**
+ * Proceso correcto para las primeras 54 hoyos (WHS 2024)
+ * 
+ * Las rondas de 9 hoyos en la fase inicial NO se emparejan arbitrariamente.
+ * Se procesan individualmente: cada ronda genera un diff9.
+ * Al llegar a 54 hoyos (6 rondas × 9h) se establece el HI inicial
+ * usando los diferenciales disponibles según tabla WHS.
+ * 
+ * Fuente: Rules of Handicapping 2024, Section 5.2a
+ */
+function whs_buildScoringRecordV2(rondas, campoKey) {
+  const cfg = WHS_CAMPO_CONFIG[campoKey];
+  if (!cfg) return {
+    error: "Campo no configurado",
+    records: [], currentHI: null, lowHI: null,
+    hiEstablecido: false, totalHoyosAcumulados: 0,
+  };
+
+  // Ordenar cronológicamente — MUY IMPORTANTE para WHS
+  const sorted = [...rondas]
+    .sort((a, b) => (a.fechaTs || 0) - (b.fechaTs || 0));
+
+  const records = [];
+  let currentHI = null;
+  let lowHI = null;
+  let totalHoyos = 0;
+  let hiEstablecido = false;
+
+  for (const ronda of sorted) {
+    // Validar antes de procesar
+    const validacion = whs_validarScore(ronda, campoKey);
+    if (!validacion.elegible) {
+      records.push({
+        fecha: ronda.fecha, fechaTs: ronda.fechaTs,
+        campo: campoKey, nHoles: ronda.nHoles || 9,
+        scoreOriginal: ronda.bruto, scoreAjustado: null,
+        courseRating: cfg.courseRating9, slopeRating: cfg.slopeRating9,
+        par: cfg.par9, pcc: ronda.pcc || null,
+        diff9: null, expectedDiff9: null, diff18: null,
+        scoreType: "INVALIDO",
+        hiAntes: currentHI, hiDespues: null, lowHI,
+        esrReduction: 0, softCapApplied: false, hardCapApplied: false,
+        strokeIndexPendiente: cfg.strokeIndex === null,
+        elegible: false,
+        motivos: validacion.motivos,
+        advertencias: validacion.advertencias,
+        nota: "Score no elegible: " + validacion.motivos.join(", "),
+      });
+      continue;
+    }
+
+    // Aplicar NDB si tenemos scores por hoyo y HI establecido
+    let adj = validacion.scoreAjustado;
+    let detalleHoyos = null;
+    let ch9 = null;
+    let scoreNetoTotal = null;
+    const siDisponible = cfg.strokeIndex !== null;
+
+    if (siDisponible && ronda.scoresPorHoyo && currentHI != null) {
+      // Fase 2B: aplicar Net Double Bogey
+      const resultado = whs_procesarRonda9Hoyos(ronda.scoresPorHoyo, currentHI, campoKey);
+      if (!resultado.error) {
+        adj = resultado.scoreAjustadoTotal;
+        detalleHoyos = resultado.detalleHoyos;
+        ch9 = resultado.ch9;
+        scoreNetoTotal = resultado.scoreNetoTotal;
+      }
+    }
+    totalHoyos += (ronda.nHoles || 9);
+
+    const diff9 = whs_calcScoreDifferential9({
+      adjustedScore: adj,
+      courseRating: cfg.courseRating9,
+      slopeRating: cfg.slopeRating9,
+      pcc: ronda.pcc || 0,
+    });
+
+    const baseRecord = {
+      fecha: ronda.fecha, fechaTs: ronda.fechaTs,
+      campo: campoKey, nHoles: 9,
+      scoreOriginal: ronda.bruto, scoreAjustado: adj,
+      courseRating: cfg.courseRating9, slopeRating: cfg.slopeRating9,
+      par: cfg.par9, pcc: ronda.pcc || null,
+      diff9,
+      ch9, scoreNetoTotal, detalleHoyos,
+      strokeIndexPendiente: cfg.strokeIndex === null,
+      elegible: true,
+      motivos: [],
+      advertencias: validacion.advertencias,
+    };
+
+    if (!hiEstablecido) {
+      // ── FASE INICIAL: acumular hasta 54 hoyos ──
+      // Cada ronda se guarda con su diff9.
+      // Cuando llegamos a 54 hoyos establecemos el HI.
+      // NO emparejamos rondas arbitrariamente.
+      // Usamos los diff9 disponibles según regla WHS de scores iniciales.
+
+      const hoyosAntesDeEstaRonda = totalHoyos - (ronda.nHoles || 9);
+      const nota = totalHoyos < 54
+        ? "Fase inicial: " + totalHoyos + "/54 hoyos acumulados"
+        : "Estableciendo HI inicial con " + records.filter(r=>r.diff9!=null).length + 1 + " diferenciales de 9h";
+
+      records.push({
+        ...baseRecord,
+        expectedDiff9: null, diff18: null,
+        scoreType: "9H-INICIAL",
+        hiAntes: null, hiDespues: null, lowHI: null,
+        esrReduction: 0, softCapApplied: false, hardCapApplied: false,
+        nota,
+      });
+
+      if (totalHoyos >= 54) {
+        // Establecer HI inicial
+        // Regla WHS: para scores de 9h en fase inicial,
+        // se usan pares de diferenciales de 9h para formar diferenciales de 18h.
+        // Si el numero es impar, el ultimo se combina con el Expected basado
+        // en el diff9 mas bajo disponible como aproximacion inicial.
+        const validDiff9s = records
+          .filter(r => r.diff9 != null && r.scoreType === "9H-INICIAL")
+          .map(r => r.diff9);
+
+        const diffs18 = [];
+        for (let i = 0; i + 1 < validDiff9s.length; i += 2) {
+          diffs18.push({ diff18: Math.round((validDiff9s[i] + validDiff9s[i+1]) * 10) / 10 });
+        }
+        // Si numero impar: el ultimo se combina consigo mismo (peor caso conservador)
+        if (validDiff9s.length % 2 === 1) {
+          const last = validDiff9s[validDiff9s.length - 1];
+          diffs18.push({ diff18: Math.round(last * 2 * 10) / 10 });
+        }
+
+        currentHI = whs_calculateHandicapIndex(diffs18);
+        lowHI = currentHI != null ? currentHI : null;
+        // Solo marcar como establecido si se pudo calcular el HI
+        hiEstablecido = currentHI != null;
+
+        // Actualizar el ultimo record con el HI establecido
+        const lastIdx = records.length - 1;
+        records[lastIdx].hiDespues = currentHI;
+        records[lastIdx].lowHI = lowHI;
+        records[lastIdx].nota = currentHI != null
+          ? "HI inicial establecido: " + currentHI.toFixed(1)
+          : "54 hoyos acumulados pero no hay suficientes diferenciales validos aun";
+      }
+      continue;
+    }
+
+    // ── HI ESTABLECIDO: usar Expected Score ──
+    // Si currentHI es null por alguna razón, tratar como inicial
+    if (currentHI == null) {
+      records.push({
+        ...baseRecord,
+        expectedDiff9: null, diff18: null,
+        scoreType: "9H-SIN-HI",
+        hiAntes: null, hiDespues: null, lowHI: null,
+        esrReduction: 0, softCapApplied: false, hardCapApplied: false,
+        nota: "HI no calculado aun — se necesitan mas rondas validas",
+      });
+      continue;
+    }
+    const expectedDiff9 = whs_calcExpectedDiff9({
+      handicapIndex: currentHI,
+      courseRating: cfg.courseRating9,
+      slopeRating: cfg.slopeRating9,
+      par: cfg.par9,
+    });
+    const diff18 = whs_combine9HoleDiffs(diff9, expectedDiff9);
+    const esrReduction = whs_applyESR(diff18, currentHI);
+
+    // Obtener los ultimos 20 diferenciales de 18h validos + el nuevo
+    const prev20 = records
+      .filter(r => r.diff18 != null)
+      .slice(-20)
+      .map(r => ({ diff18: r.diff18 }));
+    const allDiffs = [...prev20, { diff18: (diff18 || 0) + esrReduction }];
+    const rawHI = whs_calculateHandicapIndex(allDiffs.slice(-20));
+
+    // Low HI: minimo en los ultimos 365 dias
+    if (rawHI != null && (lowHI == null || rawHI < lowHI)) {
+      lowHI = rawHI;
+    }
+
+    const { hi: hiDespues, softCapApplied, hardCapApplied } = whs_applyCapProcedure(rawHI, lowHI);
+    const hiAntes = currentHI;
+    // Solo actualizar currentHI si se calculó uno nuevo valido
+    if (hiDespues != null) currentHI = hiDespues;
+
+    let nota = null;
+    if (esrReduction !== 0) nota = "ESR aplicado: " + esrReduction;
+    if (softCapApplied) nota = (nota ? nota + " | " : "") + "Soft Cap aplicado";
+    if (hardCapApplied) nota = (nota ? nota + " | " : "") + "Hard Cap aplicado";
+    if (cfg.strokeIndex === null) nota = (nota ? nota + " | " : "") + "SI pendiente — score bruto";
+
+    records.push({
+      ...baseRecord,
+      expectedDiff9, diff18,
+      scoreType: "N",
+      hiAntes, hiDespues, lowHI,
+      esrReduction, softCapApplied, hardCapApplied,
+      nota,
+    });
+  }
+
+  return { records, currentHI, lowHI, hiEstablecido, totalHoyosAcumulados: totalHoyos };
+}
+
+/**
+ * Resumen WHS de un jugador para mostrar en su perfil
+ */
+function whs_resumenJugador(nombre, rondas) {
+  const mis = rondas
+    .filter(r => (r.playerNames||[]).includes(nombre) && (r.campo === "huerta" || !r.campo))
+    .map(r => {
+      const pi = (r.playerNames||[]).indexOf(nombre);
+      const jugadores = Array.isArray(r.jugadores) ? r.jugadores : Object.values(r.jugadores||{});
+      return {
+        fecha: r.fecha, fechaTs: r.fechaTs || 0,
+        nHoles: r.nHoles || 9,
+        bruto: jugadores[pi]?.bruto ?? null,
+        pcc: null,
+      };
+    })
+    .filter(r => r.bruto != null);
+
+  return whs_buildScoringRecordV2(mis, "huerta");
+}
+
+
+
+// ════════════════════════════════════════════════════════════════
+// HANDICAP ENGINE — FASE 2B — Net Double Bogey + Score Ajustado
+// Requiere Stroke Index configurado
+// ════════════════════════════════════════════════════════════════
+
+/**
+ * Calcula el Course Handicap de un jugador para un campo/vuelta específica
+ * Fórmula WHS: HI × (Slope / 113) + (CR - Par)
+ * Fuente: Rules of Handicapping 2024, Section 6.1
+ * Devuelve entero redondeado.
+ */
+function whs_calcCourseHandicap({ handicapIndex, slopeRating, courseRating, par }) {
+  if (handicapIndex == null || slopeRating == null || courseRating == null || par == null) return null;
+  const ch = handicapIndex * (slopeRating / 113) + (courseRating - par);
+  return Math.round(ch);
+}
+
+/**
+ * Calcula los golpes de handicap recibidos en cada hoyo.
+ * Basado en Course Handicap y Stroke Index del hoyo.
+ *
+ * Regla:
+ * - El jugador recibe 1 golpe en hoyos cuyo SI <= courseHandicap (si CH <= nHoles)
+ * - Si CH > nHoles: recibe 1 golpe en todos + 1 adicional en hoyos con SI <= (CH - nHoles)
+ * - Ejemplo CH=20, 18 hoyos: 1 en todos + 1 extra en SI 1 y 2
+ *
+ * Fuente: Rules of Handicapping 2024, Section 6.1
+ *
+ * @param {number} courseHandicap
+ * @param {number[]} strokeIndexArray - SI de cada hoyo [SI_hoyo1, SI_hoyo2, ...]
+ * @returns {number[]} golpesPorHoyo
+ */
+function whs_calcStrokesPerHole(courseHandicap, strokeIndexArray) {
+  const nHoles = strokeIndexArray.length;
+  return strokeIndexArray.map(si => {
+    let golpes = 0;
+    if (courseHandicap >= si) golpes += 1;
+    // Golpes adicionales para CH > nHoles
+    if (courseHandicap > nHoles) {
+      const extra = courseHandicap - nHoles;
+      if (extra >= si) golpes += 1;
+    }
+    // Golpes adicionales para CH > 2*nHoles (casos extremos)
+    if (courseHandicap > nHoles * 2) {
+      const extra2 = courseHandicap - nHoles * 2;
+      if (extra2 >= si) golpes += 1;
+    }
+    return golpes;
+  });
+}
+
+/**
+ * Calcula el Net Double Bogey (NDB) por hoyo.
+ * NDB = Par del hoyo + 2 + golpes de handicap recibidos en ese hoyo
+ * Fuente: Rules of Handicapping 2024, Section 3.1
+ *
+ * @param {number} par - Par del hoyo
+ * @param {number} strokesReceived - Golpes de handicap recibidos en ese hoyo
+ * @returns {number} NDB score máximo para ese hoyo
+ */
+function whs_calcNDB(par, strokesReceived) {
+  return par + 2 + strokesReceived;
+}
+
+/**
+ * Ajusta el score de una ronda aplicando Net Double Bogey por hoyo.
+ * Solo aplica cuando el jugador ya tiene HI establecido.
+ *
+ * @param {number[]} scoresOriginales - Score bruto por hoyo
+ * @param {number[]} pares - Par por hoyo
+ * @param {number[]} strokeIndexArray - SI por hoyo
+ * @param {number} courseHandicap - CH del jugador
+ * @returns {{ scoreAjustado: number, detalleHoyos: array }}
+ */
+function whs_ajustarScoreNDB(scoresOriginales, pares, strokeIndexArray, courseHandicap) {
+  const golpesPorHoyo = whs_calcStrokesPerHole(courseHandicap, strokeIndexArray);
+  const detalleHoyos = scoresOriginales.map((s, i) => {
+    const par = pares[i];
+    const golpes = golpesPorHoyo[i];
+    const ndb = whs_calcNDB(par, golpes);
+    const scoreOriginal = s;
+    const scoreAjustado = Math.min(s, ndb); // NDB es el máximo
+    const scoreNeto = s - golpes;
+    return {
+      hoyo: i + 1,
+      par,
+      strokeIndex: strokeIndexArray[i],
+      scoreOriginal,
+      golpesHC: golpes,
+      ndb,
+      scoreAjustado,
+      scoreNeto,
+      ndbAplicado: s > ndb,
+    };
+  });
+
+  const scoreAjustadoTotal = detalleHoyos.reduce((a, h) => a + h.scoreAjustado, 0);
+  const scoreNetoTotal = detalleHoyos.reduce((a, h) => a + h.scoreNeto, 0);
+
+  return { scoreAjustadoTotal, scoreNetoTotal, detalleHoyos, golpesPorHoyo };
+}
+
+/**
+ * Procesa una ronda de 9 hoyos con NDB y Expected Score (Fase 2B completa)
+ * Para un campo de 9 hoyos: el SI de los hoyos 1-9 se usa directamente.
+ * El Expected Score usa el CH para 9 hoyos (CH9 = CH18 / 2, redondeado).
+ */
+function whs_procesarRonda9Hoyos(scores9, handicapIndex, campoKey) {
+  const cfg = WHS_CAMPO_CONFIG[campoKey];
+  if (!cfg || !cfg.strokeIndex) return { error: "Campo o Stroke Index no configurado" };
+
+  // Para 9 hoyos usamos los SI de los hoyos 1-9
+  const si9 = cfg.strokeIndex.slice(0, 9);
+  const pares9 = cfg.pares; // [4,3,3,3,3,4,3,3,3]
+
+  // Course Handicap para 9 hoyos
+  const ch18 = whs_calcCourseHandicap({
+    handicapIndex,
+    slopeRating: cfg.slopeRating9,
+    courseRating: cfg.courseRating9,
+    par: cfg.par9,
+  });
+  // CH para 9 hoyos = CH18 / 2 redondeado
+  const ch9 = ch18 != null ? Math.round(ch18 / 2) : null;
+
+  // Ajuste NDB
+  const ajuste = whs_ajustarScoreNDB(scores9, pares9, si9, ch9 || 0);
+
+  // Score Differential de 9 hoyos con score ajustado
+  const diff9 = whs_calcScoreDifferential9({
+    adjustedScore: ajuste.scoreAjustadoTotal,
+    courseRating: cfg.courseRating9,
+    slopeRating: cfg.slopeRating9,
+    pcc: 0,
+  });
+
+  return {
+    ch18, ch9,
+    scoreAjustadoTotal: ajuste.scoreAjustadoTotal,
+    scoreNetoTotal: ajuste.scoreNetoTotal,
+    detalleHoyos: ajuste.detalleHoyos,
+    diff9,
+  };
+}
+
+
+function HandicapWHSScreen({ onExit, appStyle }) {
+  const [jugadores, setJugadores] = useState([]);
+  const [rondas, setRondas] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [jugadorSel, setJugadorSel] = useState(null);
+  const [detailIdx, setDetailIdx] = useState(null);
+  const [whsResult, setWhsResult] = useState(null);
+  const [tab, setTab] = useState("perfil"); // "perfil" | "grafica" | "comparativa"
+  const [allResults, setAllResults] = useState({}); // nombre -> whsResult para comparativa
+
+  useEffect(() => {
+    Promise.all([get(clubRef("historial")), get(clubRef("directorio"))]).then(([h, d]) => {
+      const rondasData = h.exists() ? Object.values(h.val()) : [];
+      setRondas(rondasData);
+      const dirVal = d.exists() ? d.val() : null;
+      const players = dirVal?.players ? (Array.isArray(dirVal.players) ? dirVal.players : Object.values(dirVal.players)) : [];
+      setJugadores(players);
+      // Calcular WHS para todos los jugadores (para comparativa)
+      const allRes = {};
+      players.forEach(p => {
+        allRes[p.name] = whs_resumenJugador(p.name, rondasData);
+      });
+      setAllResults(allRes);
+      setLoading(false);
+    }).catch(() => setLoading(false));
+  }, []);
+
+  const fmt1 = (n) => n != null ? n.toFixed(1) : "--";
+
+  const seleccionar = (nombre) => {
+    setJugadorSel(nombre); setDetailIdx(null);
+    const mis = rondas
+      .filter(r => (r.playerNames||[]).includes(nombre) && (r.campo === "huerta" || !r.campo))
+      .map(r => {
+        const pi = (r.playerNames||[]).indexOf(nombre);
+        const jugs = Array.isArray(r.jugadores) ? r.jugadores : Object.values(r.jugadores||{});
+        const bruto = jugs[pi]?.bruto ?? null;
+        const sphs = r.scoresPorHoyo
+          ? (Array.isArray(r.scoresPorHoyo) ? r.scoresPorHoyo : Object.values(r.scoresPorHoyo))
+          : null;
+        const sph = sphs ? sphs[pi] : null;
+        return {
+          fecha: r.fecha, fechaTs: r.fechaTs || 0,
+          nHoles: r.nHoles || 9, bruto,
+          scoresPorHoyo: Array.isArray(sph) ? sph.map(v => v ?? null) : null,
+          pcc: null,
+        };
+      })
+      .filter(r => r.bruto != null);
+    setWhsResult(whs_buildScoringRecordV2(mis, "huerta"));
+  };
+
+  return (
+    <div style={{ ...appStyle, overflowY:"auto" }}>
+      <div style={{ background:"linear-gradient(135deg,#1A2A1A,#2E3D2E)", padding:"14px 16px", display:"flex", alignItems:"center", gap:10 }}>
+        <button onClick={onExit} style={{ background:"none", border:"none", color:D.gold, fontSize:22, cursor:"pointer" }}>{"<"}</button>
+        <div>
+          <div style={{ fontSize:16, fontWeight:900, color:D.gold }}>WHS Handicap Engine</div>
+          <div style={{ fontSize:11, color:D.textSub }}>Fases 1-4 · Solo consulta · No afecta HC actual</div>
+        </div>
+      </div>
+      {/* Tabs */}
+      <div style={{ display:"flex", borderBottom:`1px solid ${D.border}`, background:D.surface }}>
+        {[["perfil","👤 Perfil"],["grafica","📈 Evolución"],["comparativa","🏆 Clasificación"]].map(([k,l]) => (
+          <button key={k} onClick={() => setTab(k)}
+            style={{ flex:1, padding:"10px 4px", border:"none", borderBottom:tab===k?`2px solid ${D.gold}`:"2px solid transparent", background:"transparent", color:tab===k?D.gold:D.textSub, fontSize:11, fontWeight:tab===k?700:400, cursor:"pointer" }}>
+            {l}
+          </button>
+        ))}
+      </div>
+      <div style={{ padding:"12px 12px 80px" }}>
+        <div style={{ background:"#1A2A1A", border:"1px solid #AA880044", borderRadius:10, padding:8, marginBottom:10, fontSize:10, color:D.textSub }}>
+          <span style={{ color:D.gold, fontWeight:700 }}>WHS oficial</span> · CR 27.45 · Slope 106 · Par 29 · SI configurado · No modifica HC actual
+        </div>
+        {loading && <Card><div style={{ textAlign:"center", color:D.textSub, padding:24 }}>Calculando HI WHS para {jugadores.length} jugadores...</div></Card>}
+        {!loading && tab === "perfil" && (
+          <Card>
+            <SLabel>Jugador</SLabel>
+            <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
+              {jugadores.slice().sort((a,b)=>a.name.localeCompare(b.name)).map(j => (
+                <button key={j.id||j.name} onClick={() => seleccionar(j.name)}
+                  style={{ padding:"7px 14px", border:"1px solid "+(jugadorSel===j.name?D.gold:D.border), borderRadius:20, background:jugadorSel===j.name?D.goldDim:"transparent", color:jugadorSel===j.name?D.gold:D.textSub, fontSize:12, fontWeight:jugadorSel===j.name?700:400, cursor:"pointer" }}>
+                  {j.name}
+                </button>
+              ))}
+            </div>
+          </Card>
+        )}
+        {tab === "perfil" && whsResult && jugadorSel && (<>
+            <Card style={{ border:"1px solid "+D.gold+"44" }}>
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
+                <div>
+                  <div style={{ fontSize:16, fontWeight:900 }}>{jugadorSel}</div>
+                  <div style={{ fontSize:11, color:D.textSub }}>La Huerta · CR 54.9 · Slope 106 · Par 29</div>
+                </div>
+                <div style={{ textAlign:"right" }}>
+                  <div style={{ fontSize:10, color:D.textSub }}>HANDICAP INDEX WHS</div>
+                  <div style={{ fontSize:36, fontWeight:900, color:D.gold }}>{whsResult.currentHI != null ? fmt1(whsResult.currentHI) : "--"}</div>
+                </div>
+              </div>
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:8, marginBottom:8 }}>
+                {[["Low HI", fmt1(whsResult.lowHI)], ["Rondas", whsResult.records.length], ["Hoyos", whsResult.totalHoyosAcumulados]].map(([l,v]) => (
+                  <div key={l} style={{ background:D.surface, borderRadius:8, padding:"8px 10px", textAlign:"center" }}>
+                    <div style={{ fontSize:9, color:D.textSub, textTransform:"uppercase" }}>{l}</div>
+                    <div style={{ fontSize:18, fontWeight:700 }}>{v}</div>
+                  </div>
+                ))}
+              </div>
+              {!whsResult.hiEstablecido && (
+                <div style={{ padding:8, background:D.redBg, borderRadius:8, fontSize:11, color:D.danger }}>
+                  {"HI no establecido aun — se necesitan 54 hoyos (" + whsResult.totalHoyosAcumulados + "/54)"}
+                </div>
+              )}
+            </Card>
+            <Card>
+              <SLabel>Scoring Record WHS</SLabel>
+              <div style={{ fontSize:10, color:D.textSub, marginBottom:8 }}>Toca una ronda para ver el detalle (Audit Trail)</div>
+              {whsResult.records.slice().reverse().map((r, i) => (
+                <div key={i} onClick={() => setDetailIdx(detailIdx===i?null:i)} style={{ padding:"10px 0", borderBottom:"1px solid "+D.border, cursor:"pointer" }}>
+                  <div style={{ display:"flex", justifyContent:"space-between" }}>
+                    <div>
+                      <div style={{ fontSize:12, fontWeight:700 }}>{r.fecha || "--"}</div>
+                      <div style={{ fontSize:10, color:D.textSub }}>
+                        {"Bruto: "+r.scoreOriginal+" | Diff 9h: "+(r.diff9!=null?fmt1(r.diff9):"--")+(r.diff18!=null?" | Diff 18h: "+fmt1(r.diff18):"")+(r.esrReduction?" | ESR: "+r.esrReduction:"")}
+                      </div>
+                      {r.advertencias && r.advertencias.length > 0 && (
+                        <div style={{ fontSize:10, color:"#DDAA00" }}>{"⚠ "+r.advertencias.join(" | ")}</div>
+                      )}
+                      {!r.elegible && r.motivos && (
+                        <div style={{ fontSize:10, color:D.danger }}>{"✗ "+r.motivos.join(" | ")}</div>
+                      )}
+                      {r.nota && r.elegible && <div style={{ fontSize:10, color:D.textSub, fontStyle:"italic" }}>{r.nota}</div>}
+                    </div>
+                    <div style={{ textAlign:"right" }}>
+                      {r.hiDespues!=null && <div style={{ fontSize:13, fontWeight:900, color:D.gold }}>{"HI "+fmt1(r.hiDespues)}</div>}
+                      {r.softCapApplied && <div style={{ fontSize:9, color:D.danger }}>Soft Cap</div>}
+                      {r.hardCapApplied && <div style={{ fontSize:9, color:D.danger }}>Hard Cap</div>}
+                    </div>
+                  </div>
+                   {detailIdx===i && (
+                     <div style={{ marginTop:8, background:D.surface, borderRadius:8, padding:10, fontSize:11 }}>
+                       <div style={{ fontWeight:700, color:D.gold, marginBottom:6 }}>Audit Trail — Detalle WHS</div>
+                       {[
+                         ["Fecha", r.fecha || "--"],
+                         ["Score original", r.scoreOriginal != null ? r.scoreOriginal : "--"],
+                         ["Score ajustado", r.scoreAjustado != null ? String(r.scoreAjustado) : "No calculado"],
+                         ["Course Handicap 9h", r.ch9 != null ? r.ch9 : "--"],
+                         ["Score neto total", r.scoreNetoTotal != null ? r.scoreNetoTotal : "--"],
+                         ["Course Rating", r.courseRating || "--"],
+                         ["Slope Rating", r.slopeRating || "--"],
+                         ["Par", r.par || "--"],
+                         ["PCC", r.pcc != null ? r.pcc : "NULL - no disponible"],
+                         ["Diff 9 hoyos", r.diff9 != null ? fmt1(r.diff9) : "No calculado"],
+                         ["Expected Diff 9h", r.expectedDiff9 != null ? fmt1(r.expectedDiff9) : r.scoreType === "9H-INICIAL" ? "N/A (inicial)" : "--"],
+                         ["Diff 18 hoyos", r.diff18 != null ? fmt1(r.diff18) : r.scoreType === "9H-INICIAL" ? "N/A (inicial)" : "--"],
+                         ["Tipo score", r.scoreType || "--"],
+                         ["Elegible WHS", r.elegible === false ? "No" : "Si"],
+                         ["HI antes", r.hiAntes != null ? fmt1(r.hiAntes) : "No establecido"],
+                         ["HI despues", r.hiDespues != null ? fmt1(r.hiDespues) : "No calculado"],
+                         ["Low HI", r.lowHI != null ? fmt1(r.lowHI) : "--"],
+                         ["ESR", r.esrReduction ? String(r.esrReduction) : "Ninguno"],
+                         ["Soft Cap", r.softCapApplied ? "Si" : "No"],
+                         ["Hard Cap", r.hardCapApplied ? "Si" : "No"],
+                         ["Stroke Index", "Configurado"],
+                       ].map(([label, val]) => (
+                         <div key={label} style={{ display:"flex", justifyContent:"space-between", padding:"3px 0", borderBottom:"1px solid "+D.border+"44" }}>
+                           <span style={{ color:D.textSub }}>{label}</span>
+                           <span style={{ fontWeight:600 }}>{val}</span>
+                         </div>
+                       ))}
+                       {r.nota && <div style={{ marginTop:6, padding:6, background:"#1A1A00", borderRadius:6, fontSize:10, color:"#DDAA00" }}>{r.nota}</div>}
+                       {r.detalleHoyos && r.detalleHoyos.length > 0 && (
+                         <div style={{ marginTop:8 }}>
+                           <div style={{ fontSize:10, fontWeight:700, color:D.gold, marginBottom:4 }}>Detalle por hoyo</div>
+                           <div style={{ overflowX:"auto" }}>
+                             <table style={{ width:"100%", borderCollapse:"collapse", fontSize:10 }}>
+                               <thead>
+                                 <tr style={{ borderBottom:"1px solid "+D.border }}>
+                                   {["Hoyo","SI","Par","Bruto","HC","NDB","Ajust","Neto","Cap"].map(h => (
+                                     <td key={h} style={{ padding:"3px 4px", textAlign:"center", color:D.textSub, fontWeight:700 }}>{h}</td>
+                                   ))}
+                                 </tr>
+                               </thead>
+                               <tbody>
+                                 {r.detalleHoyos.map((h, hi) => (
+                                   <tr key={hi} style={{ background: h.ndbAplicado ? "#C6282822" : "transparent" }}>
+                                     <td style={{ padding:"3px 4px", textAlign:"center" }}>{h.hoyo}</td>
+                                     <td style={{ padding:"3px 4px", textAlign:"center", color:D.textSub }}>{h.strokeIndex}</td>
+                                     <td style={{ padding:"3px 4px", textAlign:"center" }}>{h.par}</td>
+                                     <td style={{ padding:"3px 4px", textAlign:"center", fontWeight:700 }}>{h.scoreOriginal}</td>
+                                     <td style={{ padding:"3px 4px", textAlign:"center", color:D.gold }}>{h.golpesHC > 0 ? "+"+h.golpesHC : "-"}</td>
+                                     <td style={{ padding:"3px 4px", textAlign:"center", color:D.danger }}>{h.ndb}</td>
+                                     <td style={{ padding:"3px 4px", textAlign:"center", color: h.ndbAplicado ? D.danger : D.text }}>{h.scoreAjustado}</td>
+                                     <td style={{ padding:"3px 4px", textAlign:"center", color:D.success }}>{h.scoreNeto}</td>
+                                     <td style={{ padding:"3px 4px", textAlign:"center" }}>{h.ndbAplicado ? "✓" : ""}</td>
+                                   </tr>
+                                 ))}
+                               </tbody>
+                             </table>
+                           </div>
+                         </div>
+                       )}
+                     </div>
+                   )}
+                </div>
+              ))}
+            </Card>
+          </>
+        )}
+
+        {/* ── TAB: EVOLUCIÓN ── */}
+        {tab === "grafica" && !loading && (() => {
+          const jugadorActivo = jugadorSel;
+          return (
+            <>
+              {!jugadorActivo && (
+                <Card>
+                  <SLabel>Seleccionar jugador</SLabel>
+                  <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
+                    {jugadores.slice().sort((a,b)=>a.name.localeCompare(b.name)).map(j => (
+                      <button key={j.id||j.name} onClick={() => seleccionar(j.name)}
+                        style={{ padding:"7px 14px", border:"1px solid "+(jugadorSel===j.name?D.gold:D.border), borderRadius:20, background:jugadorSel===j.name?D.goldDim:"transparent", color:jugadorSel===j.name?D.gold:D.textSub, fontSize:12, fontWeight:jugadorSel===j.name?700:400, cursor:"pointer" }}>
+                        {j.name}
+                      </button>
+                    ))}
+                  </div>
+                </Card>
+              )}
+              {jugadorActivo && whsResult && (() => {
+                // Datos para la gráfica: rondas con HI calculado
+                const puntos = whsResult.records
+                  .filter(r => r.hiDespues != null)
+                  .map(r => ({ fecha: r.fecha || "", hi: r.hiDespues, lowHI: r.lowHI }));
+                if (puntos.length < 2) return (
+                  <Card><div style={{ textAlign:"center", color:D.textSub, padding:24, fontSize:12 }}>
+                    Se necesitan más rondas para mostrar la evolución del HI
+                  </div></Card>
+                );
+                // SVG chart
+                const W = 340, H = 200, padL = 40, padR = 12, padT = 20, padB = 36;
+                const hiVals = puntos.map(p => p.hi);
+                const minV = Math.max(0, Math.min(...hiVals) - 2);
+                const maxV = Math.min(54, Math.max(...hiVals) + 2);
+                const xStep = (W - padL - padR) / Math.max(puntos.length - 1, 1);
+                const yScale = (H - padT - padB) / (maxV - minV);
+                const px = i => padL + i * xStep;
+                const py = v => H - padB - (v - minV) * yScale;
+                const polyline = puntos.map((p, i) => px(i) + "," + py(p.hi)).join(" ");
+                const lowLine = puntos.filter(p => p.lowHI != null);
+                const polyLow = lowLine.map((p, i) => {
+                  const orig = puntos.indexOf(p);
+                  return px(orig) + "," + py(p.lowHI);
+                }).join(" ");
+                const current = whsResult.currentHI;
+                const low = whsResult.lowHI;
+                const trend = puntos.length >= 3
+                  ? puntos[puntos.length-1].hi - puntos[puntos.length-3].hi
+                  : 0;
+                return (
+                  <>
+                    <Card style={{ border:"1px solid "+D.gold+"44" }}>
+                      <div style={{ display:"flex", justifyContent:"space-between", marginBottom:12 }}>
+                        <div>
+                          <div style={{ fontSize:15, fontWeight:900 }}>{jugadorActivo}</div>
+                          <div style={{ fontSize:11, color:D.textSub }}>
+                            {trend > 0.5 ? "📈 Subiendo" : trend < -0.5 ? "📉 Bajando" : "➡️ Estable"}
+                            {" · " + puntos.length + " actualizaciones de HI"}
+                          </div>
+                        </div>
+                        <div style={{ textAlign:"right" }}>
+                          <div style={{ fontSize:28, fontWeight:900, color:D.gold }}>{fmt1(current)}</div>
+                          <div style={{ fontSize:10, color:D.textSub }}>{"Low: " + fmt1(low)}</div>
+                        </div>
+                      </div>
+                      <div style={{ overflowX:"auto" }}>
+                        <svg width={W} height={H} style={{ display:"block" }}>
+                          {/* Grid */}
+                          {[0,1,2,3,4].map(i => {
+                            const v = minV + (maxV - minV) * i / 4;
+                            return (
+                              <g key={i}>
+                                <line x1={padL} y1={py(v)} x2={W-padR} y2={py(v)} stroke={D.border} strokeWidth="1" />
+                                <text x={padL-4} y={py(v)+4} textAnchor="end" fontSize="9" fill={D.textSub}>{v.toFixed(0)}</text>
+                              </g>
+                            );
+                          })}
+                          {/* Low HI line */}
+                          {lowLine.length > 1 && (
+                            <polyline points={polyLow} fill="none" stroke={D.gold} strokeWidth="1" strokeDasharray="4,3" opacity="0.5" />
+                          )}
+                          {/* HI line */}
+                          <polyline points={polyline} fill="none" stroke="#4CAF50" strokeWidth="2.5" strokeLinejoin="round" />
+                          {/* Dots */}
+                          {puntos.map((p, i) => (
+                            <g key={i}>
+                              <circle cx={px(i)} cy={py(p.hi)} r="3.5" fill="#4CAF50" stroke={D.surface} strokeWidth="1.5" />
+                              {(i === 0 || i === puntos.length-1 || i % Math.max(1, Math.floor(puntos.length/5)) === 0) && (
+                                <text x={px(i)} y={H-padB+14} textAnchor="middle" fontSize="8" fill={D.textSub}>
+                                  {p.fecha ? p.fecha.split("/").slice(0,2).join("/") : i+1}
+                                </text>
+                              )}
+                            </g>
+                          ))}
+                          {/* Labels */}
+                          <text x={padL+4} y={padT-4} fontSize="9" fill="#4CAF50">HI WHS</text>
+                          <text x={W-padR-4} y={padT-4} textAnchor="end" fontSize="9" fill={D.gold} opacity="0.7">Low HI</text>
+                        </svg>
+                      </div>
+                      <div style={{ display:"flex", gap:12, marginTop:4, fontSize:10, color:D.textSub }}>
+                        <span style={{ display:"flex", alignItems:"center", gap:4 }}>
+                          <span style={{ display:"inline-block", width:16, height:2, background:"#4CAF50" }}></span>HI WHS
+                        </span>
+                        <span style={{ display:"flex", alignItems:"center", gap:4 }}>
+                          <span style={{ display:"inline-block", width:16, height:1, background:D.gold, opacity:0.7 }}></span>Low HI
+                        </span>
+                      </div>
+                    </Card>
+                    {/* Historial numérico */}
+                    <Card>
+                      <SLabel>Historial de HI</SLabel>
+                      <div style={{ overflowX:"auto" }}>
+                        <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11 }}>
+                          <thead>
+                            <tr style={{ borderBottom:"1px solid "+D.border }}>
+                              {["Fecha","Score","Diff 9h","Diff 18h","HI","Low HI","Cap"].map(h => (
+                                <td key={h} style={{ padding:"5px 4px", textAlign:"center", color:D.textSub, fontWeight:700, fontSize:10 }}>{h}</td>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {whsResult.records.slice().reverse().map((r, i) => (
+                              <tr key={i} style={{ borderBottom:"1px solid "+D.border+"44", background:i===0?D.goldDim+"22":"transparent" }}>
+                                <td style={{ padding:"4px", textAlign:"center", fontSize:10 }}>{r.fecha || "--"}</td>
+                                <td style={{ padding:"4px", textAlign:"center", fontWeight:700 }}>{r.scoreOriginal ?? "--"}</td>
+                                <td style={{ padding:"4px", textAlign:"center", color:D.textSub }}>{r.diff9 != null ? fmt1(r.diff9) : "--"}</td>
+                                <td style={{ padding:"4px", textAlign:"center" }}>{r.diff18 != null ? fmt1(r.diff18) : "--"}</td>
+                                <td style={{ padding:"4px", textAlign:"center", fontWeight:900, color:r.hiDespues != null ? D.gold : D.textDim }}>
+                                  {r.hiDespues != null ? fmt1(r.hiDespues) : "--"}
+                                </td>
+                                <td style={{ padding:"4px", textAlign:"center", color:D.textSub, fontSize:10 }}>{r.lowHI != null ? fmt1(r.lowHI) : "--"}</td>
+                                <td style={{ padding:"4px", textAlign:"center", fontSize:10, color:D.danger }}>
+                                  {r.softCapApplied ? "S" : r.hardCapApplied ? "H" : ""}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </Card>
+                  </>
+                );
+              })()}
+            </>
+          );
+        })()}
+
+        {/* ── TAB: CLASIFICACIÓN WHS ── */}
+        {tab === "comparativa" && !loading && (() => {
+          const ranking = jugadores
+            .map(j => {
+              const r = allResults[j.name];
+              return {
+                name: j.name,
+                hcActual: j.hc,
+                hi: r?.currentHI ?? null,
+                lowHI: r?.lowHI ?? null,
+                hiEstablecido: r?.hiEstablecido ?? false,
+                totalHoyos: r?.totalHoyosAcumulados ?? 0,
+                rondas: r?.records?.length ?? 0,
+              };
+            })
+            .sort((a, b) => {
+              // Primero los que tienen HI, ordenados por HI ascendente
+              if (a.hi != null && b.hi != null) return a.hi - b.hi;
+              if (a.hi != null) return -1;
+              if (b.hi != null) return 1;
+              return b.totalHoyos - a.totalHoyos;
+            });
+
+          return (
+            <>
+            <Card>
+              <SLabel>🏆 Clasificación WHS — La Huerta</SLabel>
+              <div style={{ fontSize:10, color:D.textSub, marginBottom:10 }}>
+                Ordenado por Handicap Index WHS (menor = mejor). HC actual en gris.
+              </div>
+              {ranking.map((p, pos) => (
+                <div key={p.name} style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 0", borderBottom:"1px solid "+D.border }}>
+                  <div style={{ width:24, height:24, borderRadius:"50%",
+                    background: p.hi != null ? (pos===0?D.goldDim:D.surface) : "transparent",
+                    border:"1px solid "+(p.hi != null ? (pos===0?D.gold:D.border) : D.border),
+                    display:"flex", alignItems:"center", justifyContent:"center",
+                    fontSize:11, fontWeight:900, color:pos===0?D.gold:D.textSub }}>
+                    {p.hi != null ? pos+1 : "-"}
+                  </div>
+                  <Avatar name={p.name} id={p.name} size={30} />
+                  <div style={{ flex:1 }}>
+                    <div style={{ fontSize:13, fontWeight:700 }}>{p.name}</div>
+                    <div style={{ fontSize:10, color:D.textSub }}>
+                      {p.hiEstablecido
+                        ? ("HC app: " + p.hcActual + " · Low WHS: " + (p.lowHI != null ? fmt1(p.lowHI) : "--") + " · " + p.rondas + " rondas")
+                        : ("Acumulando: " + p.totalHoyos + "/54 hoyos")}
+                    </div>
+                  </div>
+                  <div style={{ textAlign:"right" }}>
+                    {p.hi != null ? (
+                      <>
+                        <div style={{ fontSize:20, fontWeight:900, color:pos===0?D.gold:"#4CAF50" }}>{fmt1(p.hi)}</div>
+                        <div style={{ fontSize:9, color:D.textSub }}>HI WHS</div>
+                      </>
+                    ) : (
+                      <div style={{ fontSize:11, color:D.textDim }}>Sin HI</div>
+                    )}
+                  </div>
+                  {p.hi != null && Math.abs(p.hi - p.hcActual) > 1 && (
+                    <div style={{ fontSize:9, padding:"2px 6px", borderRadius:8, background: p.hi > p.hcActual ? D.redBg : "#1A2A1A", color: p.hi > p.hcActual ? D.danger : "#4CAF50", fontWeight:700 }}>
+                      {p.hi > p.hcActual ? "+" : ""}{(p.hi - p.hcActual).toFixed(1)}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </Card>
+            <button onClick={() => {
+              const fecha = new Date().toLocaleDateString('es-MX', {day:'2-digit',month:'2-digit',year:'numeric'});
+              const conHI = ranking.filter(p => p.hi != null);
+              const sinHI = ranking.filter(p => p.hi == null);
+              const rows = conHI.map((p, i) => {
+                const diff = p.hi - p.hcActual;
+                const difStr = Math.abs(diff) >= 0.5
+                  ? " (" + (diff > 0 ? "+" : "") + diff.toFixed(1) + " vs HC)"
+                  : "";
+                return (i+1) + ". " + p.name + " — HC " + p.hcActual + "  — HI " + fmt1(p.hi) + difStr;
+              });
+              const lines = [
+                "🏌️ *H19 Golf — Clasificación WHS*",
+                "_" + fecha + " · La Huerta · CR 27.45 · Slope 106_",
+                "",
+                ...rows,
+                ...(sinHI.length > 0 ? ["", "*En progreso:*", ...sinHI.map(p => "⏳ " + p.name + " — " + p.totalHoyos + "/54 hoyos")] : []),
+                "",
+                "📱 h19golf.netlify.app",
+              ].join("\n");
+              window.open("https://wa.me/?text=" + encodeURIComponent(lines), "_blank");
+            }} style={{ width:"100%", padding:"12px", border:"none", borderRadius:12, background:"#25D366", color:"#fff", fontSize:13, fontWeight:700, cursor:"pointer", marginTop:10 }}>
+              💬 Compartir clasificación WHS
+            </button>
+            </>
+          );
+        })()}
+
+      </div>
+    </div>
+  );
+}
+
+
+function EstadisticasScreen({ onExit, appStyle }) {
+  const [rondas, setRondas] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [jugadorSel, setJugadorSel] = useState(null);
+  const [nRondas, setNRondas] = useState(10);
+  const [campoFiltro, setCampoFiltro] = useState("todos");
+  const [whsHI, setWhsHI] = useState(null); // HI WHS del jugador seleccionado
+
+  useEffect(() => {
+    get(clubRef("historial")).then(snap => {
+      if (!snap.exists()) { setLoading(false); return; }
+      const data = snap.val();
+      const arr = Object.values(data)
+        .filter(d => d.jugadores && d.playerNames && d.scoresPorHoyo)
+        .sort((a,b) => (b.fechaTs||0) - (a.fechaTs||0));
+      setRondas(arr);
+      setLoading(false);
+    }).catch(() => setLoading(false));
+  }, []);
+
+  // Construir índice de jugadores
+  const jugadoresIdx = {};
+  rondas.forEach(r => {
+    (r.playerNames||[]).forEach((name, pi) => {
+      if (!jugadoresIdx[name]) jugadoresIdx[name] = [];
+      const bruto = r.jugadores?.[pi]?.bruto ?? (r.scoresPorHoyo?.[pi]?.reduce((a,b)=>a+b,0)||null);
+      const hc = r.jugadores?.[pi]?.hc ?? 0;
+      const neto = bruto !== null ? bruto - hc : null;
+      jugadoresIdx[name].push({
+        fecha: r.fecha, fechaTs: r.fechaTs||0,
+        campo: r.campo, nHoles: r.nHoles||18,
+        bruto, hc, neto,
+        pars: r.pars,
+        scores: r.scoresPorHoyo?.[pi],
+      });
+    });
+  });
+
+  const todosJugadores = Object.keys(jugadoresIdx).sort();
+  const todosCampos = [...new Set(rondas.map(r=>r.campo).filter(Boolean))].sort();
+
+  // Stats de un jugador seleccionado
+  const calcStats = (nombre) => {
+    let rds = jugadoresIdx[nombre] || [];
+    if (campoFiltro !== "todos") rds = rds.filter(r => r.campo === campoFiltro);
+    rds = rds.slice(0, nRondas);
+    if (rds.length === 0) return null;
+    const conBruto = rds.filter(r => r.bruto !== null);
+    const promBruto = conBruto.length > 0 ? Math.round(conBruto.reduce((a,r)=>a+r.bruto,0)/conBruto.length*10)/10 : null;
+    const promNeto = conBruto.length > 0 ? Math.round(conBruto.reduce((a,r)=>a+r.neto,0)/conBruto.length*10)/10 : null;
+    const mejorBruto = conBruto.length > 0 ? Math.min(...conBruto.map(r=>r.bruto)) : null;
+    const peorBruto = conBruto.length > 0 ? Math.max(...conBruto.map(r=>r.bruto)) : null;
+    // HC sugerido: promedio de los mejores diferentials
+    // Differential = (bruto - par) donde par = suma de pars
+    const diffs = conBruto.map(r => {
+      const par = r.pars ? r.pars.reduce((a,b)=>a+b,0) : 72;
+      return r.bruto - par;
+    }).sort((a,b)=>a-b);
+    const nBest = Math.max(1, Math.floor(diffs.length * 0.4)); // 40% mejores
+    const hcSugerido = diffs.length > 0 ? Math.round(diffs.slice(0,nBest).reduce((a,b)=>a+b,0)/nBest) : null;
+    // Evolucion HC
+    const evolucion = rds.map(r => ({ fecha:r.fecha, hc:r.hc, bruto:r.bruto })).reverse();
+    // Por campo
+    const porCampo = {};
+    (jugadoresIdx[nombre]||[]).forEach(r => {
+      if (!r.campo) return;
+      if (!porCampo[r.campo]) porCampo[r.campo] = [];
+      if (r.bruto !== null) porCampo[r.campo].push(r.bruto);
+    });
+    return { promBruto, promNeto, mejorBruto, peorBruto, hcSugerido, evolucion, porCampo, nRondas:conBruto.length, hcActual: rds[0]?.hc };
+  };
+
+  const stats = jugadorSel ? calcStats(jugadorSel) : null;
+
+  return (
+    <div style={{ ...appStyle, overflowY:"auto" }}>
+      {/* Header */}
+      <div style={{ background:`linear-gradient(135deg,#1A2A1A,#2E3D2E)`, padding:"14px 16px", display:"flex", alignItems:"center", gap:10 }}>
+        <button onClick={onExit} style={{ background:"none", border:"none", color:D.gold, fontSize:22, cursor:"pointer" }}>{"<"}</button>
+        <div>
+          <div style={{ fontSize:16, fontWeight:900, color:D.gold }}>📈 Estadísticas</div>
+          <div style={{ fontSize:11, color:D.textSub }}>Historial de jugadores</div>
+        </div>
+      </div>
+
+      <div style={{ padding:"12px 12px 80px" }}>
+        {loading && <Card><div style={{ textAlign:"center", color:D.textSub, padding:24 }}>Cargando historial...</div></Card>}
+
+        {!loading && rondas.length === 0 && (
+          <Card><div style={{ textAlign:"center", color:D.textSub, padding:24 }}>No hay rondas guardadas aún</div></Card>
+        )}
+
+        {!loading && rondas.length > 0 && (
+          <>
+            {/* Selector de jugador */}
+            <Card>
+              <SLabel>Seleccionar jugador</SLabel>
+              <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
+                {todosJugadores.map(n => (
+                  <button key={n} onClick={() => {
+                    const nuevo = jugadorSel===n ? null : n;
+                    setJugadorSel(nuevo);
+                    if (nuevo) {
+                      const res = whs_resumenJugador(nuevo, rondas);
+                      setWhsHI(res?.currentHI ?? null);
+                    } else {
+                      setWhsHI(null);
+                    }
+                  }}
+                    style={{ padding:"7px 14px", border:"1px solid "+(jugadorSel===n?D.gold:D.border), borderRadius:20, background:jugadorSel===n?D.goldDim:"transparent", color:jugadorSel===n?D.gold:D.textSub, fontSize:12, fontWeight:jugadorSel===n?700:400, cursor:"pointer" }}>
+                    {n}
+                  </button>
+                ))}
+              </div>
+            </Card>
+
+            {jugadorSel && (
+              <>
+                {/* Filtros */}
+                <Card>
+                  <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
+                    <div>
+                      <div style={{ fontSize:10, color:D.textSub, marginBottom:4 }}>Rondas a considerar</div>
+                      <div style={{ display:"flex", gap:4 }}>
+                        {[5,10,15,20].map(n => (
+                          <button key={n} onClick={() => setNRondas(n)}
+                            style={{ padding:"5px 10px", border:"1px solid "+(nRondas===n?D.gold:D.border), borderRadius:12, background:nRondas===n?D.goldDim:"transparent", color:nRondas===n?D.gold:D.textSub, fontSize:12, fontWeight:700, cursor:"pointer" }}>
+                            {n}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div style={{ flex:1 }}>
+                      <div style={{ fontSize:10, color:D.textSub, marginBottom:4 }}>Campo</div>
+                      <select value={campoFiltro} onChange={e=>setCampoFiltro(e.target.value)}
+                        style={{ padding:"6px 10px", border:"1px solid "+D.border, borderRadius:10, background:D.surface, color:D.text, fontSize:12, width:"100%" }}>
+                        <option value="todos">Todos los campos</option>
+                        {todosCampos.map(c => <option key={c} value={c}>{CAMPOS[c]?.nombre||c}</option>)}
+                      </select>
+                    </div>
+                  </div>
+                </Card>
+
+                {stats && (
+                  <>
+                    {/* Resumen principal */}
+                    <Card>
+                      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
+                        <div style={{ fontSize:16, fontWeight:900 }}>{jugadorSel}</div>
+                        <div style={{ fontSize:11, color:D.textSub }}>{stats.nRondas} ronda{stats.nRondas!==1?"s":""}</div>
+                      </div>
+                      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8, marginBottom:8 }}>
+                        {[
+                          { label:"Promedio bruto", val:stats.promBruto, color:D.text },
+                          { label:"Promedio neto", val:stats.promNeto, color:D.text },
+                          { label:"Mejor ronda", val:stats.mejorBruto, color:D.success },
+                          { label:"Peor ronda", val:stats.peorBruto, color:D.danger },
+                        ].map(({ label, val, color }) => (
+                          <div key={label} style={{ background:D.surface, borderRadius:10, padding:"10px 12px" }}>
+                            <div style={{ fontSize:10, color:D.textSub, marginBottom:2 }}>{label}</div>
+                            <div style={{ fontSize:22, fontWeight:900, color }}>{val ?? "--"}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </Card>
+
+                    {/* HC */}
+                    <Card style={{ border:"1px solid "+D.gold+"44" }}>
+                      <SLabel>🎯 Handicap</SLabel>
+                      <div style={{ display:"flex", gap:8 }}>
+                        <div style={{ flex:1, background:D.surface, borderRadius:10, padding:"12px", textAlign:"center" }}>
+                          <div style={{ fontSize:10, color:D.textSub, marginBottom:4 }}>HC actual</div>
+                          <div style={{ fontSize:32, fontWeight:900, color:D.text }}>{stats.hcActual ?? "--"}</div>
+                        </div>
+                        <div style={{ flex:1, background:"#1A2A1A", border:"1px solid #4CAF5044", borderRadius:10, padding:"12px", textAlign:"center" }}>
+                          <div style={{ fontSize:10, color:"#4CAF50", marginBottom:4 }}>HI WHS</div>
+                          <div style={{ fontSize:32, fontWeight:900, color:"#4CAF50" }}>
+                            {whsHI != null ? whsHI.toFixed(1) : "--"}
+                          </div>
+                          <div style={{ fontSize:9, color:D.textSub, marginTop:2 }}>World Handicap System</div>
+                        </div>
+                      </div>
+                      {whsHI != null && stats.hcActual != null && Math.abs(whsHI - stats.hcActual) > 0.5 && (
+                        <div style={{ marginTop:8, padding:"8px 12px", background:D.surface, borderRadius:8, fontSize:12, color:D.textSub }}>
+                          {whsHI < stats.hcActual
+                            ? "⬇️ WHS sugiere bajar HC de "+stats.hcActual+" a "+Math.round(whsHI)
+                            : "⬆️ WHS sugiere subir HC de "+stats.hcActual+" a "+Math.round(whsHI)}
+                        </div>
+                      )}
+                      {whsHI == null && (
+                        <div style={{ marginTop:8, padding:"8px 12px", background:D.surface, borderRadius:8, fontSize:11, color:D.textSub }}>
+                          HI WHS no establecido aún — se necesitan 54 hoyos en La Huerta
+                        </div>
+                      )}
+                    </Card>
+
+                    {/* Promedio por campo */}
+                    {Object.keys(stats.porCampo).length > 0 && (
+                      <Card>
+                        <SLabel>⛳ Promedio por campo</SLabel>
+                        {Object.entries(stats.porCampo).map(([campo, brutos]) => {
+                          const prom = Math.round(brutos.reduce((a,b)=>a+b,0)/brutos.length*10)/10;
+                          const mejor = Math.min(...brutos);
+                          return (
+                            <div key={campo} style={{ padding:"10px 0", borderBottom:"1px solid "+D.border }}>
+                              <div style={{ display:"flex", justifyContent:"space-between", marginBottom:4 }}>
+                                <div style={{ fontSize:13, fontWeight:700 }}>{CAMPOS[campo]?.nombre||campo}</div>
+                                <div style={{ fontSize:13, fontWeight:900 }}>{prom} prom</div>
+                              </div>
+                              <div style={{ display:"flex", gap:12, fontSize:11, color:D.textSub }}>
+                                <span>{"Mejor: "+mejor}</span>
+                                <span>{brutos.length+" ronda"+(brutos.length!==1?"s":"")}</span>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </Card>
+                    )}
+
+                    {/* Gráfica de evolución */}
+                    {stats.evolucion.length >= 2 && (() => {
+                      const datos = stats.evolucion.filter(r => r.bruto !== null);
+                      if (datos.length < 2) return null;
+                      const W = 320, H = 160, padL = 36, padR = 12, padT = 12, padB = 32;
+                      const minVal = Math.min(...datos.map(r=>r.bruto)) - 2;
+                      const maxVal = Math.max(...datos.map(r=>r.bruto)) + 2;
+                      const xStep = (W - padL - padR) / (datos.length - 1);
+                      const yScale = (H - padT - padB) / (maxVal - minVal);
+                      const px = i => padL + i * xStep;
+                      const py = v => H - padB - (v - minVal) * yScale;
+                      const prom = stats.promBruto;
+                      const polyline = datos.map((r,i) => px(i)+","+py(r.bruto)).join(" ");
+                      return (
+                        <Card>
+                          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8 }}>
+                            <SLabel style={{ margin:0 }}>📈 Evolución de scores</SLabel>
+                            <div style={{ fontSize:10, color:D.textSub }}>{"Prom: "+prom}</div>
+                          </div>
+                          <div style={{ overflowX:"auto" }}>
+                            <svg width={W} height={H} style={{ display:"block" }}>
+                              {/* Grid lines */}
+                              {[0,1,2,3].map(i => {
+                                const v = Math.round(minVal + (maxVal - minVal) * i / 3);
+                                return (
+                                  <g key={i}>
+                                    <line x1={padL} y1={py(v)} x2={W-padR} y2={py(v)} stroke={D.border} strokeWidth="1" />
+                                    <text x={padL-4} y={py(v)+4} textAnchor="end" fontSize="9" fill={D.textSub}>{v}</text>
+                                  </g>
+                                );
+                              })}
+                              {/* Promedio line */}
+                              <line x1={padL} y1={py(prom)} x2={W-padR} y2={py(prom)} stroke={D.gold} strokeWidth="1" strokeDasharray="4,3" opacity="0.6" />
+                              {/* Line */}
+                              <polyline points={polyline} fill="none" stroke={D.success} strokeWidth="2" strokeLinejoin="round" />
+                              {/* Dots + labels */}
+                              {datos.map((r,i) => (
+                                <g key={i}>
+                                  <circle cx={px(i)} cy={py(r.bruto)} r="4" fill={D.success} stroke={D.surface} strokeWidth="2" />
+                                  <text x={px(i)} y={H-padB+14} textAnchor="middle" fontSize="8" fill={D.textSub}>
+                                    {r.fecha ? r.fecha.split("/").slice(0,2).join("/") : i+1}
+                                  </text>
+                                  <text x={px(i)} y={py(r.bruto)-8} textAnchor="middle" fontSize="9" fontWeight="700" fill={D.text}>{r.bruto}</text>
+                                </g>
+                              ))}
+                            </svg>
+                          </div>
+                          <div style={{ display:"flex", gap:12, marginTop:4, fontSize:10, color:D.textSub }}>
+                            <span style={{ display:"flex", alignItems:"center", gap:4 }}>
+                              <span style={{ display:"inline-block", width:16, height:2, background:D.success }}></span>
+                              Scores
+                            </span>
+                            <span style={{ display:"flex", alignItems:"center", gap:4 }}>
+                              <span style={{ display:"inline-block", width:16, height:2, background:D.gold, opacity:0.6 }}></span>
+                              {"Promedio ("+prom+")"}
+                            </span>
+                          </div>
+                        </Card>
+                      );
+                    })()}
+
+                    {/* Historial de rondas */}
+                    <Card>
+                      <SLabel>📋 Últimas rondas</SLabel>
+                      {stats.evolucion.slice().reverse().map((r, i) => (
+                        <div key={i} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"8px 0", borderBottom:"1px solid "+D.border }}>
+                          <div>
+                            <div style={{ fontSize:12, fontWeight:600 }}>{r.fecha||"Sin fecha"}</div>
+                            <div style={{ fontSize:10, color:D.textSub }}>{"HC "+r.hc}</div>
+                          </div>
+                          <div style={{ textAlign:"right" }}>
+                            <div style={{ fontSize:16, fontWeight:900 }}>{r.bruto ?? "--"}</div>
+                            <div style={{ fontSize:10, color:D.textSub }}>tiros</div>
+                          </div>
+                        </div>
+                      ))}
+                    </Card>
+                  </>
+                )}
+              </>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── ADMIN APP ────────────────────────────────────────────────
+function AdminApp({ onExit, torneoConfig = null }) {
+  const [screen, setScreen] = useState(() => {
+    if (!torneoConfig) return "dir";
+    if (torneoConfig.rondaActiva) return "torneo-resume"; // ronda en curso, retomar
+    if (torneoConfig.playersPreasignados?.length >= 2) return "score-torneo-init";
+    return "grupo-nombre";
+  });
+  const [grupoNombre, setGrupoNombre] = useState("");
+  const [dir, setDir] = useState([]);
+  const [nid, setNid] = useState(6);
+  const [sel, setSel] = useState(new Set());
+  const [nHoles, setNHoles] = useState(torneoConfig?.nHoles || 9);
+  const [campo, setCampo] = useState(torneoConfig?.campo || "huerta");
+  const [apuesta, setApuesta] = useState(torneoConfig?.apuesta || DEFAULT_APUESTA);
+  const [marcaVal, setMarcaVal] = useState(torneoConfig?.marcaVal || DEFAULT_MARCA_VAL);
+  const [tarjetaVal, setTarjetaVal] = useState(torneoConfig?.tarjetaVal || DEFAULT_TARJETA_VAL);
+  const [playerOpts, setPlayerOpts] = useState({});
+  const [newName, setNewName] = useState("");
+  const [newHC, setNewHC] = useState("");
+  const [editingHC, setEditingHC] = useState(null);
+  const [confirmDelete, setConfirmDelete] = useState(null);
+  // ── Fase 2: Panel de NIPs ──────────────────────────────────────────────────
+  const [nipPanelPlayerId, setNipPanelPlayerId] = useState(null); // id del jugador editando NIP
+  const [nipInput, setNipInput] = useState("");
+  const [nipConfirm, setNipConfirm] = useState("");
+  const [nipSaving, setNipSaving] = useState(false);
+  const [nipMsg, setNipMsg] = useState(null); // { ok: bool, text: string }
+  const [players, setPlayers] = useState([]);
+  const [scores, setScores] = useState([]);
+  const [marcas, setMarcas] = useState([]);
+  const [tarjetas, setTarjetas] = useState(emptyTarjetas());
+  const [dobleparEmpate, setDobleparEmpate] = useState(null);
+  const [hole, setHole] = useState(0);
+  const [pars, setPars] = useState([]);
+  const [results, setResults] = useState(null);
+  const [tab, setTab] = useState("score");
+  const [showTabla, setShowTabla] = useState(false);
+  const [rondaId, setRondaId] = useState(null);
+  const [shareMsg, setShareMsg] = useState("");
+  const [abandonoModal, setAbandonoModal] = useState(null);
+  const [agregarModal, setAgregarModal] = useState(false);
+  const getCastigos = () => { try { const s = localStorage.getItem("h19-castigos"); return s ? JSON.parse(s) : []; } catch(e) { return []; } };
+  const saveCastigos = (arr) => { try { localStorage.setItem("h19-castigos", JSON.stringify(arr)); sessionStorage.setItem("h19-castigos", JSON.stringify(arr)); window._h19castigos = arr; } catch(e) {} };
+  const [castigos, setCastigosState] = useState(getCastigos);
+  const setCastigos = (arr) => { saveCastigos(arr); setCastigosState(arr); };
+  const [jugadoresPinOk, setJugadoresPinOk] = useState(!torneoConfig);
+  const [jugadoresPinInput, setJugadoresPinInput] = useState("");
+  const [jugadoresPinError, setJugadoresPinError] = useState(false);
+  const [abandonandoIdx, setAbandonandoIdx] = useState(null);
+  const [agregandoJugador, setAgregandoJugador] = useState(false);
+  const [totalJugadoresTorneoAdmin, setTotalJugadoresTorneoAdmin] = useState(0);
+
+  // En modo torneo, obtener total de jugadores de todos los grupos automáticamente
+  useEffect(() => {
+    if (!torneoConfig?.torneoId) return;
+    const r = ref(db, `torneos/${torneoConfig.torneoId}/grupos`);
+    get(r).then(snap => {
+      if (!snap.exists()) return;
+      const grupos = snap.val();
+      let total = 0;
+      Object.values(grupos).forEach(g => {
+        if (g.players) total += Array.isArray(g.players) ? g.players.length : Object.keys(g.players).length;
+      });
+      if (total > 0) setTotalJugadoresTorneoAdmin(total);
+    }).catch(() => {});
+  }, [torneoConfig?.torneoId]);
+
+  // Escribe SOLO el campo players en Firebase (para que opts/sustituciones no sean pisados por el siguiente save de scores)
+  const syncPlayersOnly = (newPlayers) => {
+    if (!torneoConfig?.torneoId || !torneoConfig?.grupoId) return;
+    try {
+      set(ref(db, `torneos/${torneoConfig.torneoId}/grupos/${torneoConfig.grupoId}/players`), newPlayers);
+    } catch(e) {}
+  };
+
+  const handleEliminarJugador = (pi, conCastigo) => {
+    const totalJ = (torneoConfig && totalJugadoresTorneoAdmin > 0) ? totalJugadoresTorneoAdmin : players.length;
+    const restantesPago = totalJ - 1;
+    const nuevoCastigos = [...castigos, {
+      name: players[pi].name,
+      conCastigo,
+      scorePago: conCastigo ? apuesta : 0,
+      tarjetaPago: conCastigo ? tarjetaVal * restantesPago : 0,
+      totalJugadores: totalJ,
+    }];
+    setCastigos(nuevoCastigos);
+    // Guardar en TODOS los lugares posibles
+    try { localStorage.setItem("h19-castigos", JSON.stringify(nuevoCastigos)); } catch(e) {}
+    try { sessionStorage.setItem("h19-castigos", JSON.stringify(nuevoCastigos)); } catch(e) {}
+    window._h19castigos = nuevoCastigos;
+    const newPlayers = players.filter((_,i) => i !== pi);
+    const newScores = scores.filter((_,i) => i !== pi);
+    const newMarcas = marcas.map(m => {
+      if (!m) return m;
+      const multi = Array.isArray(m.multi) ? m.multi : Object.values(m.multi||{});
+      return { ...m, multi: multi.filter((_,i)=>i!==pi), oyes:m.oyes===pi?null:(m.oyes>pi?m.oyes-1:m.oyes), regulation:m.regulation===pi?null:(m.regulation>pi?m.regulation-1:m.regulation) };
+    });
+    setPlayers(newPlayers); setScores(newScores); setMarcas(newMarcas);
+    syncPlayersOnly(newPlayers); // write atómico solo a players
+    updateGame({ players:newPlayers, pars, scores:newScores, marcas:newMarcas, tarjetas, hole, campo, status:"en_juego", rondaId, grupoNombre, abandonos:nuevoCastigos });
+    setAbandonandoIdx(null);
+  };
+
+  // Escribe SOLO el campo players en Firebase (para que opts/sustituciones no sean pisados por el siguiente save de scores)
+  const handleToggleOpts = (pi, newOpts) => {
+    const newPlayers = players.map((pl, i) => i === pi ? { ...pl, opts: newOpts } : pl);
+    setPlayers(newPlayers);
+    syncPlayersOnly(newPlayers); // write atómico solo a players para que no sea pisado
+    updateGame({ players:newPlayers, pars, scores, marcas, tarjetas, hole, campo, status:"en_juego", rondaId, grupoNombre, abandonos:castigos });
+  };
+
+  const handleAgregarJugador = (p) => {
+    const newPlayer = { ...p, opts:{score:true,marcas:true,tarjetas:true} };
+    const newPlayers = [...players, newPlayer];
+    const newScores = [...scores, Array(nHoles).fill(null)];
+    const newMarcas = marcas.map(m => { if (!m) return m; const multi=Array.isArray(m.multi)?m.multi:Object.values(m.multi||{}); return {...m,multi:[...multi,Object.fromEntries(MARCAS_MULTI.map(mk=>[mk.key,false]))]}; });
+    setPlayers(newPlayers); setScores(newScores); setMarcas(newMarcas);
+    syncPlayersOnly(newPlayers); // write atómico solo a players
+    updateGame({ players:newPlayers, pars, scores:newScores, marcas:newMarcas, tarjetas, hole, campo, status:"en_juego", rondaId, grupoNombre });
+    setAgregandoJugador(false);
+  };
+  const [distGreen, setDistGreen] = useState(null);
+  const [gpsError, setGpsError] = useState("");
+  const [gpsLoading, setGpsLoading] = useState(false);
+  const [savedRonda, setSavedRonda] = useState(null);
+  const [nombreRonda, setNombreRonda] = useState("");
+  const [historial, setHistorial] = useState([]);
+  const [historialTorneos, setHistorialTorneos] = useState([]);
+  const [expandedHist, setExpandedHist] = useState(null);
+  const [expandedTorneoHist, setExpandedTorneoHist] = useState(null);
+  const [confirmDeleteTorneo, setConfirmDeleteTorneo] = useState(null); // torneoId a eliminar
+  const [expandedGrupoHist, setExpandedGrupoHist] = useState(null);   // grupoId
+  const [histTab, setHistTab] = useState("rondas");
+  const [confirmDeleteHist, setConfirmDeleteHist] = useState(null);
+
+  // Load historial from Firebase — Fase 3: lee de clubes/club_h19/historial
+  useEffect(() => {
+    const unsub = onValue(clubRef("historial"), snap => {
+      if (snap.exists()) {
+        const data = snap.val();
+        const lista = Object.entries(data).map(([id, r]) => ({id, ...r}))
+          .sort((a,b) => (b.fechaTs||0) - (a.fechaTs||0));
+        setHistorial(lista);
+      }
+    });
+    return () => unsub();
+  }, []);
+
+  // Load historial de torneos from Firebase — Fase 3: lee de clubes/club_h19/torneos
+  useEffect(() => {
+    const unsub = onValue(clubRef("torneos"), snap => {
+      if (snap.exists()) {
+        const data = snap.val();
+        const lista = Object.entries(data)
+          .filter(([,t]) => t.status === "finalizado")
+          .map(([id, t]) => ({ id, ...t }))
+          .sort((a,b) => (b.createdAt||0) - (a.createdAt||0));
+        setHistorialTorneos(lista);
+      }
+    });
+    return () => unsub();
+  }, []);
+
+  // Load directory from Firebase — Fase 3: lee de clubes/club_h19/directorio
+  useEffect(() => {
+    const unsub = onValue(clubRef("directorio"), snap => {
+      if (snap.exists()) {
+        const data = snap.val();
+        setDir(data.players || []);
+        setNid(data.nextId || 6);
+      } else {
+        const defaultDir = { nextId:6, players:[
+          {id:1,name:"Beto",hc:0},{id:2,name:"Arturo G",hc:4},
+          {id:3,name:"Enrique",hc:2},{id:4,name:"Miguel",hc:3},{id:5,name:"Toño",hc:1}
+        ]};
+        set(clubRef("directorio"), defaultDir);
+        set(ref(db, "directorio"), defaultDir);  // dual-write
+      }
+    });
+    return () => unsub();
+  }, []);
+
+  // ── Sincronizar players del grupo desde Firebase (torneo) ──
+  // Cuando el admin cambia opts, sustituye o da de baja un jugador desde otro dispositivo,
+  // el anotador debe actualizar su estado local para no pisar esos cambios en el siguiente save.
+  const [lastFirebasePlayers, setLastFirebasePlayers] = useState(null);
+  useEffect(() => {
+    if (!torneoConfig?.torneoId || !torneoConfig?.grupoId) return;
+    const playersRef = ref(db, `torneos/${torneoConfig.torneoId}/grupos/${torneoConfig.grupoId}/players`);
+    const unsub = onValue(playersRef, snap => {
+      if (!snap.exists()) return;
+      const fbPlayers = snap.val();
+      const fbArr = Array.isArray(fbPlayers) ? fbPlayers : Object.values(fbPlayers);
+      // Solo actualizar si realmente hay un cambio (comparar por JSON)
+      setLastFirebasePlayers(prev => {
+        const prevStr = JSON.stringify(prev);
+        const newStr = JSON.stringify(fbArr);
+        if (prevStr === newStr) return prev; // sin cambio
+        // Actualizar players en estado local del anotador
+        setPlayers(localPlayers => {
+          // Solo aplicar si el count coincide (evitar conflicto durante agregar/quitar)
+          if (localPlayers.length === fbArr.length) {
+            // Fusionar: preservar scores/marcas indices, actualizar name/hc/opts desde Firebase
+            return localPlayers.map((lp, i) => ({
+              ...lp,
+              name: fbArr[i]?.name ?? lp.name,
+              hc: fbArr[i]?.hc ?? lp.hc,
+              opts: fbArr[i]?.opts ?? lp.opts,
+            }));
+          }
+          return localPlayers;
+        });
+        return fbArr;
+      });
+    });
+    return () => unsub();
+  }, [torneoConfig?.torneoId, torneoConfig?.grupoId]);
+
+  // Cargar HI WHS para todos los jugadores
+  const [whsHIMap, setWhsHIMap] = useState({});
+  useEffect(() => {
+    get(clubRef("historial")).then(snap => {
+      if (!snap.exists()) return;
+      const rondas = Object.values(snap.val());
+      const nombres = [...new Set(rondas.flatMap(r => r.playerNames || []))];
+      const hiMap = {};
+      nombres.forEach(nombre => {
+        try {
+          const result = whs_resumenJugador(nombre, rondas);
+          hiMap[nombre] = {
+            hi: result.currentHI,
+            lowHI: result.lowHI,
+            hiEstablecido: result.hiEstablecido,
+            totalHoyos: result.totalHoyosAcumulados,
+          };
+        } catch(e) {
+          hiMap[nombre] = { hi: null, lowHI: null, hiEstablecido: false, totalHoyos: 0 };
+        }
+      });
+      setWhsHIMap(hiMap);
+    }).catch(() => {});
+  }, []);
+
+  // Check localStorage for saved ronda
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("h19-ronda-activa");
+      if (saved) {
+        const data = JSON.parse(saved);
+        if (data.savedAt && Date.now() - data.savedAt < 24*60*60*1000) setSavedRonda(data);
+      }
+    } catch(e) {}
+  }, []);
+
+  const saveDir = (newPlayers, newNidVal) => {
+    const data = { players:newPlayers, nextId:newNidVal||nid };
+    // Fase 3: escritura principal en club + dual-write a raíz para compatibilidad
+    set(clubRef("directorio"), data);
+    set(ref(db, "directorio"), data);  // dual-write — se puede remover en Fase 4
+  };
+
+  // ── Fase 2: Guardar NIP hasheado para un jugador ────────────────────────────
+  const handleAsignarNIP = async (playerId) => {
+    if (nipInput.length < 4) { setNipMsg({ ok:false, text:"El NIP debe tener al menos 4 dígitos" }); return; }
+    if (nipInput !== nipConfirm) { setNipMsg({ ok:false, text:"Los NIPs no coinciden" }); return; }
+    setNipSaving(true); setNipMsg(null);
+    try {
+      const hash = await hashNIP(nipInput, CLUB_H19_ID, playerId);
+      // Actualizar en el directorio raíz (compatibilidad actual)
+      const updated = dir.map(p => p.id === playerId ? { ...p, nipHash: hash, role: p.role || "jugador" } : p);
+      saveDir(updated);
+      // También en el nodo del club (Fase 2+)
+      const clubPlayerRef = ref(db, `clubes/${CLUB_H19_ID}/directorio/jugadores/${playerId}`);
+      const snap = await get(clubPlayerRef);
+      const existing = snap.exists() ? snap.val() : {};
+      await set(clubPlayerRef, { ...existing, id:playerId, nipHash:hash, role:existing.role||"jugador" });
+      setNipMsg({ ok:true, text:"NIP guardado ✓" });
+      setNipInput(""); setNipConfirm("");
+      setTimeout(() => { setNipPanelPlayerId(null); setNipMsg(null); }, 1500);
+    } catch(e) {
+      setNipMsg({ ok:false, text:"Error al guardar el NIP" });
+    }
+    setNipSaving(false);
+  };
+
+  const saveToLocal = (state) => {
+    try { localStorage.setItem("h19-ronda-activa", JSON.stringify({ ...state, savedAt:Date.now() })); } catch(e) {}
+  };
+
+  const grupoId = torneoConfig?.grupoId || rondaId;
+
+  const syncFirebase = (state) => {
+    try {
+      // En modo torneo, el grupoId es el identificador primario
+      if (torneoConfig && torneoConfig.torneoId) {
+        const gid = torneoConfig.grupoId;
+        if (!gid) return;
+        set(ref(db, `torneos/${torneoConfig.torneoId}/grupos/${gid}`), {
+          nombre: state.grupoNombre || torneoConfig.grupoNombre || grupoNombre || `Grupo`,
+          players: state.players,
+          scores: state.scores,
+          marcas: state.marcas,
+          tarjetas: state.tarjetas,
+          hole: state.hole,
+          status: state.status,
+          abandonos: state.abandonos || [],
+          updatedAt: Date.now(),
+        });
+      }
+      // También guardar en rondas si tenemos rondaId
+      if (rondaId) {
+        set(ref(db, `rondas/${rondaId}`), { ...state, updatedAt:Date.now() });
+      }
+    } catch(e) {}
+  };
+
+  const updateGame = (state) => { saveToLocal(state); syncFirebase(state); };
+  const getState = () => ({ players, pars, scores, marcas, tarjetas, hole, campo, status:"en_juego", rondaId, apuesta, marcaVal, tarjetaVal, grupoNombre, abandonos:castigos });
+
+  const resumeRonda = () => {
+    if (!savedRonda) return;
+    setPlayers(savedRonda.players||[]); setScores(savedRonda.scores||[]);
+    setMarcas(savedRonda.marcas||[]); setTarjetas(normalizeTarjetas(savedRonda.tarjetas));
+    setHole(savedRonda.hole||0); setPars(savedRonda.pars||[]);
+    setCampo(savedRonda.campo||"huerta"); setRondaId(savedRonda.rondaId||null);
+    setCastigos(savedRonda.abandonos||[]);
+    setTab("score"); setScreen("score"); setSavedRonda(null);
+  };
+
+  const toggleSel = (id) => { const s = new Set(sel); s.has(id) ? s.delete(id) : s.add(id); setSel(s); };
+
+  const addPlayer = () => {
+    const name = newName.trim(); if (!name) return;
+    const hc = Math.max(0, parseInt(newHC)||0);
+    const newPlayers = [...dir, {id:nid, name, hc}];
+    saveDir(newPlayers, nid+1); setNid(nid+1); setNewName(""); setNewHC("");
+  };
+
+  const removePlayer = (id) => { saveDir(dir.filter(p=>p.id!==id)); const s=new Set(sel); s.delete(id); setSel(s); };
+
+  const startGame = () => {
+    if (sel.size < 2) return;
+    const ps = dir.filter(p => sel.has(p.id)).map(p => ({
+      ...p,
+      opts: playerOpts[p.id] || {score:true, marcas:true, tarjetas:true},
+    }));
+    const basePares = CAMPOS[campo].pares || Array(18).fill(4);
+    const p = basePares.slice(0, nHoles);
+    const initScores = ps.map(() => Array(nHoles).fill(null));
+    const initMarcas = Array(nHoles).fill(null).map(() => emptyMarca(ps.length));
+    const initTarjetas = emptyTarjetas();
+    const rid = Math.random().toString(36).substring(2,8).toUpperCase();
+    const gid = torneoConfig?.grupoId || rid; // usar grupoId del torneo si existe
+    setRondaId(rid); setPlayers(ps); setPars(p);
+    setScores(initScores); setMarcas(initMarcas); setTarjetas(initTarjetas);
+    setCastigos([]); try{localStorage.removeItem("h19-castigos");}catch(e){} setHole(0); setTab("score"); setResults(null);
+    const state = { players:ps, pars:p, scores:initScores, marcas:initMarcas, tarjetas:initTarjetas, hole:0, campo, status:"en_juego", rondaId:rid, grupoNombre };
+    saveToLocal(state);
+    try { set(ref(db, `rondas/${rid}`), { ...state, createdAt:Date.now(), updatedAt:Date.now() }); } catch(e) {}
+    // Si estamos en modo torneo, registrar el grupo con el grupoId del torneo
+    if (torneoConfig) {
+      try { set(ref(db, `torneos/${torneoConfig.torneoId}/grupos/${gid}`), {
+        nombre: grupoNombre || torneoConfig.grupoNombre, players:ps, scores:initScores, marcas:initMarcas, tarjetas:initTarjetas, hole:0, status:"en_juego", updatedAt:Date.now()
+      }); } catch(e) {}
+    }
+    setScreen("score");
+  };
+
+  const commitHole = (sc, h) => sc.map(row => row.map((v,j) => j===h && v===null ? pars[j] : v));
+
+  const changeScore = (pi, d) => {
+    const newScores = scores.map((row, i) => {
+      if (i !== pi) return row;
+      return row.map((v, j) => { if (j !== hole) return v; return Math.max(1, (v===null?pars[j]:v)+d); });
+    });
+    const s = newScores[pi][hole], p = pars[hole];
+    const newMarcas = marcas.map((m, h) => {
+      if (h !== hole) return m;
+      const diff = s-p, bogey = diff>=1;
+      return { ...m, multi:m.multi.map((row, i) => {
+        if (i !== pi) return row;
+        let nr = {...row};
+        if (p===3) { nr.holeinone=s===1; nr.eagle=false; nr.birdie=s===2; }
+        else if (p===4) { nr.holeinone=false; nr.eagle=s===2; nr.birdie=s===3; }
+        else if (p===5) { nr.holeinone=false; nr.eagle=s===3; nr.birdie=s===4; }
+        if (bogey) { nr.sandy=false; nr.holeout=false; }
+        return nr;
+      })};
+    });
+    const newTarjetas = {...tarjetas};
+    const limit = p===3?6:p===4?8:p===5?10:999;
+
+    // Peor score en el hoyo: buscar todos los jugadores que hicieron doble par o peor en el hoyo actual
+    const peoresEnHoyo = newScores.map((row, i) => {
+      if (players[i]?.opts?.tarjetas === false) return null;
+      const sc = row[hole];
+      if (sc === null || sc === undefined) return null;
+      return sc >= limit ? sc : null;
+    });
+    const candidatos = peoresEnHoyo.map((sc, i) => sc !== null ? i : -1).filter(i => i >= 0);
+
+    if (candidatos.length === 0) {
+      if (newTarjetas["doblepar_hole"] === hole) {
+        newTarjetas["doblepar"] = null;
+        newTarjetas["doblepar_hole"] = null;
+      }
+      setDobleparEmpate(null);
+    } else {
+      // Encontrar el PEOR score entre los candidatos
+      const peorScore = Math.max(...candidatos.map(i => newScores[i][hole]));
+      const peoresIdx = candidatos.filter(i => newScores[i][hole] === peorScore);
+
+      if (peoresIdx.length === 1) {
+        // Solo uno con el peor score — asignar automáticamente
+        newTarjetas["doblepar"] = peoresIdx[0];
+        newTarjetas["doblepar_hole"] = hole;
+        setDobleparEmpate(null);
+      } else {
+        // Empate real en el peor score — mostrar selector
+        setDobleparEmpate({ hoyo: hole, candidatos: peoresIdx });
+        newTarjetas["doblepar_hole"] = hole;
+      }
+    }
+
+    // Peor Score: asignar al jugador con peor neto acumulado hasta ahora
+    const netosActuales = players.map((p, i) => {
+      if (p.opts?.tarjetas === false) return null;
+      const jugados = newScores[i].filter(v => v !== null && v !== undefined);
+      if (jugados.length === 0) return null;
+      const hcEfTab = nHoles <= 9 ? Math.ceil(p.hc/2) : p.hc; return jugados.reduce((a,b)=>a+b,0) - hcEfTab;
+    });
+    const validNetos = netosActuales.filter(n => n !== null);
+    if (validNetos.length > 0) {
+      const peorNeto = Math.max(...validNetos);
+      const peores = netosActuales.map((n,i) => n === peorNeto ? i : -1).filter(i => i >= 0);
+      newTarjetas["peorscore"] = peores.length === 1 ? peores[0] : peores;
+    }
+    setScores(newScores); setMarcas(newMarcas); setTarjetas(newTarjetas);
+    updateGame({ ...getState(), scores:newScores, marcas:newMarcas, tarjetas:newTarjetas });
+  };
+
+  const toggleMultiMarca = (pi, key) => {
+    const newMarcas = marcas.map((m, h) => {
+      if (h !== hole) return m;
+      return { ...m, multi:m.multi.map((row,i) => i===pi ? {...row,[key]:!row[key]} : row) };
+    });
+    setMarcas(newMarcas); updateGame({ ...getState(), marcas:newMarcas });
+  };
+
+  const setExclusive = (field, pi) => {
+    const newMarcas = marcas.map((m, h) => { if (h!==hole) return m; return { ...m, [field]:m[field]===pi?null:pi }; });
+    setMarcas(newMarcas); updateGame({ ...getState(), marcas:newMarcas });
+  };
+
+  const assignTarjeta = (tkey, pi) => {
+    const newTarjetas = { ...tarjetas, [tkey]:tarjetas[tkey]===pi?null:pi };
+    // Guardar en qué hoyo se asignó el threeput (Culebra) para bloquear Sandy en ese hoyo
+    if (tkey==="threeput") {
+      const quitando = tarjetas["threeput"] === pi;
+      newTarjetas["threeput_hole"] = quitando ? null : hole;
+    }
+    // Guardar en qué hoyo se asignó la anaconda
+    if (tkey==="anaconda") {
+      const quitando = tarjetas["anaconda"] === pi;
+      newTarjetas["anaconda_hole"] = quitando ? null : hole;
+    }
+    let newMarcas = marcas;
+    if (tkey==="threeput" && tarjetas["threeput"]!==pi) {
+      newMarcas = marcas.map((m,h) => { if (h!==hole) return m; return { ...m, multi:m.multi.map((row,i)=>i===pi?{...row,sandy:false}:row) }; });
+      setMarcas(newMarcas);
+    }
+    setTarjetas(newTarjetas); updateGame({ ...getState(), tarjetas:newTarjetas, marcas:newMarcas });
+  };
+
+  const nextHole = () => {
+    const sc = commitHole(scores, hole); setScores(sc);
+    // Con hoyo de salida: el último hoyo es (hoyoSalida-1 + nHoles-1) % totalHoyos
+    const hoyoIni = torneoConfig?.hoyoSalida ? torneoConfig.hoyoSalida - 1 : 0;
+    const totalH = pars.length || nHoles;
+    const hoyoFin = (hoyoIni + nHoles - 1) % totalH;
+    const nh = hole !== hoyoFin ? (hole + 1) % totalH : hole;
+    setHole(nh); setTab("score"); updateGame({ ...getState(), scores:sc, hole:nh });
+  };
+
+  const prevHole = () => {
+    const hoyoIni = torneoConfig?.hoyoSalida ? torneoConfig.hoyoSalida - 1 : 0;
+    if (hole !== hoyoIni) {
+      const totalH = pars.length || nHoles;
+      const ph = (hole - 1 + totalH) % totalH;
+      setHole(ph); setTab("score");
+    }
+  };
+
+  const [distWaypoint, setDistWaypoint] = useState(null);
+
+  const medirDistancia = () => {
+    const green = getGreenCoord(campo, hole);
+    if (!green) { setGpsError("Este campo no tiene GPS configurado para este hoyo"); return; }
+    if (!navigator.geolocation) { setGpsError("Tu navegador no soporta GPS"); return; }
+    setGpsLoading(true); setGpsError(""); setDistGreen(null); setDistWaypoint(null);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const yd = distanciaYardas(pos.coords.latitude, pos.coords.longitude, green.lat, green.lng);
+        setDistGreen(yd);
+        const wp = getWaypoint(campo, hole);
+        if (wp) {
+          const ydw = distanciaYardas(pos.coords.latitude, pos.coords.longitude, wp.lat, wp.lng);
+          setDistWaypoint({ label:wp.label, yards:ydw });
+        }
+        setGpsLoading(false);
+      },
+      (err) => {
+        setGpsError(err.code === 1 ? "Activa el permiso de ubicación para usar el GPS" : "No se pudo obtener tu ubicación");
+        setGpsLoading(false);
+      },
+      { enableHighAccuracy:true, timeout:10000, maximumAge:5000 }
+    );
+  };
+
+  // Reinicia la distancia al cambiar de hoyo
+  useEffect(() => { setDistGreen(null); setDistWaypoint(null); setGpsError(""); setDobleparEmpate(null); }, [hole]);
+
+
+  const finish = () => {
+    try { localStorage.removeItem("h19-ronda-activa"); } catch(e) {}
+    // Bloquear código del grupo para evitar reingreso
+    if (torneoConfig?.grupoId) {
+      try { set(ref(db, `codigosGrupo/${torneoConfig.grupoId}/status`), "finalizado"); } catch(e) {}
+    }
+    const fecha = new Date();
+    const fechaStr = `${fecha.getDate().toString().padStart(2,'0')}/${(fecha.getMonth()+1).toString().padStart(2,'0')}`;
+    const autoNombre = nombreRonda.trim() || `Ronda ${fechaStr}`;
+    const sc = commitHole(scores, hole); setScores(sc);
+    const fullScores = sc.map(row => row.map((v,j) => v===null?pars[j]:v));
+    const rawScores = sc;
+    const castigosFinales = getCastigos();
+    const extraPotAbandonos = castigosFinales.filter(c=>c.conCastigo).reduce((a,c)=>a+c.scorePago,0);
+    const r = calcMoney(players, fullScores, apuesta, extraPotAbandonos, nHoles);
+    const playsScoreCount = players.filter(p => p.opts ? p.opts.score !== false : true).length;
+    const siParaHC = (playsScoreCount >= 10 && r.fi.length === 1) ? r.si : [];
+    // Solo calcular HC para jugadores que apuestan (score !== false)
+    const playersParaHC = players.filter(p => p.opts?.score !== false);
+    const scoresParaHC = fullScores.filter((_, i) => players[i].opts?.score !== false);
+    const hc = calcHC(playersParaHC, scoresParaHC, siParaHC, nHoles);
+    const marcasMoney = calcMarcasMoney(players, marcas, marcaVal);
+    const marcasPtsRaw = calcMarcasPts(players, marcas);
+    const marcasPts = players.map((p,i) => (p.opts?.marcas === false) ? 0 : marcasPtsRaw[i]);
+    // Recalcular peorscore con scores COMPLETOS (total tiros - HC)
+    const netosFinales = players.map((p,i) => {
+      if (p.opts?.score === false || p.opts?.tarjetas === false) return null;
+      const hcEfFin = nHoles <= 9 ? Math.ceil(p.hc/2) : p.hc;
+      return fullScores[i].reduce((a,b)=>a+b,0) - hcEfFin;
+    });
+    const validNetosFinales = netosFinales.filter(n => n !== null);
+    const tarjetasFinales = { ...tarjetas };
+    if (validNetosFinales.length > 0) {
+      const peorNetoFinal = Math.max(...validNetosFinales);
+      const peoresFinal = netosFinales.map((n,i) => n === peorNetoFinal ? i : -1).filter(i => i >= 0);
+      tarjetasFinales.peorscore = peoresFinal.length === 1 ? peoresFinal[0] : peoresFinal;
+    }
+    // anaconda se asignó manualmente durante la ronda (igual que threeput/Culebra), se conserva
+    setTarjetas(tarjetasFinales);
+    const tarjetasMoney = calcTarjetasMoney(players, tarjetasFinales, tarjetaVal);
+    const tarjetasCount = players.map((p,i) => {
+      if (p.opts?.tarjetas === false) return 0;
+      let c = 0;
+      TARJETAS.forEach(t => {
+        const owner = tarjetasFinales[t.key];
+        if (Array.isArray(owner)) { if (owner.includes(i)) c += 1/owner.length; }
+        else if (owner === i) c += 1;
+      });
+      return Math.round(c * 10) / 10;
+    });
+    const resultData = { ...r, hcUpdates:hc, marcasMoney, marcasPts, tarjetasMoney, tarjetasCount, fullScores, rawScores, castigos:castigosFinales };
+    setResults(resultData);
+    window._h19castigos = castigosFinales;
+    const finalState = { ...getState(), scores:sc, tarjetas:tarjetasFinales, status:"finalizada", abandonos:castigosFinales };
+    updateGame(finalState);
+    // Si estamos en modo torneo, guardar resultados finales del grupo explícitamente
+    if (torneoConfig?.torneoId) {
+      const gid = torneoConfig.grupoId || rondaId;
+      try {
+        set(ref(db, `torneos/${torneoConfig.torneoId}/grupos/${gid}`), {
+          nombre: grupoNombre || torneoConfig.grupoNombre || "Grupo",
+          players, scores: sc, marcas, tarjetas,
+          hole, status: "finalizada", updatedAt: Date.now(),
+          abandonos: castigosFinales,
+          resultados: {
+            ganador: r.fi.length > 0 ? r.fi.map(i=>players[i].name).join(" · ") : "—",
+            netGanador: r.fi.length > 0 ? (r.nets[r.fi[0]] ?? null) : null,
+          }
+        });
+      } catch(e) {}
+    }
+    // Guardar en historial
+    try {
+      const noApostaIdx = new Set(players.map((p,i)=>p.opts?.score===false?i:-1).filter(i=>i>=0));
+      const jugadoresDetalle = players.map((p, i) => ({
+        name: p.name,
+        hc: p.hc ?? 0,
+        bruto: fullScores[i].reduce((a,b)=>a+(b||0),0),
+        neto: noApostaIdx.has(i) ? null : (r.nets[i] ?? null),
+        scoreMoney: noApostaIdx.has(i) ? 0 : (r.money[i] ?? 0),
+        marcasMoney: marcasMoney[i] ?? 0,
+        marcasPts: marcasPts[i] ?? 0,
+        tarjetasMoney: tarjetasMoney[i] ?? 0,
+        tarjetasCount: tarjetasCount[i] ?? 0,
+        total: (noApostaIdx.has(i) ? 0 : (r.money[i] ?? 0)) + (marcasMoney[i] ?? 0) + (tarjetasMoney[i] ?? 0),
+      }));
+      const histData = {
+        nombre: autoNombre,
+        campo, nHoles, fechaTs: Date.now(),
+        fecha: fechaStr,
+        ganador: r.fi.length > 0 ? r.fi.map(i=>players[i].name).join(" · ") : "—",
+        netGanador: r.fi.length > 0 ? (r.nets[r.fi[0]] ?? null) : null,
+        rondaId,
+        apuesta, marcaVal, tarjetaVal,
+        jugadores: jugadoresDetalle,
+        abandonos: castigosFinales,
+        hcUpdates: hc.map(u => ({ name:u.name, before:u.before, delta:u.delta, after:u.after })),
+        // Tarjeta completa hoyo por hoyo
+        pars,
+        playerNames: players.map(p=>p.name),
+        playerOptsArr: players.map(p=>p.opts || {score:true,marcas:true,tarjetas:true}),
+        scoresPorHoyo: fullScores,
+        marcas,
+        tarjetas,
+      };
+      // Firebase rechaza undefined — limpiar recursivamente
+      const cleanObj = (obj) => {
+        if (Array.isArray(obj)) return obj.map(cleanObj);
+        if (obj !== null && typeof obj === 'object') {
+          const out = {};
+          Object.entries(obj).forEach(([k,v]) => { if (v !== undefined) out[k] = cleanObj(v); });
+          return out;
+        }
+        return (obj !== undefined && !Number.isNaN(obj)) ? obj : null;
+      };
+      // Fase 3: escribir historial en club (primario) + raíz (dual-write)
+      const cleanHistData = cleanObj(histData);
+      set(clubRef(`historial/${rondaId}`), cleanHistData)
+        .catch(err => alert("Error guardando historial: " + err.message));
+      set(ref(db, `historial/${rondaId}`), cleanHistData).catch(() => {});  // dual-write
+      // Si estamos en modo torneo, también guardar en torneos
+      if (torneoConfig) {
+        const torneoHistKey = `${torneoConfig.torneoId}_${torneoConfig.grupoId}`;
+        const cleanTorneoData = cleanObj({
+          ...histData,
+          torneoId: torneoConfig.torneoId,
+          torneoNombre: torneoConfig.nombre,
+          grupoId: torneoConfig.grupoId,
+          grupoNombre: grupoNombre || torneoConfig.grupoNombre,
+        });
+        set(clubRef(`historialTorneos/${torneoHistKey}`), cleanTorneoData).catch(() => {});
+        set(ref(db, `historialTorneos/${torneoHistKey}`), cleanTorneoData).catch(() => {});  // dual-write
+      }
+    } catch(e) { alert("Error en bloque historial: " + e.message); }
+    setScreen("res");
+  };
+
+  const confirmHC = () => {
+    if (!results) return;
+    const updated = dir.map(p => { const u=results.hcUpdates.find(u=>u.id===p.id); return u?{...p,hc:u.after}:p; });
+    saveDir(updated); setSel(new Set()); setScreen("sel");
+  };
+
+  const shareRonda = () => {
+    const url = torneoConfig
+      ? `${window.location.origin}${window.location.pathname}?torneo=${torneoConfig.torneoId}`
+      : `${window.location.origin}${window.location.pathname}?ronda=${rondaId}`;
+    const label = torneoConfig ? "¡Link del torneo copiado!" : "¡Link copiado!";
+    if (navigator.clipboard) { navigator.clipboard.writeText(url); setShareMsg(label); setTimeout(()=>setShareMsg(""),2500); }
+    else { setShareMsg(torneoConfig ? `Código torneo: ${torneoConfig.torneoId}` : `Código: ${rondaId}`); setTimeout(()=>setShareMsg(""),4000); }
+  };
+
+  const getDisplay = (pi, h) => scores[pi]?.[h]===null ? pars[h] : scores[pi]?.[h];
+  const hcEf = (p) => nHoles <= 9 ? Math.ceil(p.hc/2) : p.hc;
+  const liveNets = players.map((p,i) => (toArr(scores[i])).reduce((a,v,j)=>a+(v===null?pars[j]:v),0) - hcEf(p));
+  const par = pars[hole] || 4;
+  const n = sel.size, pot = apuesta * n;
+
+  function marcasPtsHole(pi) {
+    if (!marcas[hole]) return 0;
+    let pts = 0;
+    MARCAS_MULTI.forEach(m => { if (marcas[hole].multi[pi][m.key]) pts += m.pts; });
+    if (marcas[hole].oyes===pi) pts += 1;
+    if (marcas[hole].regulation===pi) pts += 1;
+    return pts;
+  }
+
+  const appSt = { fontSize:14, fontFamily:"-apple-system,sans-serif", color:D.text, background:D.bg, minHeight:"100vh", maxWidth:420, margin:"0 auto", paddingBottom:32 };
+  const tog = (a) => ({ flex:1, padding:9, border:`1px solid ${a?D.gold:D.border}`, borderRadius:10, background:a?D.goldDim:"transparent", color:a?D.gold:D.textSub, fontSize:13, fontWeight:700, cursor:"pointer" });
+
+  // ── RETOMAR RONDA EN MODO TORNEO ──
+  if (screen === "torneo-resume" && torneoConfig?.rondaActiva) {
+    const ra = torneoConfig.rondaActiva;
+    const ps = Array.isArray(ra.players) ? ra.players : Object.values(ra.players||{});
+    const h = ra.hole || 0;
+
+    const reanudar = () => {
+      const basePares = CAMPOS[campo].pares || Array(18).fill(4);
+      const p = basePares.slice(0, nHoles);
+
+      // Restaurar scores asegurando que cada jugador tenga exactamente nHoles entradas
+      const sc = ps.map((_, pi) => {
+        const rawRow = Array.isArray(ra.scores)
+          ? ra.scores[pi]
+          : Object.values(ra.scores||{})[pi];
+        const row = Array.isArray(rawRow) ? rawRow : Object.values(rawRow||{});
+        // Pad o trim al tamaño correcto
+        const padded = Array(nHoles).fill(null);
+        for (let i = 0; i < Math.min(row.length, nHoles); i++) {
+          padded[i] = row[i] ?? null;
+        }
+        return padded;
+      });
+
+      // Restaurar marcas
+      const rawMarcas = ra.marcas
+        ? (Array.isArray(ra.marcas) ? ra.marcas : Object.values(ra.marcas))
+        : [];
+      const mc = Array(nHoles).fill(null).map((_, hi) => {
+        const m = rawMarcas[hi];
+        if (!m) return emptyMarca(ps.length);
+        return {
+          multi: Array.isArray(m.multi) ? m.multi : Object.values(m.multi||{}).map(r => typeof r === 'object' ? r : {}),
+          oyes: m.oyes ?? null,
+          regulation: m.regulation ?? null,
+        };
+      });
+
+      const tj = normalizeTarjetas(ra.tarjetas);
+
+      setPlayers(ps);
+      setScores(sc);
+      setMarcas(mc);
+      setTarjetas(tj);
+      setHole(h);
+      setPars(p);
+      setTab("score");
+      setGrupoNombre(torneoConfig.grupoNombre || "Mi Grupo");
+      // Restaurar abandonos
+      const abandonosGuardados = ra.abandonos ? (Array.isArray(ra.abandonos) ? ra.abandonos : Object.values(ra.abandonos)) : [];
+      setCastigos(abandonosGuardados);
+
+      // Buscar el rondaId en localStorage, si no hay generar uno nuevo
+      let rid = null;
+      try {
+        const saved = localStorage.getItem("h19-ronda-activa");
+        if (saved) {
+          const data = JSON.parse(saved);
+          if (data.rondaId) rid = data.rondaId;
+        }
+      } catch(e) {}
+      if (!rid) rid = Math.random().toString(36).substring(2,8).toUpperCase();
+      setRondaId(rid);
+      // Guardar estado actual en localStorage
+      const state = { players:ps, pars:p, scores:sc, marcas:mc, tarjetas:tj, hole:h, campo, status:"en_juego", rondaId:rid, grupoNombre:torneoConfig.grupoNombre };
+      saveToLocal(state);
+
+      setScreen("score");
+    };
+
+    return (
+      <div style={appSt}>
+        <div style={{ display:"flex", alignItems:"center", justifyContent:"center", flexDirection:"column", gap:12, padding:32, textAlign:"center" }}>
+          <div style={{ fontSize:40 }}>⛳</div>
+          <div style={{ fontSize:18, fontWeight:700, color:D.gold }}>{torneoConfig.grupoNombre}</div>
+          <div style={{ fontSize:13, color:D.textSub }}>{torneoConfig.nombre}</div>
+          <div style={{ padding:"10px 16px", background:D.greenBg, border:`1px solid ${D.success}`, borderRadius:12, marginTop:8 }}>
+            <div style={{ fontSize:13, fontWeight:700, color:D.success, marginBottom:4 }}>⛳ Ronda en curso encontrada</div>
+            <div style={{ fontSize:12, color:D.textSub }}>Hoyo {h+1} · {ps.length} jugadores</div>
+            <div style={{ fontSize:11, color:D.textSub, marginTop:2 }}>
+              {ps.map(p => p.name).join(", ")}
+            </div>
+          </div>
+          <Btn onClick={reanudar}>▶ Continuar desde hoyo {h+1}</Btn>
+        </div>
+      </div>
+    );
+  }
+
+  // ── INICIO AUTOMÁTICO EN MODO TORNEO CON JUGADORES PRE-ASIGNADOS ──
+  if (screen === "score-torneo-init" && torneoConfig?.playersPreasignados?.length >= 2) {
+    const ps = torneoConfig.playersPreasignados;
+    const basePares = CAMPOS[campo]?.pares || Array(18).fill(4);
+    // NO reordenar pars - los scores siempre van en orden 0,1,2...
+    // hoyoSalida solo afecta el display y el hoyo inicial
+    const p = basePares.slice(0, nHoles);
+    if (players.length === 0) {
+      const initScores = ps.map(() => Array(nHoles).fill(null));
+      const initMarcas = Array(nHoles).fill(null).map(() => emptyMarca(ps.length));
+      const initTarjetas = emptyTarjetas();
+      const rid = Math.random().toString(36).substring(2,8).toUpperCase();
+      setRondaId(rid); setPlayers(ps); setPars(p);
+      setScores(initScores); setMarcas(initMarcas); setTarjetas(initTarjetas);
+      const hoyoInicial = (torneoConfig.hoyoSalida||1) - 1;
+      setCastigos([]); try{localStorage.removeItem("h19-castigos");}catch(e){} setHole(hoyoInicial); setTab("score"); setResults(null);
+      setGrupoNombre(torneoConfig.grupoNombre || "Mi Grupo");
+      const state = { players:ps, pars:p, scores:initScores, marcas:initMarcas, tarjetas:initTarjetas, hole:hoyoInicial, campo, status:"en_juego", rondaId:rid, grupoNombre:torneoConfig.grupoNombre, hoyoSalida:torneoConfig.hoyoSalida||1 };
+      saveToLocal(state);
+      try { set(ref(db, `rondas/${rid}`), { ...state, createdAt:Date.now(), updatedAt:Date.now() }); } catch(e) {}
+      try { set(ref(db, `torneos/${torneoConfig.torneoId}/grupos/${torneoConfig.grupoId}`), {
+        nombre: torneoConfig.grupoNombre, players:ps, scores:initScores, marcas:initMarcas, tarjetas:initTarjetas, hole:hoyoInicial, status:"en_juego", hoyoSalida:torneoConfig.hoyoSalida||1, updatedAt:Date.now()
+      }); } catch(e) {}
+    }
+    return (
+      <div style={appSt}>
+        <div style={{ display:"flex", alignItems:"center", justifyContent:"center", flexDirection:"column", gap:12, padding:40, textAlign:"center" }}>
+          <div style={{ fontSize:40 }}>⛳</div>
+          <div style={{ fontSize:18, fontWeight:700, color:D.gold }}>{torneoConfig.grupoNombre}</div>
+          <div style={{ fontSize:13, color:D.textSub }}>{torneoConfig.nombre}</div>
+          <div style={{ fontSize:12, color:D.textSub, marginTop:8 }}>
+            {ps.length} jugadores asignados:
+          </div>
+          <div style={{ display:"flex", flexWrap:"wrap", gap:8, justifyContent:"center", marginBottom:16 }}>
+            {ps.map(p => (
+              <div key={p.id} style={{ display:"flex", alignItems:"center", gap:6, padding:"6px 12px", background:D.goldDim, borderRadius:20, border:`1px solid ${D.gold}44` }}>
+                <Avatar name={p.name} id={p.id} size={22} />
+                <span style={{ fontSize:12, fontWeight:600 }}>{p.name} · HC {nHoles<=9?Math.ceil(p.hc/2):p.hc}{nHoles<=9?" ("+p.hc+"/2)":""}</span>
+              </div>
+            ))}
+          </div>
+          <Btn onClick={() => setScreen("score")}>🏌️ Iniciar ronda del grupo</Btn>
+        </div>
+      </div>
+    );
+  }
+
+  // ── NOMBRE DEL GRUPO (solo en modo torneo sin jugadores pre-asignados) ──
+  if (screen === "grupo-nombre" && torneoConfig) return (
+    <div style={appSt}>
+      <div style={{ background:D.surface, borderBottom:`1px solid ${D.border}`, padding:"20px 16px 14px", textAlign:"center" }}>
+        <div style={{ fontSize:22, fontWeight:900, color:D.gold }}>H19 - Torneo</div>
+        <div style={{ fontSize:13, color:D.textSub, marginTop:2 }}>{torneoConfig.nombre}</div>
+      </div>
+      <div style={{ padding:"24px 16px", display:"flex", flexDirection:"column", gap:16, alignItems:"center" }}>
+        <div style={{ textAlign:"center" }}>
+          <div style={{ fontSize:32, marginBottom:8 }}>🏌️</div>
+          <div style={{ fontSize:16, fontWeight:700, color:D.text, marginBottom:4 }}>¿Cómo se llama tu grupo?</div>
+          <div style={{ fontSize:12, color:D.textSub }}>Ej: "Grupo 1", "Los Chacales A", "Salida 8am"</div>
+        </div>
+        <input value={grupoNombre} onChange={e=>setGrupoNombre(e.target.value)} placeholder="Nombre del grupo"
+          style={{ width:"100%", padding:"14px 16px", border:`1px solid ${D.border}`, borderRadius:12, background:D.surface, color:D.text, fontSize:16, textAlign:"center", boxSizing:"border-box" }} />
+        <div style={{ width:"100%", padding:"10px 14px", background:D.goldDim, borderRadius:10, fontSize:12, color:D.gold }}>
+          <div style={{ fontWeight:700, marginBottom:4 }}>📋 Configuración del torneo:</div>
+          <div>{CAMPOS[torneoConfig.campo]?.nombre} · {torneoConfig.nHoles} hoyos · Salida hoyo {torneoConfig.hoyoSalida||1}</div>
+          <div>Score {"$"+String(torneoConfig.apuesta)} · Marcas {"$"+String(torneoConfig.marcaVal)} · Tarjetas {"$"+String(torneoConfig.tarjetaVal)}</div>
+        </div>
+        <Btn onClick={() => { if (grupoNombre.trim()) setScreen("dir"); }} disabled={!grupoNombre.trim()}>
+          Continuar ->
+        </Btn>
+        <button onClick={onExit} style={{ fontSize:13, color:D.textSub, background:"none", border:"none", cursor:"pointer" }}>Volver</button>
+      </div>
+    </div>
+  );
+
+  // ── DIRECTORIO ──
+  if (screen==="dir") return (
+    <div style={appSt}>
+      <div style={{ background:D.surface, borderBottom:`1px solid ${D.border}`, padding:"20px 16px 14px" }}>
+        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+          <div style={{ fontSize:28, fontWeight:900, color:D.gold }}>H19</div>
+          <button onClick={onExit} style={{ fontSize:12, color:D.textSub, background:"none", border:`1px solid ${D.border}`, borderRadius:8, padding:"5px 10px", cursor:"pointer" }}>Salir</button>
+        </div>
+        <div style={{ fontSize:11, color:D.textSub, letterSpacing:2, textTransform:"uppercase", marginTop:2 }}>Admin</div>
+      </div>
+      <div style={{ padding:"12px 12px" }}>
+        <TabBar tabs={[{key:"dir",label:"👥 Jugadores"},{key:"hist",label:"📋 Historial"},{key:"sel",label:"⛳ Nueva ronda"}]} active="dir" onChange={k => { if(k==="sel") setScreen("sel"); if(k==="hist") setScreen("hist"); }} />
+        {Object.keys(whsHIMap).length > 0 && (() => {
+          const conHI = Object.values(whsHIMap).filter(w => w.hiEstablecido && w.hi != null);
+          const sinHI = Object.values(whsHIMap).filter(w => !w.hiEstablecido);
+          const difieren = dir.filter(p => {
+            const w = whsHIMap[p.name];
+            return w?.hiEstablecido && w.hi != null && Math.abs(w.hi - p.hc) > 1;
+          });
+          return (
+            <div style={{ background:"#1A2A1A", border:"1px solid #4CAF5044", borderRadius:10, padding:"10px 12px", marginBottom:10 }}>
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:6 }}>
+                <div style={{ fontSize:11, fontWeight:700, color:"#4CAF50" }}>WHS Handicap Engine</div>
+                <div style={{ fontSize:10, color:D.textSub }}>{conHI.length} con HI · {sinHI.length} en progreso</div>
+              </div>
+              {difieren.length > 0 && (
+                <div style={{ fontSize:10, color:"#DDAA00" }}>
+                  {"⚠ " + difieren.length + " jugador" + (difieren.length>1?"es":"") + " con diferencia HC actual vs WHS HI"}
+                </div>
+              )}
+            </div>
+          );
+        })()}
+        {torneoConfig && (
+          <div style={{ background:D.goldDim, border:`1px solid ${D.gold}`, borderRadius:12, padding:"12px 16px", marginBottom:12 }}>
+            <div style={{ fontSize:13, fontWeight:700, color:D.gold, marginBottom:4 }}>🏆 Modo Torneo</div>
+            <div style={{ fontSize:12, color:D.textSub }}>{torneoConfig.nombre}</div>
+            <div style={{ fontSize:11, color:D.textSub, marginTop:2 }}>Grupo: <strong>{grupoNombre}</strong> · {CAMPOS[torneoConfig.campo]?.nombre} · {torneoConfig.nHoles} hoyos</div>
+          </div>
+        )}
+        {savedRonda && (
+          <div style={{ background:D.greenBg, border:`1px solid ${D.success}`, borderRadius:12, padding:"12px 16px", marginBottom:12 }}>
+            <div style={{ fontSize:13, fontWeight:700, color:D.success, marginBottom:4 }}>⛳ Ronda guardada encontrada</div>
+            <div style={{ fontSize:11, color:D.textSub, marginBottom:10 }}>Hoyo {(savedRonda.hole||0)+1} · {savedRonda.players?.length||0} jugadores</div>
+            <div style={{ display:"flex", gap:8 }}>
+              <button onClick={resumeRonda} style={{ flex:1, padding:8, border:"none", borderRadius:8, background:D.success, color:"#fff", fontSize:13, fontWeight:700, cursor:"pointer" }}>▶ Continuar</button>
+              <button onClick={() => { localStorage.removeItem("h19-ronda-activa"); setSavedRonda(null); }} style={{ flex:1, padding:8, border:`1px solid ${D.border}`, borderRadius:8, background:"transparent", color:D.textSub, fontSize:13, cursor:"pointer" }}>Descartar</button>
+            </div>
+          </div>
+        )}
+        <Card>
+          <SLabel>Miembros del grupo</SLabel>
+          {dir.length===0 && <div style={{ textAlign:"center", color:D.textSub, padding:24, fontSize:13 }}>No hay jugadores aún</div>}
+          {dir.slice().sort((a,b)=>a.name.localeCompare(b.name)).map((p, idx) => {
+            const ultimosNombres = new Set((historial[0]?.jugadores||[]).map(j=>j.name));
+            const jugoUltima = ultimosNombres.has(p.name);
+            return (
+            <React.Fragment key={p.id}>
+            <div style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 0", borderBottom:idx<dir.length-1?`1px solid ${D.border}`:"none" }}>
+              <div style={{ position:"relative" }}>
+                <Avatar name={p.name} id={p.id} size={36} />
+                {jugoUltima && <div title="Jugó la última ronda" style={{ position:"absolute", bottom:-2, right:-2, width:12, height:12, borderRadius:"50%", background:D.success, border:`2px solid ${D.surface}` }} />}
+              </div>
+              <div style={{ flex:1 }}>
+                <div style={{ fontSize:14, fontWeight:600 }}>{p.name}</div>
+                {editingHC===p.id ? (
+                  <div style={{ display:"flex", alignItems:"center", gap:6, marginTop:4 }}>
+                    <span style={{ fontSize:11, color:D.gold }}>HC</span>
+                    <input type="number" min="0" max="54" defaultValue={p.hc} autoFocus
+                      onBlur={e => { const v=Math.max(0,parseInt(e.target.value)||0); saveDir(dir.map(d=>d.id===p.id?{...d,hc:v}:d)); setEditingHC(null); }}
+                      style={{ width:56, padding:"4px 8px", border:`1px solid ${D.gold}`, borderRadius:8, background:D.surface, color:D.gold, fontSize:13, fontWeight:700, textAlign:"center" }} />
+                    <span style={{ fontSize:11, color:D.textSub }}>Enter para guardar</span>
+                  </div>
+                ) : (
+                  <div style={{ display:"flex", alignItems:"center", gap:8, marginTop:2, flexWrap:"wrap" }}>
+                    <div style={{ fontSize:11, color:D.gold, cursor:"pointer" }} onClick={() => setEditingHC(p.id)}>
+                      HC {p.hc} <span style={{ color:D.textDim, fontSize:10 }}>· toca para editar</span>
+                    </div>
+                    {whsHIMap[p.name] && (
+                      <div style={{ display:"flex", alignItems:"center", gap:4 }}>
+                        <div style={{ width:1, height:10, background:D.border }} />
+                        {whsHIMap[p.name].hiEstablecido && whsHIMap[p.name].hi != null ? (
+                          <div style={{ fontSize:11, color:"#4CAF50", fontWeight:700 }}>
+                            {"WHS " + whsHIMap[p.name].hi.toFixed(1)}
+                            {whsHIMap[p.name].lowHI != null && whsHIMap[p.name].lowHI < whsHIMap[p.name].hi && (
+                              <span style={{ fontSize:9, color:D.textSub }}>{" · Low " + whsHIMap[p.name].lowHI.toFixed(1)}</span>
+                            )}
+                          </div>
+                        ) : (
+                          <div style={{ fontSize:10, color:D.textSub }}>
+                            {"WHS: " + (whsHIMap[p.name].totalHoyos || 0) + "/54 hoyos"}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+              <button onClick={() => setEditingHC(editingHC===p.id?null:p.id)} style={{ padding:"5px 10px", border:`1px solid ${editingHC===p.id?D.gold:D.border}`, borderRadius:8, background:editingHC===p.id?D.goldDim:"transparent", color:editingHC===p.id?D.gold:D.textSub, fontSize:11, cursor:"pointer" }}>
+                {editingHC===p.id ? "✓ Listo" : "Editar HC"}
+              </button>
+              {/* Botón aplicar WHS HI si difiere del HC actual */}
+              {(() => {
+                const w = whsHIMap[p.name];
+                if (!w?.hiEstablecido || w.hi == null) return null;
+                const whsRound = Math.round(w.hi);
+                if (whsRound === p.hc) return null;
+                return (
+                  <button onClick={() => saveDir(dir.map(d=>d.id===p.id?{...d,hc:whsRound}:d))}
+                    style={{ padding:"5px 8px", border:"1px solid #4CAF5044", borderRadius:8, background:"#1A2A1A", color:"#4CAF50", fontSize:10, fontWeight:700, cursor:"pointer", whiteSpace:"nowrap" }}>
+                    {"→ WHS " + w.hi.toFixed(1)}
+                  </button>
+                );
+              })()}
+              {/* Botón NIP — Fase 2 */}
+              <button onClick={() => { setNipPanelPlayerId(nipPanelPlayerId===p.id?null:p.id); setNipInput(""); setNipConfirm(""); setNipMsg(null); }}
+                style={{ padding:"5px 8px", border:`1px solid ${p.nipHash?"#4CAF5044":D.border}`, borderRadius:8, background:p.nipHash?"#1A2A1A":"transparent", color:p.nipHash?"#4CAF50":D.textSub, fontSize:11, cursor:"pointer", whiteSpace:"nowrap" }}>
+                {p.nipHash ? "🔑 ✓" : "🔑 NIP"}
+              </button>
+              {confirmDelete===p.id ? (
+                <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                  <span style={{ fontSize:11, color:D.danger, whiteSpace:"nowrap" }}>¿Eliminar?</span>
+                  <button onClick={() => { removePlayer(p.id); setConfirmDelete(null); }} style={{ padding:"5px 10px", border:`1px solid ${D.danger}`, borderRadius:8, background:D.redBg, color:D.danger, fontSize:11, fontWeight:700, cursor:"pointer" }}>Sí</button>
+                  <button onClick={() => setConfirmDelete(null)} style={{ padding:"5px 10px", border:`1px solid ${D.border}`, borderRadius:8, background:"transparent", color:D.textSub, fontSize:11, cursor:"pointer" }}>No</button>
+                </div>
+              ) : (
+                <button onClick={() => setConfirmDelete(p.id)} style={{ padding:"5px 8px", border:`1px solid ${D.danger}44`, borderRadius:8, background:"transparent", color:D.danger, fontSize:11, cursor:"pointer" }}>✕</button>
+              )}
+            </div>
+            {/* Panel inline de asignación de NIP */}
+            {nipPanelPlayerId===p.id && (
+              <div style={{ background:D.bg, border:`1px solid ${D.gold}44`, borderRadius:10, padding:"12px 14px", margin:"4px 0 8px", display:"flex", flexDirection:"column", gap:10 }}>
+                <div style={{ fontSize:12, fontWeight:700, color:D.gold }}>🔑 Asignar NIP a {p.name}</div>
+                <div style={{ fontSize:11, color:D.textSub }}>El jugador usará este NIP de 4–6 dígitos para acceder a la app. Se guarda encriptado.</div>
+                <div style={{ display:"flex", gap:8 }}>
+                  <input type="password" inputMode="numeric" maxLength={6} value={nipInput} onChange={e=>setNipInput(e.target.value.replace(/\D/g,""))} placeholder="NIP (4-6 dígitos)"
+                    style={{ flex:1, padding:"10px 12px", border:`1px solid ${D.border}`, borderRadius:10, background:D.surface, color:D.text, fontSize:16, textAlign:"center", letterSpacing:6, fontWeight:700 }} />
+                  <input type="password" inputMode="numeric" maxLength={6} value={nipConfirm} onChange={e=>setNipConfirm(e.target.value.replace(/\D/g,""))} placeholder="Confirmar"
+                    style={{ flex:1, padding:"10px 12px", border:`1px solid ${D.border}`, borderRadius:10, background:D.surface, color:D.text, fontSize:16, textAlign:"center", letterSpacing:6, fontWeight:700 }} />
+                </div>
+                {nipMsg && <div style={{ fontSize:12, color:nipMsg.ok?D.success:D.danger, fontWeight:600 }}>{nipMsg.text}</div>}
+                <div style={{ display:"flex", gap:8 }}>
+                  <button onClick={() => handleAsignarNIP(p.id)} disabled={nipSaving||nipInput.length<4}
+                    style={{ flex:1, padding:"10px", border:"none", borderRadius:10, background:nipInput.length>=4?D.success:"#999", color:"#fff", fontSize:13, fontWeight:700, cursor:nipInput.length>=4?"pointer":"default" }}>
+                    {nipSaving ? "Guardando…" : "Guardar NIP"}
+                  </button>
+                  <button onClick={() => { setNipPanelPlayerId(null); setNipInput(""); setNipConfirm(""); setNipMsg(null); }}
+                    style={{ padding:"10px 14px", border:`1px solid ${D.border}`, borderRadius:10, background:"transparent", color:D.textSub, fontSize:13, cursor:"pointer" }}>
+                    Cancelar
+                  </button>
+                </div>
+              </div>
+            )}
+            </React.Fragment>
+          )})}
+        </Card>
+        <Card>
+          <SLabel>Agregar jugador</SLabel>
+          <div style={{ display:"flex", gap:8 }}>
+            <input value={newName} onChange={e=>setNewName(e.target.value)} placeholder="Nombre" style={{ flex:1, padding:"10px 12px", border:`1px solid ${D.border}`, borderRadius:10, background:D.surface, color:D.text, fontSize:14 }} />
+            <input value={newHC} onChange={e=>setNewHC(e.target.value)} type="number" min="0" max="54" placeholder="HC" style={{ width:56, padding:"10px 8px", border:`1px solid ${D.border}`, borderRadius:10, background:D.surface, color:D.text, fontSize:14, textAlign:"center" }} />
+            <button onClick={addPlayer} style={{ padding:"10px 14px", border:`1px solid ${D.gold}`, borderRadius:10, background:D.goldDim, color:D.gold, fontSize:13, fontWeight:700, cursor:"pointer" }}>+ Agregar</button>
+          </div>
+        </Card>
+        <button onClick={() => {
+          const ultimosNombres = new Set((historial[0]?.jugadores||[]).map(j=>j.name));
+          const lines = [
+            `📋 *H19 Golf — Reporte de Handicaps*`,
+            `_Actualizado al ${new Date().toLocaleDateString('es-MX')}_`,
+            ``,
+            ...dir.slice().sort((a,b)=>a.hc-b.hc).map(p => `${ultimosNombres.has(p.name)?"🟢":"⚪"} ${p.name} — HC ${p.hc}`),
+            ``,
+            `🟢 = Jugó la última ronda${historial[0]?.nombre ? ` (${historial[0].nombre})` : ""}`,
+          ].join("\n");
+          const url = `https://wa.me/?text=${encodeURIComponent(lines)}`;
+          window.open(url, "_blank");
+        }} style={{ width:"100%", padding:"12px", border:"none", borderRadius:12, background:"#25D366", color:"#fff", fontSize:13, fontWeight:700, cursor:"pointer", marginBottom:10 }}>
+          💬 Compartir reporte de handicaps
+        </button>
+        <Btn onClick={() => setScreen("sel")}>⛳ Iniciar ronda</Btn>
+        <button onClick={() => setScreen("bar-config")} style={{ width:"100%", marginTop:10, padding:"12px", border:"none", borderRadius:12, background:"linear-gradient(135deg,#5C4200,#8B6914)", color:"#D4A843", fontSize:14, fontWeight:800, cursor:"pointer" }}>🍹 Configurar BAR</button>
+      </div>
+    </div>
+  );
+
+  // ── BAR CONFIG (Admin) ──
+  if (screen==="bar-config") return <BarAdminScreen onExit={() => setScreen("dir")} />;
+
+  // ── HISTORIAL ──
+  if (screen==="hist") return (
+    <div style={appSt}>
+      <div style={{ background:D.surface, borderBottom:`1px solid ${D.border}`, padding:"20px 16px 14px" }}>
+        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+          <div style={{ fontSize:28, fontWeight:900, color:D.gold }}>H19</div>
+          <button onClick={onExit} style={{ fontSize:12, color:D.textSub, background:"none", border:`1px solid ${D.border}`, borderRadius:8, padding:"5px 10px", cursor:"pointer" }}>Salir</button>
+        </div>
+      </div>
+      <div style={{ padding:"12px 12px" }}>
+        <TabBar tabs={[{key:"dir",label:"👥 Jugadores"},{key:"hist",label:"📋 Historial"},{key:"sel",label:"⛳ Nueva ronda"}]} active="hist" onChange={k => { if(k==="dir") setScreen("dir"); if(k==="sel") setScreen("sel"); }} />
+
+        {/* Sub-tabs: Rondas vs Torneos */}
+        <div style={{ display:"flex", gap:8, marginBottom:12 }}>
+          <button onClick={() => setHistTab("rondas")} style={{ flex:1, padding:"9px", border:`1px solid ${histTab==="rondas"?D.gold:D.border}`, borderRadius:10, background:histTab==="rondas"?D.goldDim:"transparent", color:histTab==="rondas"?D.gold:D.textSub, fontSize:13, fontWeight:700, cursor:"pointer" }}>
+            🏌️ Rondas ({historial.length})
+          </button>
+          <button onClick={() => setHistTab("torneos")} style={{ flex:1, padding:"9px", border:`1px solid ${histTab==="torneos"?D.gold:D.border}`, borderRadius:10, background:histTab==="torneos"?D.goldDim:"transparent", color:histTab==="torneos"?D.gold:D.textSub, fontSize:13, fontWeight:700, cursor:"pointer" }}>
+            🏆 Torneos ({historialTorneos.length})
+          </button>
+        </div>
+
+        {/* ── RONDAS ── */}
+        {histTab === "rondas" && (
+          <Card>
+            <SLabel>Rondas jugadas</SLabel>
+            {historial.length === 0 && (
+              <div style={{ textAlign:"center", color:D.textSub, padding:24, fontSize:13 }}>No hay rondas guardadas aún</div>
+            )}
+          {historial.map((r, idx) => {
+            const isOpen = expandedHist === r.id;
+            return (
+            <div key={r.id} style={{ padding:"12px 0", borderBottom:idx<historial.length-1?`1px solid ${D.border}`:"none" }}>
+              <div onClick={() => setExpandedHist(isOpen ? null : r.id)} style={{ cursor:"pointer" }}>
+                <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:4 }}>
+                  <div style={{ fontSize:14, fontWeight:700 }}>{r.nombre}</div>
+                  <div style={{ fontSize:11, color:D.textSub }}>{r.fecha}</div>
+                </div>
+                <div style={{ fontSize:12, color:D.textSub, marginBottom:6 }}>
+                  {CAMPOS[r.campo]?.nombre || r.campo} · {r.nHoles} hoyos · {r.jugadores?.length || 0} jugadores
+                </div>
+                <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+                  <div style={{ fontSize:12, background:D.goldDim, color:D.gold, padding:"2px 10px", borderRadius:10, fontWeight:700 }}>
+                    🏆 {r.ganador} ({r.netGanador} neto)
+                  </div>
+                  <div style={{ fontSize:11, color:D.textSub }}>{isOpen ? "▲ Ocultar" : "▼ Ver desglose"}</div>
+                </div>
+              </div>
+              {isOpen && r.jugadores && (
+                <div style={{ marginTop:10, background:D.bg, borderRadius:10, padding:10 }}>
+                  {r.jugadores.slice().sort((a,b)=>a.neto-b.neto).map((j, pos) => (
+                    <div key={j.name} style={{ display:"flex", alignItems:"center", gap:8, padding:"8px 0", borderBottom:pos<r.jugadores.length-1?`1px solid ${D.border}`:"none" }}>
+                      <div style={{ width:20, fontSize:12, fontWeight:900, color:pos===0?D.gold:D.textSub }}>{pos+1}</div>
+                      <div style={{ flex:1 }}>
+                        <div style={{ fontSize:13, fontWeight:600 }}>{j.name}</div>
+                        <div style={{ fontSize:10, color:D.textSub }}>HC {j.hc} · {j.bruto} bruto · {j.neto} neto</div>
+                      </div>
+                      <div style={{ textAlign:"right" }}>
+                        <div style={{ fontSize:13, fontWeight:900, color:j.total>=0?D.success:D.danger }}>
+                          {j.total>=0?`+$${j.total}`:`-$${Math.abs(j.total)}`}
+                        </div>
+                        <div style={{ fontSize:9, color:D.textDim }}>
+                          Score ${j.scoreMoney} · Marcas ${j.marcasMoney} ({j.marcasPts}pts) · Tarj ${j.tarjetasMoney} ({j.tarjetasCount})
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+
+                  {r.marcas && r.playerNames && (() => {
+                    const eventos = calcMarcasResumen(r.playerNames.map((n,i)=>({name:n, opts:r.playerOptsArr?.[i]})), r.marcas);
+                    return eventos.length > 0 ? (
+                      <div style={{ marginTop:12 }}>
+                        <div style={{ fontSize:11, fontWeight:700, color:D.textSub, marginBottom:6, textTransform:"uppercase", letterSpacing:1 }}>⭐ Resumen de marcas</div>
+                        {eventos.map((ev, i) => (
+                          <div key={i} style={{ display:"flex", alignItems:"center", gap:8, padding:"4px 0" }}>
+                            <div style={{ fontSize:11, color:D.textDim, width:42 }}>Hoyo {ev.hole}</div>
+                            <div style={{ flex:1, fontSize:12 }}>{ev.label}</div>
+                            <div style={{ fontSize:12, fontWeight:700, color:D.gold }}>{ev.playerName}</div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : null;
+                  })()}
+
+                  {r.scoresPorHoyo && r.pars && (
+                    <div style={{ marginTop:12, overflowX:"auto" }}>
+                      <div style={{ fontSize:11, fontWeight:700, color:D.textSub, marginBottom:6, textTransform:"uppercase", letterSpacing:1 }}>🏌️ Tarjeta hoyo por hoyo</div>
+                      <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11, minWidth:r.pars.length*32+90 }}>
+                        <thead>
+                          <tr>
+                            <th style={{ textAlign:"left", padding:"4px 6px", color:D.textSub, position:"sticky", left:0, background:D.bg }}>Hoyo</th>
+                            {r.pars.map((par, h) => (
+                              <th key={h} style={{ padding:"4px 4px", color:D.textDim, fontWeight:600, minWidth:28 }}>{h+1}</th>
+                            ))}
+                            <th style={{ padding:"4px 6px", color:D.gold, fontWeight:700 }}>Tot</th>
+                          </tr>
+                          <tr>
+                            <td style={{ padding:"2px 6px", color:D.textDim, fontSize:10, position:"sticky", left:0, background:D.bg }}>Par</td>
+                            {r.pars.map((par, h) => (
+                              <td key={h} style={{ textAlign:"center", padding:"2px 4px", color:D.textDim, fontSize:10 }}>{par}</td>
+                            ))}
+                            <td style={{ textAlign:"center", padding:"2px 6px", color:D.textDim, fontSize:10, fontWeight:700 }}>{r.pars.reduce((a,b)=>a+b,0)}</td>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(r.playerNames||[]).map((name, pi) => {
+                            const row = r.scoresPorHoyo[pi] || [];
+                            const tot = row.reduce((a,b)=>a+(b||0),0);
+                            return (
+                              <tr key={name} style={{ borderTop:`1px solid ${D.border}` }}>
+                                <td style={{ padding:"5px 6px", fontWeight:600, position:"sticky", left:0, background:D.bg, whiteSpace:"nowrap" }}>{name}</td>
+                                {row.map((s, h) => (
+                                  <td key={h} style={{ textAlign:"center", padding:"3px 1px" }}>
+                                    <ScoreCell s={s??null} par={r.pars[h]} size={20} />
+                                  </td>
+                                ))}
+                                <td style={{ textAlign:"center", padding:"5px 6px", fontWeight:900, color:D.gold }}>{tot}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                      <ScoreLegend />
+                    </div>
+                  )}
+
+                  {r.tarjetas && (
+                    <div style={{ marginTop:12 }}>
+                      <div style={{ fontSize:11, fontWeight:700, color:D.textSub, marginBottom:6, textTransform:"uppercase", letterSpacing:1 }}>🃏 Tarjetas ganadas</div>
+                      {TARJETAS.map((tj, idx) => {
+                        const owner = r.tarjetas[tj.key];
+                        if (owner === null || owner === undefined) return null;
+                        return (
+                          <div key={tj.key} style={{ display:"flex", justifyContent:"space-between", fontSize:12, padding:"4px 0" }}>
+                            <span style={{ color:D.textSub }}>{tj.label}</span>
+                            <span style={{ fontWeight:700, color:D.danger }}>{r.playerNames?.[owner] || "—"}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                  <div style={{ marginTop:14, paddingTop:10, borderTop:`1px solid ${D.border}` }}>
+                    {confirmDeleteHist === r.id ? (
+                      <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                        <span style={{ fontSize:12, color:D.danger, flex:1 }}>¿Eliminar esta ronda del historial?</span>
+                        <button onClick={() => { remove(ref(db, `historial/${r.id}`)); setConfirmDeleteHist(null); setExpandedHist(null); }} style={{ padding:"6px 12px", border:`1px solid ${D.danger}`, borderRadius:8, background:D.redBg, color:D.danger, fontSize:11, fontWeight:700, cursor:"pointer" }}>Sí, eliminar</button>
+                        <button onClick={() => setConfirmDeleteHist(null)} style={{ padding:"6px 12px", border:`1px solid ${D.border}`, borderRadius:8, background:"transparent", color:D.textSub, fontSize:11, cursor:"pointer" }}>Cancelar</button>
+                      </div>
+                    ) : (
+                      <button onClick={() => setConfirmDeleteHist(r.id)} style={{ width:"100%", padding:"8px", border:`1px solid ${D.danger}44`, borderRadius:8, background:"transparent", color:D.danger, fontSize:12, cursor:"pointer" }}>🗑️ Eliminar ronda</button>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+            );
+          })}
+          </Card>
+        )}
+
+        {/* ── TORNEOS ── */}
+        {histTab === "torneos" && (
+          <Card>
+            <SLabel>Torneos finalizados</SLabel>
+            {historialTorneos.length === 0 && (
+              <div style={{ textAlign:"center", color:D.textSub, padding:24, fontSize:13 }}>No hay torneos guardados aún</div>
+            )}
+            {historialTorneos.map((t, idx) => {
+              const isOpen = expandedTorneoHist === t.id;
+              const grupos = t.grupos ? Object.entries(t.grupos) : [];
+              const fecha = t.resumenGlobal?.fecha || (t.createdAt ? new Date(t.createdAt).toLocaleDateString('es-MX') : "—");
+              const rg = t.resumenGlobal; // resumen global con todos los jugadores
+              const totalJugadores = rg?.jugadores?.length || grupos.reduce((sum,[,g])=>sum+(Array.isArray(g.players)?g.players:Object.values(g.players||{})).length,0);
+              const ganadorNombre = rg?.ganador || "—";
+              return (
+                <div key={t.id} style={{ padding:"12px 0", borderBottom:idx<historialTorneos.length-1?`1px solid ${D.border}`:"none" }}>
+                  <div onClick={() => { setExpandedTorneoHist(isOpen ? null : t.id); setExpandedGrupoHist(null); }} style={{ cursor:"pointer" }}>
+                    <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:4 }}>
+                      <div style={{ fontSize:14, fontWeight:700 }}>{t.nombre}</div>
+                      <div style={{ fontSize:11, color:D.textSub }}>{fecha}</div>
+                    </div>
+                    <div style={{ fontSize:12, color:D.textSub, marginBottom:4 }}>
+                      {CAMPOS[t.campo]?.nombre||t.campo} · {t.nHoles} hoyos · {grupos.length} grupos · {totalJugadores} jugadores
+                    </div>
+                    {rg && <div style={{ fontSize:12, background:D.goldDim, color:D.gold, padding:"2px 10px", borderRadius:10, fontWeight:700, display:"inline-block", marginBottom:4 }}>🏆 {ganadorNombre} ({rg.netGanador} neto)</div>}
+                    <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginTop:4 }}>
+                      <div style={{ fontSize:11, color:D.textSub }}>{isOpen ? "▲ Ocultar grupos" : "▼ Ver grupos"}</div>
+                      {confirmDeleteTorneo === t.id ? (
+                        <div style={{ display:"flex", gap:6, alignItems:"center" }}>
+                          <span style={{ fontSize:11, color:D.danger, fontWeight:700 }}>¿Eliminar?</span>
+                          <button onClick={e => { e.stopPropagation(); remove(ref(db, `torneos/${t.id}`)); setExpandedTorneoHist(null); setConfirmDeleteTorneo(null); }}
+                            style={{ fontSize:11, color:"#fff", background:D.danger, border:"none", borderRadius:6, padding:"3px 10px", cursor:"pointer", fontWeight:700 }}>
+                            Sí, eliminar
+                          </button>
+                          <button onClick={e => { e.stopPropagation(); setConfirmDeleteTorneo(null); }}
+                            style={{ fontSize:11, color:D.textSub, background:"transparent", border:`1px solid ${D.border}`, borderRadius:6, padding:"3px 10px", cursor:"pointer" }}>
+                            Cancelar
+                          </button>
+                        </div>
+                      ) : (
+                        <button onClick={e => { e.stopPropagation(); setConfirmDeleteTorneo(t.id); }}
+                          style={{ fontSize:11, color:D.danger, background:"transparent", border:`1px solid ${D.danger}44`, borderRadius:6, padding:"2px 8px", cursor:"pointer" }}>
+                          🗑️ Eliminar
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  {isOpen && (
+                    <div style={{ marginTop:10, background:D.bg, borderRadius:10, padding:10 }}>
+
+                      {/* ── CLASIFICACIÓN GLOBAL ── */}
+                      {rg?.jugadores ? (
+                        <div style={{ marginBottom:12 }}>
+                          <div style={{ fontSize:11, fontWeight:700, color:D.gold, textTransform:"uppercase", letterSpacing:1, marginBottom:8 }}>🏆 Clasificación global</div>
+                          {rg.jugadores.map((j,pos) => (
+                            <div key={j.name} style={{ display:"flex", alignItems:"center", gap:8, padding:"8px 0", borderBottom:`1px solid ${D.border}` }}>
+                              <div style={{ width:18, fontSize:12, fontWeight:900, color:pos===0?D.gold:D.textSub }}>{pos+1}</div>
+                              <Avatar name={String(j.name||'?')} id={j.name} size={26} />
+                              <div style={{ flex:1 }}>
+                                <div style={{ fontSize:13, fontWeight:600 }}>{j.name}</div>
+                                <div style={{ fontSize:10, color:D.textDim }}>{j.grupoNombre} · HC {j.hc} · {j.bruto} bruto · {j.neto} neto</div>
+                              </div>
+                              <div style={{ textAlign:"right" }}>
+                                <div style={{ fontSize:14, fontWeight:900, color:j.total>=0?D.success:D.danger }}>
+                                  {j.total>=0?`+$${j.total}`:`-$${Math.abs(j.total)}`}
+                                </div>
+                                <div style={{ fontSize:9, color:D.textDim }}>Sc {"$"+String(j.scoreMoney)} · Mk {"$"+String(j.marcasMoney)} · Tj {"$"+String(j.tarjetasMoney)}</div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div style={{ textAlign:"center", color:D.textDim, fontSize:12, padding:12 }}>Torneo guardado con versión anterior - sin resumen global</div>
+                      )}
+
+                      {/* ── DESGLOSE POR GRUPO (tarjeta, marcas, tarjetas) ── */}
+                      <div style={{ fontSize:11, fontWeight:700, color:D.textSub, textTransform:"uppercase", letterSpacing:1, marginBottom:8, marginTop:4 }}>Desglose por grupo</div>
+                      {grupos.map(([gid, g]) => {
+                        const rf = g.resumenFinal;
+                        const isGrupoOpen = expandedGrupoHist === gid;
+                        return (
+                          <div key={gid} style={{ marginBottom:10, paddingBottom:10, borderBottom:`1px solid ${D.border}` }}>
+                            <div onClick={() => setExpandedGrupoHist(isGrupoOpen ? null : gid)} style={{ cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"space-between", padding:"6px 0" }}>
+                              <div style={{ fontSize:13, fontWeight:700, color:D.gold }}>🏌️ {g.nombre || `Grupo ${gid.slice(-3)}`}</div>
+                              <div style={{ fontSize:10, color:D.textSub }}>{isGrupoOpen ? "▲" : "▼ Tarjeta"}</div>
+                            </div>
+                            {isGrupoOpen && rf && (
+                              <div style={{ marginTop:8 }}>
+                                {/* Tarjeta hoyo×hoyo */}
+                                {rf.scoresPorHoyo && rf.pars && (
+                                  <div style={{ overflowX:"auto" }}>
+                                    <table style={{ width:"100%", borderCollapse:"collapse", fontSize:10, minWidth:rf.pars.length*26+80 }}>
+                                      <thead>
+                                        <tr>
+                                          <td style={{ padding:"3px 4px", color:D.textDim, position:"sticky", left:0, background:D.bg }}>Par</td>
+                                          {toArr(rf.pars).map((par,h) => <td key={h} style={{ textAlign:"center", padding:"2px 2px", color:D.textDim }}>{par}</td>)}
+                                          <td style={{ textAlign:"center", padding:"2px 4px", color:D.textSub, fontWeight:700 }}>Tot</td>
+                                        </tr>
+                                      </thead>
+                                      <tbody>
+                                        {(rf.playerNames||[]).map((name,pi) => {
+                                          const row = toArr(rf.scoresPorHoyo[pi]);
+                                          return (
+                                            <tr key={name} style={{ borderTop:`1px solid ${D.border}` }}>
+                                              <td style={{ padding:"4px 4px", fontWeight:600, position:"sticky", left:0, background:D.bg, whiteSpace:"nowrap" }}>{name}</td>
+                                              {toArr(rf.pars).map((par,h) => <td key={h} style={{ textAlign:"center", padding:"2px 1px" }}><ScoreCell s={row[h]??null} par={par} size={18} /></td>)}
+                                              <td style={{ textAlign:"center", padding:"4px 4px", fontWeight:900, color:D.gold }}>{row.filter(s=>s!=null).reduce((a,b)=>a+b,0)||'-'}</td>
+                                            </tr>
+                                          );
+                                        })}
+                                      </tbody>
+                                    </table>
+                                    <ScoreLegend />
+                                  </div>
+                                )}
+                                {/* Marcas */}
+                                {rf.marcas && rf.playerNames && (() => {
+                                  const ps = rf.playerNames.map(name=>({name,opts:{marcas:true}}));
+                                  const eventos = calcMarcasResumen(ps, rf.marcas);
+                                  return eventos.length > 0 ? (
+                                    <div style={{ marginTop:8 }}>
+                                      <div style={{ fontSize:10, fontWeight:700, color:D.textSub, marginBottom:4, textTransform:"uppercase" }}>⭐ Marcas</div>
+                                      {eventos.map((ev,i) => (
+                                        <div key={i} style={{ display:"flex", gap:6, padding:"3px 0", fontSize:11 }}>
+                                          <span style={{ color:D.textDim, width:38 }}>Hoyo {ev.hole}</span>
+                                          <span style={{ flex:1 }}>{ev.label}</span>
+                                          <span style={{ fontWeight:700, color:D.gold }}>{ev.playerName}</span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  ) : null;
+                                })()}
+                                {/* Tarjetas */}
+                                {rf.tarjetas && (() => {
+                                  const conDueno = TARJETAS.filter(tj=>{ const o=rf.tarjetas[tj.key]; return Array.isArray(o)?o.length>0:(o!==null&&o!==undefined); });
+                                  return conDueno.length>0 ? (
+                                    <div style={{ marginTop:8 }}>
+                                      <div style={{ fontSize:10, fontWeight:700, color:D.danger, marginBottom:4, textTransform:"uppercase" }}>🃏 Tarjetas</div>
+                                      {conDueno.map(tj=>{
+                                        const owner=rf.tarjetas[tj.key];
+                                        const names=Array.isArray(owner)?owner.map(i=>rf.playerNames?.[i]).filter(Boolean).join(" · "):rf.playerNames?.[owner]||"-";
+                                        return <div key={tj.key} style={{ display:"flex", justifyContent:"space-between", fontSize:11, padding:"2px 0" }}><span style={{ color:D.textSub }}>{tj.label}</span><span style={{ fontWeight:700, color:D.danger }}>{names}</span></div>;
+                                      })}
+                                    </div>
+                                  ) : null;
+                                })()}
+                              </div>
+                            )}
+                            {isGrupoOpen && !rf && <div style={{ fontSize:11, color:D.textDim, padding:"6px 0" }}>Sin desglose de tarjeta guardado</div>}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </Card>
+        )}
+
+      </div>
+    </div>
+  );
+
+  // ── SELECCIÓN ──
+  if (screen==="sel") return (
+    <div style={appSt}>
+      <div style={{ background:D.surface, borderBottom:`1px solid ${D.border}`, padding:"20px 16px 14px" }}>
+        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+          <div style={{ fontSize:28, fontWeight:900, color:D.gold }}>H19</div>
+          <button onClick={onExit} style={{ fontSize:12, color:D.textSub, background:"none", border:`1px solid ${D.border}`, borderRadius:8, padding:"5px 10px", cursor:"pointer" }}>Salir</button>
+        </div>
+      </div>
+      <div style={{ padding:"12px 12px" }}>
+        <TabBar tabs={[{key:"dir",label:"👥 Jugadores"},{key:"sel",label:"⛳ Nueva ronda"}]} active="sel" onChange={k => k==="dir" && setScreen("dir")} />
+        <Card>
+          <SLabel>Campo</SLabel>
+          <CampoSelector campo={campo} setCampo={setCampo} nHoles={nHoles} setNHoles={setNHoles} />
+        </Card>
+        <Card>
+          <SLabel>Hoyos</SLabel>
+          <div style={{ display:"flex", gap:8 }}>
+            {[9,18].map(h => {
+              const bp = CAMPOS[campo].pares || Array(18).fill(4);
+              const pt = bp.slice(0,h).reduce((a,b)=>a+b,0);
+              return <button key={h} onClick={() => setNHoles(h)} style={tog(nHoles===h)}>{h} hoyos · Par {pt}</button>;
+            })}
+          </div>
+        </Card>
+        <Card>
+          <SLabel>💰 Apuestas</SLabel>
+          {[
+            {label:"Score - por jugador", val:apuesta, set:setApuesta},
+            {label:"Marcas - por punto",  val:marcaVal, set:setMarcaVal},
+            {label:"Tarjetas - por tarjeta", val:tarjetaVal, set:setTarjetaVal},
+          ].map(({label,val,set}) => (
+            <div key={label} style={{ display:"flex", alignItems:"center", gap:10, padding:"8px 0", borderBottom:`1px solid ${D.border}` }}>
+              <div style={{ flex:1, fontSize:13, color:D.textSub }}>{label}</div>
+              <button onClick={() => set(Math.max(0,val-10))} style={{ width:30,height:30,borderRadius:"50%",border:`1px solid ${D.border}`,background:"transparent",color:D.text,cursor:"pointer",fontSize:18,display:"flex",alignItems:"center",justifyContent:"center" }}>-</button>
+              <div style={{ width:50, textAlign:"center", fontSize:15, fontWeight:700, color:D.gold }}>{"$"+String(val)}</div>
+              <button onClick={() => set(val+10)} style={{ width:30,height:30,borderRadius:"50%",border:`1px solid ${D.gold}`,background:D.goldDim,color:D.gold,cursor:"pointer",fontSize:18,display:"flex",alignItems:"center",justifyContent:"center" }}>+</button>
+            </div>
+          ))}
+        </Card>
+        <Card>
+          <SLabel>¿Quién juega hoy?</SLabel>
+          <div style={{ fontSize:12, color:n<2?D.textSub:D.gold, marginBottom:10, fontWeight:600 }}>
+            {n===0?"Selecciona los jugadores":n===1?"1 seleccionado - necesitas al menos 2":`${n} jugadores seleccionados ✓`}
+          </div>
+          {n>=2 && (
+            <div style={{ fontSize:12, color:D.textSub, padding:"8px 12px", background:D.surface, borderRadius:10, marginBottom:12, border:`1px solid ${D.border}` }}>
+              🏆 Premio <span style={{ color:D.gold, fontWeight:700 }}>{"$"+String(pot)}</span> · {n>=10?`1er ${"$"+String(Math.round(pot*0.6))} (60%) · 2do ${"$"+String(Math.round(pot*0.4))} (40%)`:"Todo para el 1er lugar"}
+            </div>
+          )}
+          {dir.slice().sort((a,b)=>a.name.localeCompare(b.name)).map((p, idx) => (
+            <div key={p.id} onClick={() => toggleSel(p.id)} style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 0", borderBottom:idx<dir.length-1?`1px solid ${D.border}`:"none", cursor:"pointer", userSelect:"none" }}>
+              <div style={{ width:22,height:22,borderRadius:6,border:`2px solid ${sel.has(p.id)?D.gold:D.border}`,background:sel.has(p.id)?D.goldDim:"transparent",color:D.gold,display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:700,flexShrink:0 }}>
+                {sel.has(p.id)?"✓":""}
+              </div>
+              <Avatar name={p.name} id={p.id} size={32} />
+              <div style={{ flex:1, fontSize:14, fontWeight:600 }}>{p.name}</div>
+              <div style={{ fontSize:12, color:D.gold }}>HC {nHoles<=9?Math.ceil(p.hc/2):p.hc}{nHoles<=9?" (de "+p.hc+")":""}</div>
+            </div>
+          ))}
+        </Card>
+        {n>=2 && (
+          <Card>
+            <SLabel>🎮 Opciones por jugador</SLabel>
+            <div style={{ display:"flex", gap:4, marginBottom:10, paddingBottom:8, borderBottom:`1px solid ${D.border}` }}>
+              <div style={{ flex:1 }}></div>
+              {["Score","Marcas","Tarjetas"].map(o => <div key={o} style={{ width:56,textAlign:"center",fontSize:10,color:D.gold,fontWeight:700 }}>{o}</div>)}
+            </div>
+            {dir.filter(p=>sel.has(p.id)).slice().sort((a,b)=>a.name.localeCompare(b.name)).map(p => {
+              const opts = playerOpts[p.id] || {score:true,marcas:true,tarjetas:true};
+              const toggle = (key) => setPlayerOpts(prev=>({...prev,[p.id]:{...opts,[key]:!opts[key]}}));
+              return (
+                <div key={p.id} style={{ display:"flex", alignItems:"center", gap:4, padding:"8px 0", borderBottom:`1px solid ${D.border}` }}>
+                  <div style={{ flex:1, display:"flex", alignItems:"center", gap:8 }}>
+                    <Avatar name={p.name} id={p.id} size={24} />
+                    <span style={{ fontSize:13, fontWeight:600 }}>{p.name}</span>
+                  </div>
+                  {["score","marcas","tarjetas"].map(key => (
+                    <div key={key} onClick={() => toggle(key)} style={{ width:56, display:"flex", justifyContent:"center" }}>
+                      <div style={{ width:26,height:26,borderRadius:6,border:`2px solid ${opts[key]!==false?D.gold:D.border}`,background:opts[key]!==false?D.goldDim:"transparent",color:D.gold,display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:700,cursor:"pointer" }}>
+                        {opts[key]!==false?"✓":""}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              );
+            })}
+          </Card>
+        )}
+        <Card>
+          <SLabel>📝 Nombre de la ronda (opcional)</SLabel>
+          <input
+            value={nombreRonda}
+            onChange={e => setNombreRonda(e.target.value)}
+            placeholder={`Ronda ${new Date().getDate().toString().padStart(2,'0')}/${(new Date().getMonth()+1).toString().padStart(2,'0')}`}
+            style={{ width:"100%", padding:"10px 12px", border:`1px solid ${D.border}`, borderRadius:10, background:D.surface, color:D.text, fontSize:14, boxSizing:"border-box" }}
+          />
+          <div style={{ fontSize:11, color:D.textSub, marginTop:6 }}>Ej: "Torneo Navidad", "Ronda 16/06"</div>
+        </Card>
+
+        <Btn onClick={startGame} disabled={n<2}>Comenzar ronda</Btn>
+        <Btn outline onClick={() => setScreen("dir")} style={{ marginTop:8 }}>Volver</Btn>
+      </div>
+    </div>
+  );
+
+  // ── SCORE ──
+  if (screen==="score") return (
+    <div style={appSt}>
+      <div style={{ height:3, background:D.border }}>
+        <div style={{ height:"100%", width:`${Math.round(((() => { const hi = torneoConfig?.hoyoSalida?torneoConfig.hoyoSalida-1:0; const tot = pars.length||nHoles; return ((hole-hi+tot)%tot+1)/nHoles; })()*100))}%`, background:`linear-gradient(90deg,${D.gold},${D.goldLight})`, transition:"width 0.3s" }} />
+      </div>
+      <div style={{ background:D.surface, borderBottom:`1px solid ${D.border}`, padding:"12px 16px", display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:12 }}>
+        {(() => {
+          const hoyoIni = torneoConfig?.hoyoSalida ? torneoConfig.hoyoSalida - 1 : 0;
+          const totalH = pars.length || nHoles;
+          const hoyoFin = (hoyoIni + nHoles - 1) % totalH;
+          const esUltimo = hole === hoyoFin;
+          const esPrimero = hole === hoyoIni;
+          return (<>
+            <button onClick={prevHole} disabled={esPrimero} style={{ width:36,height:36,borderRadius:"50%",border:`1px solid ${D.border}`,background:"transparent",color:D.text,cursor:"pointer",fontSize:20,opacity:esPrimero?0.3:1 }}>{"<"}</button>
+            <div style={{ textAlign:"center" }}>
+              <div style={{ fontSize:11, color:D.textSub, letterSpacing:1, textTransform:"uppercase" }}>{CAMPOS[campo]?.nombre||"Campo"}</div>
+              <div style={{ fontSize:22, fontWeight:900 }}>Hoyo {hole+1}{hole===hoyoIni&&(torneoConfig?.hoyoSalida||1)>1?" ⭐":""}</div>
+              <div style={{ fontSize:12, color:D.gold, fontWeight:700, letterSpacing:1 }}>PAR {par}</div>
+            </div>
+            <div style={{ display:"flex", flexDirection:"column", alignItems:"flex-end", gap:4 }}>
+              {!esUltimo
+                ? <button onClick={nextHole} style={{ padding:"7px 14px", border:`1px solid ${D.gold}`, borderRadius:20, background:D.goldDim, color:D.gold, fontSize:12, fontWeight:700, cursor:"pointer" }}>Siguiente</button>
+                : <div style={{ width:80 }} />
+              }
+              {torneoConfig
+                ? <button onClick={() => onExit()} style={{ padding:"4px 10px", border:`1px solid ${D.border}`, borderRadius:12, background:"transparent", color:D.textSub, fontSize:10, cursor:"pointer" }}>Salir</button>
+                : rondaId && <button onClick={shareRonda} style={{ padding:"4px 10px", border:`1px solid ${D.border}`, borderRadius:12, background:"transparent", color:D.textSub, fontSize:10, cursor:"pointer" }}>Compartir</button>
+              }
+            </div>
+          </>);
+        })()}
+      </div>
+      {shareMsg && <div style={{ margin:"0 12px 10px", padding:"8px 12px", background:D.greenBg, border:`1px solid ${D.success}`, borderRadius:10, color:D.success, fontSize:12, textAlign:"center", fontWeight:600 }}>{shareMsg}</div>}
+
+      {dobleparEmpate && (
+        <div style={{ margin:"0 12px 10px", padding:"14px", background:"#FFF3CD", border:`2px solid #C87A30`, borderRadius:12 }}>
+          <div style={{ fontSize:13, fontWeight:700, color:"#8A4A00", marginBottom:8 }}>
+            🔻 Empate en Peor score en el hoyo {dobleparEmpate.hoyo + 1}
+          </div>
+          <div style={{ fontSize:12, color:"#8A4A00", marginBottom:10 }}>
+            ¿Quién tiró al último?
+          </div>
+          <div style={{ display:"flex", flexWrap:"wrap", gap:8 }}>
+            {dobleparEmpate.candidatos.map(pi => (
+              <button key={pi} onClick={() => {
+                const newTarjetas = { ...tarjetas, doblepar: pi, doblepar_hole: dobleparEmpate.hoyo };
+                setTarjetas(newTarjetas);
+                updateGame({ ...getState(), tarjetas: newTarjetas });
+                setDobleparEmpate(null);
+              }} style={{ display:"flex", alignItems:"center", gap:6, padding:"8px 14px", border:`1px solid #C87A30`, borderRadius:20, background:"#FFF", color:"#8A4A00", fontSize:13, fontWeight:700, cursor:"pointer" }}>
+                <Avatar name={players[pi].name} id={players[pi].id} size={22} />
+                {players[pi].name}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+      <div style={{ padding:"0 12px" }}>
+        {getGreenCoord(campo, hole) && (
+          <div style={{ background:D.surface, border:`1px solid ${D.border}`, borderRadius:12, padding:"12px 14px", marginBottom:12, textAlign:"center" }}>
+            {distGreen !== null ? (
+              <div onClick={medirDistancia} style={{ cursor:"pointer" }}>
+                {distWaypoint && (
+                  <div style={{ marginBottom:10, paddingBottom:10, borderBottom:`1px solid ${D.border}` }}>
+                    <div style={{ fontSize:10, fontWeight:700, color:D.textSub, textTransform:"uppercase", letterSpacing:2, marginBottom:2 }}>📍 A {distWaypoint.label}</div>
+                    <div style={{ fontSize:22, fontWeight:900, color:D.text }}>{distWaypoint.yards} <span style={{ fontSize:12, color:D.textSub, fontWeight:600 }}>yds</span></div>
+                  </div>
+                )}
+                <div style={{ fontSize:10, fontWeight:700, color:D.gold, textTransform:"uppercase", letterSpacing:2, marginBottom:4 }}>📍 Distancia al green</div>
+                <div style={{ fontSize:32, fontWeight:900, color:D.text }}>{distGreen} <span style={{ fontSize:14, color:D.textSub, fontWeight:600 }}>yds</span></div>
+                <div style={{ fontSize:10, color:D.textDim, marginTop:2 }}>Toca para actualizar</div>
+              </div>
+            ) : (
+              <button onClick={medirDistancia} disabled={gpsLoading} style={{ width:"100%", padding:"10px", border:`1px solid ${D.gold}`, borderRadius:10, background:D.goldDim, color:D.gold, fontSize:13, fontWeight:700, cursor:"pointer" }}>
+                {gpsLoading ? "📍 Midiendo..." : "📍 Medir distancia al green"}
+              </button>
+            )}
+            {gpsError && <div style={{ fontSize:11, color:D.danger, marginTop:8 }}>{gpsError}</div>}
+          </div>
+        )}
+        {hole > 0 && (
+          <div style={{ background:D.surface, border:`1px solid ${D.border}`, borderRadius:12, padding:"10px 14px", marginBottom:12 }}>
+            <div style={{ fontSize:10, fontWeight:700, color:D.gold, textTransform:"uppercase", letterSpacing:2, marginBottom:8 }}>🏌️ Orden de salida</div>
+            <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
+              {calcOrden(players,scores,pars,hole).map((pi,pos) => (
+                <div key={pi} style={{ display:"flex", alignItems:"center", gap:6, padding:"5px 10px", border:`1px solid ${pos===0?D.gold:D.border}`, borderRadius:20, background:pos===0?D.goldDim:"transparent" }}>
+                  <span style={{ fontSize:11, fontWeight:700, color:pos===0?D.gold:D.textSub }}>{pos+1}°</span>
+                  <Avatar name={players[pi].name} id={players[pi].id} size={18} />
+                  <span style={{ fontSize:12, fontWeight:600, color:pos===0?D.gold:D.text }}>{players[pi].name}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+        <TabBar tabs={[{key:"score",label:"📊 Score"},{key:"marcas",label:"⭐ Marcas"},{key:"tarjetas",label:"🃏 Tarjetas"},{key:"tabla",label:"📋 Tabla"},{key:"jugadores",label:"👥 Jugadores"}]} active={tab} onChange={setTab} />
+
+        {tab==="score" && (
+          <Card>
+            {(hole>0 ? calcOrden(players,scores,pars,hole).map(i=>({...players[i],origIdx:i})) : players.map((p,i)=>({...p,origIdx:i}))).map((pl,pos) => {
+              const i = pl.origIdx;
+              const rawScore = scores[i]?.[hole];
+              const hasScore = rawScore !== null && rawScore !== undefined;
+              const disp = hasScore ? rawScore : null;
+              const dispShow = hasScore ? rawScore : pars[hole];
+              const b = dispShow && par ? getBadge(dispShow, par) : null;
+              return (
+                <div key={pl.id} style={{ display:"flex", alignItems:"center", gap:10, padding:"11px 0", borderBottom:pos<players.length-1?`1px solid ${D.border}`:"none" }}>
+                  <Avatar name={pl.name} id={pl.id} size={30} />
+                  <div style={{ flex:1 }}>
+                    <div style={{ fontSize:13, fontWeight:600 }}>{pl.name}</div>
+                    <div style={{ fontSize:11, color:D.textSub }}>HC {nHoles<=9?Math.ceil(pl.hc/2):pl.hc}</div>
+                  </div>
+                  {hasScore && b && <span style={{ fontSize:10, padding:"3px 8px", borderRadius:8, fontWeight:700, background:b.bg, color:b.fg, marginRight:4 }}>{b.label}</span>}
+                  <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+                    <button onClick={() => changeScore(i,-1)} style={{ width:36,height:36,borderRadius:"50%",border:`1px solid ${D.border}`,background:D.surface,color:D.text,cursor:"pointer",fontSize:22,display:"flex",alignItems:"center",justifyContent:"center" }}>-</button>
+                    <div style={{ width:34, textAlign:"center", fontSize:20, fontWeight:900, color:hasScore?D.text:D.textDim }}>
+                      {hasScore ? disp : "--"}
+                    </div>
+                    <button onClick={() => changeScore(i,1)} style={{ width:36,height:36,borderRadius:"50%",border:`1px solid ${D.gold}`,background:D.goldDim,color:D.gold,cursor:"pointer",fontSize:22,display:"flex",alignItems:"center",justifyContent:"center" }}>+</button>
+                  </div>
+                </div>
+              );
+            })}
+          </Card>
+        )}
+
+        {tab==="marcas" && marcas[hole] && (
+          <div>
+            <Card>
+              <SLabel>Marcas por jugador</SLabel>
+              {players.map((pl, pi) => {
+                if (pl.opts?.marcas === false) return null;
+                return (
+                <div key={pl.id} style={{ marginBottom:12, paddingBottom:12, borderBottom:pi<players.length-1?`1px solid ${D.border}`:"none" }}>
+                  <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:10 }}>
+                    <Avatar name={pl.name} id={pl.id} size={26} />
+                    <div style={{ fontSize:13, fontWeight:600, flex:1 }}>{pl.name}</div>
+                    {marcasPtsHole(pi)>0 && <div style={{ fontSize:12, fontWeight:700, color:D.gold, background:D.goldDim, padding:"2px 10px", borderRadius:10 }}>{marcasPtsHole(pi)} pts</div>}
+                  </div>
+                  <div style={{ display:"flex", flexWrap:"wrap", gap:8 }}>
+                    {MARCAS_MULTI.map(m => {
+                      const cs = scores[pi][hole]===null?pars[hole]:scores[pi][hole];
+                      const cp = pars[hole], diff=cs-cp, bogey=diff>=1;
+                      const hasTP = tarjetas["threeput"]===pi && tarjetas["threeput_hole"]===hole;
+                      const p3 = cp===3 && (m.key==="holeinone"||m.key==="birdie"||m.key==="eagle");
+                      const p4 = cp===4 && (m.key==="eagle"||m.key==="birdie");
+                      const p5 = cp===5 && (m.key==="eagle"||m.key==="birdie");
+                      const isAuto = p3||p4||p5;
+                      const isBogeyLock = bogey && (m.key==="sandy"||m.key==="holeout");
+                      const isTPLock = hasTP && m.key==="sandy";
+                      const isLocked = isAuto||isBogeyLock||isTPLock;
+                      const lockReason = isTPLock?"3putt":isBogeyLock?"Bogey+":isAuto?"auto":null;
+                      const isActive = marcas[hole].multi[pi][m.key];
+                      return (
+                        <div key={m.key} onClick={() => { if (!isLocked) toggleMultiMarca(pi,m.key); }}
+                          style={{ display:"flex", alignItems:"center", gap:6, padding:"7px 12px", border:`1px solid ${isActive?D.gold:D.border}`, borderRadius:20, background:isActive?D.goldDim:"transparent", color:isActive?D.gold:isLocked?D.textDim:D.textSub, fontSize:12, fontWeight:600, cursor:isLocked?"default":"pointer", userSelect:"none", opacity:isLocked?0.4:1 }}>
+                          {m.label} <span style={{ opacity:0.6 }}>({m.pts})</span>
+                          {lockReason && <span style={{ fontSize:9, opacity:0.6 }}>🔒{lockReason}</span>}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+                );
+              })}
+            </Card>
+            <Card>
+              <SLabel>Marcas exclusivas</SLabel>
+              {pars[hole]===3 && (
+                <div style={{ marginBottom:16 }}>
+                  <div style={{ fontSize:13, fontWeight:700, marginBottom:8 }}>📍 O'Yes <span style={{ fontSize:11, color:D.textSub, fontWeight:400 }}>-- más cerca 1er tiro · 1pt</span></div>
+                  <div style={{ display:"flex", flexWrap:"wrap", gap:8 }}>
+                    {players.filter(pl=>pl.opts?.marcas!==false).map((pl) => { const pi=players.indexOf(pl); return <Pill key={pl.id} active={marcas[hole].oyes===pi} onClick={() => setExclusive("oyes",pi)}>{pl.name}</Pill>; })}
+                    <Pill active={marcas[hole].oyes===null} onClick={() => setExclusive("oyes",null)}>Ninguno</Pill>
+                  </div>
+                </div>
+              )}
+              {pars[hole]>=4 && (
+                <div>
+                  <div style={{ fontSize:13, fontWeight:700, marginBottom:8 }}>🎯 Regulation <span style={{ fontSize:11, color:D.textSub, fontWeight:400 }}>-- más cerca {pars[hole]===4?"2do":"3er"} tiro · 1pt</span></div>
+                  <div style={{ display:"flex", flexWrap:"wrap", gap:8 }}>
+                    {players.filter(pl=>pl.opts?.marcas!==false).map((pl) => { const pi=players.indexOf(pl); return <Pill key={pl.id} active={marcas[hole].regulation===pi} onClick={() => setExclusive("regulation",pi)}>{pl.name}</Pill>; })}
+                    <Pill active={marcas[hole].regulation===null} onClick={() => setExclusive("regulation",null)}>Ninguno</Pill>
+                  </div>
+                </div>
+              )}
+            </Card>
+          </div>
+        )}
+
+        {tab==="tarjetas" && (
+          <Card>
+            <SLabel>Tarjetas -- papa caliente 🃏</SLabel>
+            <div style={{ fontSize:12, color:D.textSub, marginBottom:14 }}>Toca el nombre del jugador que cometió la falla.</div>
+            {TARJETAS.map((tj, idx) => {
+              const owner = tarjetas[tj.key];
+              const ownerNames = Array.isArray(owner)
+                ? owner.map(i => players[i]?.name).filter(Boolean).join(" · ")
+                : (owner !== null && owner !== undefined ? players[owner]?.name : null);
+              return (
+                <div key={tj.key} style={{ marginBottom:14, paddingBottom:14, borderBottom:idx<TARJETAS.length-1?`1px solid ${D.border}`:"none" }}>
+                  <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:8 }}>
+                    <div style={{ fontSize:13, fontWeight:700, flex:1 }}>{tj.label}</div>
+                    {tj.auto && <div style={{ fontSize:10, padding:"2px 8px", borderRadius:10, background:D.goldDim, color:D.gold, fontWeight:700 }}>AUTO</div>}
+                    {ownerNames ? <div style={{ fontSize:11, padding:"3px 10px", borderRadius:10, background:D.redBg, color:D.danger, fontWeight:700 }}>🃏 {ownerNames}</div> : <div style={{ fontSize:11, padding:"3px 10px", borderRadius:10, background:D.surface, color:D.textDim }}>Sin dueño</div>}
+                  </div>
+                  {tj.auto ? (
+                    <div style={{ fontSize:11, color:D.textSub, fontStyle:"italic" }}>
+                      {tj.key === "peorscore" ? "Se asigna automáticamente · Peor score neto acumulado (bruto - HC)" : "Se asigna automáticamente · Doble par o peor en el hoyo · En empate el admin elige quién tiró al último."}
+                    </div>
+                  ) : (
+                    <div>
+                      {tj.key === "anaconda" && <div style={{ fontSize:11, color:"#8A3A0A", fontStyle:"italic", marginBottom:6 }}>🌐 Paga castigo a TODOS los participantes del torneo · 4+ putts en el hoyo</div>}
+                      <div style={{ display:"flex", flexWrap:"wrap", gap:8 }}>
+                        {players.filter(pl=>pl.opts?.tarjetas!==false).map((pl) => { const pi = players.indexOf(pl); return (
+                          <div key={pl.id} onClick={() => assignTarjeta(tj.key,pi)} style={{ display:"flex", alignItems:"center", gap:6, padding:"6px 12px", border:`1px solid ${owner===pi?D.danger:D.border}`, borderRadius:20, background:owner===pi?D.redBg:"transparent", color:owner===pi?D.danger:D.textSub, fontSize:12, fontWeight:600, cursor:"pointer", userSelect:"none" }}>
+                            <Avatar name={pl.name} id={pl.id} size={18} />{pl.name}
+                          </div>
+                        ); })}
+                        {owner!==null && <Pill danger onClick={() => assignTarjeta(tj.key,null)}>✕ Quitar</Pill>}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+            <div style={{ marginTop:8, padding:"10px 12px", background:D.surface, borderRadius:10 }}>
+              <div style={{ fontSize:10, color:D.gold, fontWeight:700, marginBottom:8, textTransform:"uppercase", letterSpacing:1 }}>Poseedores</div>
+              {players.filter(pl=>pl.opts?.tarjetas!==false).map((pl) => {
+                const pi = players.indexOf(pl);
+                const mc = TARJETAS.filter(t => {
+                  const o = tarjetas[t.key];
+                  return Array.isArray(o) ? o.includes(pi) : o === pi;
+                });
+                return (
+                  <div key={pl.id} style={{ display:"flex", alignItems:"center", gap:8, padding:"5px 0", borderBottom:`1px solid ${D.border}` }}>
+                    <Avatar name={pl.name} id={pl.id} size={22} />
+                    <div style={{ flex:1, fontSize:13, fontWeight:600 }}>{pl.name}</div>
+                    {mc.length>0 ? <div style={{ fontSize:12, color:D.danger, fontWeight:700 }}>{mc.length} tarjeta{mc.length>1?"s":""}</div> : <div style={{ fontSize:12, color:D.textDim }}>--</div>}
+                  </div>
+                );
+              })}
+            </div>
+          </Card>
+        )}
+
+        {tab==="tabla" && (pars.length === 0 || players.length === 0 ? (
+          <Card><div style={{ textAlign:"center", color:D.textSub, padding:24 }}>No hay datos para mostrar</div></Card>
+        ) : (() => {
+          const fmtVs = (v) => v === null ? "-" : v === 0 ? "E" : v > 0 ? "+"+v : ""+v;
+          const vsColor = (v) => v === null ? D.textDim : v < 0 ? D.success : v > 0 ? D.danger : D.text;
+          const parTotal = pars.reduce((a,b)=>a+b,0);
+          const tablaData = players.map((pl, pi) => {
+            const rowScores = scores[pi];
+            const jugados = toArr(rowScores).filter(s => s !== null && s !== undefined);
+            const total = jugados.reduce((a,b)=>a+b,0);
+            const parJugados = (rowScores||[]).reduce((sum,s,i) => s!==null&&s!==undefined ? sum+(pars[i]||0) : sum, 0);
+            const vsPar = jugados.length > 0 ? total - parJugados : null;
+            const hcEf = nHoles <= 9 ? Math.ceil(pl.hc / 2) : pl.hc;
+            const vsParHC = vsPar !== null ? vsPar - hcEf : null;
+            return { pl, pi, rowScores, total: jugados.length>0?total:null, vsPar, vsParHC };
+          }).sort((a,b) => {
+            if (a.vsParHC === null && b.vsParHC === null) return 0;
+            if (a.vsParHC === null) return 1;
+            if (b.vsParHC === null) return -1;
+            return a.vsParHC - b.vsParHC;
+          });
+          return (
+          <div style={{ overflowX:"auto", marginBottom:12 }}>
+            <table style={{ borderCollapse:"collapse", width:"100%", fontSize:11, color:D.text }}>
+              <thead>
+                <tr style={{ background:D.surface }}>
+                  <td style={{ padding:"8px 6px", fontWeight:700, color:D.gold, fontSize:10, textTransform:"uppercase", letterSpacing:1, position:"sticky", left:0, background:D.surface, borderBottom:`1px solid ${D.border}`, minWidth:70 }}>Jugador</td>
+                  {pars.map((_,i) => <td key={i} style={{ padding:"6px 3px", textAlign:"center", fontWeight:700, color:D.textSub, borderBottom:`1px solid ${D.border}`, minWidth:26, fontSize:10 }}>{i+1}</td>)}
+                  <td style={{ padding:"6px 5px", textAlign:"center", fontWeight:700, color:D.gold, borderBottom:`1px solid ${D.border}`, minWidth:32, borderLeft:`1px solid ${D.border}` }}>TOT</td>
+                  <td style={{ padding:"6px 4px", textAlign:"center", fontWeight:700, color:D.textSub, borderBottom:`1px solid ${D.border}`, minWidth:28 }}>HC</td>
+                  <td style={{ padding:"6px 5px", textAlign:"center", fontWeight:700, color:"#1A5C24", borderBottom:`1px solid ${D.border}`, minWidth:36, borderLeft:`1px solid ${D.border}` }}>VS Par</td>
+                  <td style={{ padding:"6px 5px", textAlign:"center", fontWeight:700, color:D.gold, borderBottom:`1px solid ${D.border}`, minWidth:42, borderLeft:`1px solid ${D.border}` }}>VS Par-HC</td>
+                </tr>
+                <tr>
+                  <td style={{ padding:"4px 6px", fontSize:10, color:D.textDim, position:"sticky", left:0, background:D.card, borderBottom:`1px solid ${D.border}` }}>PAR</td>
+                  {pars.map((p,i) => <td key={i} style={{ padding:"4px 3px", textAlign:"center", fontSize:10, color:D.textSub, borderBottom:`1px solid ${D.border}` }}>{p}</td>)}
+                  <td style={{ padding:"4px 5px", textAlign:"center", fontSize:10, color:D.textSub, borderBottom:`1px solid ${D.border}`, borderLeft:`1px solid ${D.border}` }}>{parTotal}</td>
+                  <td style={{ borderBottom:`1px solid ${D.border}` }}></td>
+                  <td style={{ borderBottom:`1px solid ${D.border}`, borderLeft:`1px solid ${D.border}` }}></td>
+                  <td style={{ borderBottom:`1px solid ${D.border}`, borderLeft:`1px solid ${D.border}` }}></td>
+                </tr>
+              </thead>
+              <tbody>
+                {tablaData.map(({ pl, pi, rowScores, total, vsPar, vsParHC }, pos) => {
+                  const hcMostrar = nHoles <= 9 ? Math.ceil(pl.hc / 2) : pl.hc;
+                  const vsParHCcorrecto = vsPar !== null ? vsPar - hcMostrar : null;
+                  return (
+                  <tr key={pl.id} style={{ borderBottom:`1px solid ${D.border}`, background:pos===0&&vsParHCcorrecto!==null?D.goldDim+"55":"transparent" }}>
+                    <td style={{ padding:"7px 6px", position:"sticky", left:0, background:pos===0&&vsParHCcorrecto!==null?D.goldDim+"55":D.card, zIndex:1 }}>
+                      <div style={{ display:"flex", alignItems:"center", gap:5 }}>
+                        <span style={{ fontSize:10, fontWeight:700, color:pos===0?D.gold:D.textSub, minWidth:12 }}>{pos+1}</span>
+                        <Avatar name={pl.name} id={pl.id} size={20} />
+                        <span style={{ fontSize:11, fontWeight:600, whiteSpace:"nowrap" }}>{pl.name}</span>
+                      </div>
+                    </td>
+                    {pars.map((par, hi) => {
+                      const s = rowScores[hi];
+                      return <td key={hi} style={{ textAlign:"center", padding:"3px 2px" }}><ScoreCell s={s??null} par={par} size={22} isSalida={!!torneoConfig?.hoyoSalida&&hi===(torneoConfig.hoyoSalida||1)-1} /></td>;
+                    })}
+                    <td style={{ textAlign:"center", padding:"5px 5px", fontWeight:700, fontSize:12, borderLeft:`1px solid ${D.border}` }}>{total??'--'}</td>
+                    <td style={{ textAlign:"center", padding:"5px 4px", fontSize:11, color:D.textSub }}>
+                      {hcMostrar}
+                      {nHoles<=9 && pl.hc!==hcMostrar ? <span style={{fontSize:9,color:D.textDim}}> ({pl.hc})</span> : null}
+                    </td>
+                    <td style={{ textAlign:"center", padding:"5px 5px", fontWeight:700, fontSize:12, color:vsColor(vsPar), borderLeft:`1px solid ${D.border}` }}>{fmtVs(vsPar)}</td>
+                    <td style={{ textAlign:"center", padding:"5px 5px", fontWeight:900, fontSize:12, color:vsColor(vsParHCcorrecto), borderLeft:`1px solid ${D.border}` }}>{fmtVs(vsParHCcorrecto)}</td>
+                  </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+            <ScoreLegend />
+          </div>
+          );
+        })())}
+
+        {tab==="jugadores" && (
+          <JugadoresPanel
+            players={players} scores={scores} marcas={marcas}
+            castigos={castigos} dir={dir}
+            torneoConfig={torneoConfig}
+            jugadoresPinOk={jugadoresPinOk}
+            jugadoresPinInput={jugadoresPinInput} setJugadoresPinInput={setJugadoresPinInput}
+            jugadoresPinError={jugadoresPinError} setJugadoresPinError={setJugadoresPinError}
+            setJugadoresPinOk={setJugadoresPinOk}
+            abandonandoIdx={abandonandoIdx} setAbandonandoIdx={setAbandonandoIdx}
+            agregandoJugador={agregandoJugador} setAgregandoJugador={setAgregandoJugador}
+            totalJugadoresTorneoAdmin={totalJugadoresTorneoAdmin} setTotalJugadoresTorneoAdmin={setTotalJugadoresTorneoAdmin}
+            apuesta={apuesta} tarjetaVal={tarjetaVal}
+            onEliminar={handleEliminarJugador}
+            onAgregar={handleAgregarJugador}
+            onToggleOpts={handleToggleOpts}
+          />
+        )}
+        <Card>
+          <SLabel>Marcador en vivo</SLabel>
+          <div style={{ display:"flex", alignItems:"center", gap:8, padding:"4px 0 8px", borderBottom:`1px solid ${D.border}`, marginBottom:2 }}>
+            <div style={{ width:20 }}></div>
+            <div style={{ width:26 }}></div>
+            <div style={{ flex:1 }}></div>
+            <div style={{ width:36, textAlign:"center", fontSize:10, fontWeight:700, color:D.textSub }}>GOLP</div>
+            <div style={{ width:28, textAlign:"center", fontSize:10, fontWeight:700, color:D.textSub }}>HC</div>
+            <div style={{ width:40, textAlign:"center", fontSize:10, fontWeight:700, color:D.gold }}>NETO</div>
+          </div>
+          {players.map((p,i) => {
+            const jugados = (toArr(scores[i])).filter(v => v !== null && v !== undefined);
+            const bruto = jugados.length > 0 ? jugados.reduce((a,b)=>a+b,0) : null;
+            const neto = bruto !== null ? bruto - hcEf(p.hc, nHoles) : null;
+            return { name:p.name, id:p.id, bruto, hc:hcEf(p.hc, nHoles), hcReal:p.hc, neto };
+          }).sort((a,b) => {
+            if (a.neto === null && b.neto === null) return 0;
+            if (a.neto === null) return 1;
+            if (b.neto === null) return -1;
+            return a.neto - b.neto;
+          }).map((p,pos) => (
+            <div key={p.id} style={{ display:"flex", alignItems:"center", gap:8, padding:"8px 0", borderBottom:pos<players.length-1?`1px solid ${D.border}`:"none" }}>
+              <div style={{ width:20, fontSize:12, color:pos===0&&p.neto!==null?D.gold:D.textSub, fontWeight:700 }}>{pos+1}</div>
+              <Avatar name={p.id} id={p.id} size={26} />
+              <div style={{ flex:1, fontSize:13, fontWeight:600 }}>{p.name}</div>
+              <div style={{ width:36, textAlign:"center", fontSize:13, fontWeight:700, color:D.text }}>{p.bruto??'--'}</div>
+              <div style={{ width:28, textAlign:"center", fontSize:12, color:D.textSub }}>{p.hc}</div>
+              <div style={{ width:40, textAlign:"center", fontSize:14, fontWeight:900, color:pos===0&&p.neto!==null?D.gold:D.text }}>{p.neto??'--'}</div>
+            </div>
+          ))}
+        </Card>
+
+        {rondaId && (
+          <div style={{ textAlign:"center", marginBottom:8 }}>
+            <button onClick={shareRonda} style={{ padding:"10px 24px", border:`1px solid ${D.gold}`, borderRadius:20, background:D.goldDim, color:D.gold, fontSize:13, fontWeight:700, cursor:"pointer" }}>📤 Compartir ronda en vivo</button>
+            {shareMsg && <div style={{ color:D.success, fontSize:12, marginTop:6, fontWeight:600 }}>{shareMsg}</div>}
+            <div style={{ color:D.textSub, fontSize:11, marginTop:4 }}>Código: <span style={{ color:D.gold, fontWeight:700 }}>{rondaId}</span></div>
+          </div>
+        )}
+
+        {hole===((torneoConfig?.hoyoSalida||1)-1+nHoles-1)%Math.max(nHoles,pars.length) && <Btn onClick={finish}>Ver resultados finales 🏆</Btn>}
+      </div>
+    </div>
+  );
+
+  // ── RESULTADOS ──
+  if (screen==="res" && results) {
+    const safeResults = results || {};
+    const { nets=[], fi=[], si=[], pot=0, money=[], hcUpdates=[], marcasMoney=[], marcasPts=[], tarjetasMoney=[], tarjetasCount=[], fullScores=[], rawScores=[] } = safeResults;
+    // Leer castigos de TODAS las fuentes
+    const castigosLS = (() => { try { const s = localStorage.getItem("h19-castigos"); return s ? JSON.parse(s) : []; } catch(e) { return []; } })();
+    const castigosSS = (() => { try { const s = sessionStorage.getItem("h19-castigos"); return s ? JSON.parse(s) : []; } catch(e) { return []; } })();
+    const castigosWin = window._h19castigos || [];
+    const castigosRonda = (() => { try { const s = localStorage.getItem("h19-ronda-activa"); if (!s) return []; const d = JSON.parse(s); return Array.isArray(d.abandonos) ? d.abandonos : []; } catch(e) { return []; } })();
+    const castigosRes = castigosWin.length > 0 ? castigosWin
+      : castigosSS.length > 0 ? castigosSS
+      : castigosLS.length > 0 ? castigosLS
+      : castigosRonda.length > 0 ? castigosRonda
+      : (safeResults.castigos||[]).length > 0 ? safeResults.castigos
+      : castigos;
+    const totalTarjetaAbandonoPool = castigosRes.filter(c=>c.conCastigo).reduce((a,c)=>a+c.tarjetaPago,0);
+    const gananciaXCastigo = players.length > 0 ? Math.round(totalTarjetaAbandonoPool / players.length) : 0;
+    const totalCastigoPool = castigosRes.filter(c=>c.conCastigo).reduce((a,c)=>a+(c.scorePago+c.tarjetaPago),0);
+    const ranked = players.map((p,i) => ({
+      ...p, net:nets[i]??0, scoreMoney:money[i]??0, marcasMoney:marcasMoney[i]??0,
+      tarjetasMoney:tarjetasMoney[i]??0,
+      castigoMoney: gananciaXCastigo,
+      total:(money[i]??0)+(marcasMoney[i]??0)+(tarjetasMoney[i]??0)+gananciaXCastigo,
+      pts:marcasPts[i]??0, cards:tarjetasCount[i]??0, bruto:(fullScores[i]||[]).reduce((a,b)=>a+b,0)
+    })).sort((a,b)=>a.net-b.net);
+    const fn = fi.map(i=>players[i]?.name||"?").join(" · ");
+    const fp = fi.length > 0 ? (money[fi[0]]??0) : 0;
+    const nn = players.length;
+
+    return (
+      <div style={appSt}>
+        {torneoConfig && (
+          <div style={{ background:`linear-gradient(135deg,#1A5C24,#2E7D32)`, padding:"12px 16px", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+            <div>
+              <div style={{ fontSize:11, color:"#fff", opacity:0.8 }}>Torneo · {torneoConfig.nombre}</div>
+              <div style={{ fontSize:13, fontWeight:700, color:"#fff" }}>Grupo finalizado: {grupoNombre || torneoConfig.grupoNombre}</div>
+            </div>
+            <button onClick={() => window.open(`${window.location.origin}${window.location.pathname}?torneo=${torneoConfig.torneoId}`, "_blank")}
+              style={{ padding:"8px 12px", border:"1px solid #fff", borderRadius:10, background:"transparent", color:"#fff", fontSize:12, fontWeight:700, cursor:"pointer" }}>
+              🏆 Ver torneo global
+            </button>
+          </div>
+        )}
+        <div style={{ background:`linear-gradient(135deg,#FDF8EE,#F5EDD0)`, borderBottom:`1px solid ${D.gold}44`, padding:"28px 16px", textAlign:"center", marginBottom:16 }}>
+          <div style={{ fontSize:36, marginBottom:8 }}>🏆</div>
+          <div style={{ fontSize:11, color:D.gold, letterSpacing:2, textTransform:"uppercase", marginBottom:6 }}>1er Lugar · Score</div>
+          <div style={{ fontSize:24, fontWeight:900, color:D.text, marginBottom:4 }}>{fn}</div>
+          <div style={{ fontSize:13, color:D.textSub, marginBottom:12 }}>{nets[fi[0]]} golpes netos{fi.length>1?" · Premio dividido":""}</div>
+          <div style={{ fontSize:32, fontWeight:900, color:D.gold }}>+${fp}.00{fi.length>1?" c/u":""}</div>
+        </div>
+        {nn>=10 && fi.length===1 && si.length>0 && (
+          <div style={{ background:D.surface, border:`1px solid ${D.border}`, margin:"0 12px 12px", borderRadius:16, padding:20, textAlign:"center" }}>
+            <div style={{ fontSize:11, color:D.textSub, textTransform:"uppercase", letterSpacing:1, marginBottom:4 }}>🥈 2do Lugar</div>
+            <div style={{ fontSize:20, fontWeight:700, marginBottom:4 }}>{si.map(i=>players[i].name).join(" · ")}</div>
+            <div style={{ fontSize:22, fontWeight:700, color:D.gold }}>+${money[si[0]]}.00{si.length>1?" c/u":""}</div>
+          </div>
+        )}
+        <div style={{ padding:"0 12px" }}>
+          {/* Jugador que abandono - mostrar primero y siempre */}
+          {castigosRes.length > 0 && castigosRes.map((c, i) => (
+            <Card key={"abandono-top-"+i} style={{ border:`2px solid ${D.danger}`, marginBottom:8 }}>
+              <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:8, paddingBottom:8, borderBottom:`1px solid ${D.border}` }}>
+                <div style={{ fontSize:24 }}>🚪</div>
+                <div style={{ flex:1 }}>
+                  <div style={{ fontSize:15, fontWeight:700 }}>{c.name}</div>
+                  <div style={{ fontSize:11, color:D.danger }}>Abandono{c.conCastigo ? " con castigo" : " sin castigo"}</div>
+                </div>
+                <div style={{ textAlign:"right" }}>
+                  <div style={{ fontSize:22, fontWeight:900, color:D.danger }}>
+                    {c.conCastigo ? "-$"+(c.scorePago+c.tarjetaPago) : "$0"}
+                  </div>
+                </div>
+              </div>
+              {c.conCastigo && (
+                <div>
+                  <div style={{ display:"flex", justifyContent:"space-between", padding:"6px 0", borderBottom:`1px solid ${D.border}` }}>
+                    <div style={{ fontSize:12 }}>📊 Score (apuesta)</div>
+                    <div style={{ fontSize:14, fontWeight:700, color:D.danger }}>-{"$"+c.scorePago}</div>
+                  </div>
+                  <div style={{ display:"flex", justifyContent:"space-between", padding:"6px 0", borderBottom:`1px solid ${D.border}` }}>
+                    <div style={{ fontSize:12 }}>{"🃏 Tarjeta abandono ($"+tarjetaVal+" x "+(c.totalJugadores?c.totalJugadores-1:players.length)+" jugadores)"}</div>
+                    <div style={{ fontSize:14, fontWeight:700, color:D.danger }}>-{"$"+c.tarjetaPago}</div>
+                  </div>
+                  <div style={{ fontSize:11, color:D.textSub, paddingTop:6 }}>
+                    {"Cada jugador activo recibe: +$"+gananciaXCastigo+" de tarjeta de abandono"}
+                  </div>
+                </div>
+              )}
+            </Card>
+          ))}
+          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
+            <div style={{ fontSize:10, fontWeight:700, color:D.gold, textTransform:"uppercase", letterSpacing:2 }}>Clasificación final</div>
+            <button onClick={() => setShowTabla(s=>!s)} style={{ padding:"5px 12px", border:`1px solid ${showTabla?D.gold:D.border}`, borderRadius:20, background:showTabla?D.goldDim:"transparent", color:showTabla?D.gold:D.textSub, fontSize:11, fontWeight:700, cursor:"pointer" }}>
+              {showTabla ? "📊 Desglose" : "📋 Tabla"}
+            </button>
+          </div>
+
+          {showTabla && (() => {
+            const parTotal = pars.reduce((a,b)=>a+b,0);
+            const fmtVs = (v) => v === 0 ? "E" : v > 0 ? `+${v}` : `${v}`;
+            const vsColor = (v) => v < 0 ? D.success : v > 0 ? D.danger : D.text;
+            const resTabla = ranked.map(p => {
+              const pi = players.findIndex(pl=>pl.id===p.id);
+              const raw = (rawScores||fullScores)[pi];
+              const jugados = raw.filter(s => s !== null && s !== undefined);
+              const brutoReal = jugados.length > 0 ? jugados.reduce((a,b)=>a+b,0) : null;
+              const parJugados = (raw||[]).reduce((sum,s,i) => s!==null&&s!==undefined ? sum+(pars[i]||0) : sum, 0);
+              const vsPar = brutoReal !== null ? brutoReal - parJugados : null;
+              const vsParHC = vsPar !== null ? vsPar - (nHoles<=9?Math.ceil(p.hc/2):p.hc) : null;
+              return { ...p, pi, raw, brutoReal, vsPar, vsParHC };
+            }).sort((a,b) => {
+              if (a.vsParHC === null && b.vsParHC === null) return 0;
+              if (a.vsParHC === null) return 1;
+              if (b.vsParHC === null) return -1;
+              return a.vsParHC - b.vsParHC;
+            });
+            return (
+            <div style={{ overflowX:"auto", marginBottom:12 }}>
+              <table style={{ borderCollapse:"collapse", width:"100%", fontSize:11, color:D.text }}>
+                <thead>
+                  <tr style={{ background:D.surface }}>
+                    <td style={{ padding:"8px 6px", fontWeight:700, color:D.gold, fontSize:10, position:"sticky", left:0, background:D.surface, borderBottom:`1px solid ${D.border}`, minWidth:75 }}>#</td>
+                    {pars.map((_,hi) => <td key={hi} style={{ padding:"6px 3px", textAlign:"center", fontWeight:700, color:D.textSub, borderBottom:`1px solid ${D.border}`, minWidth:24, fontSize:10 }}>{hi+1}</td>)}
+                    <td style={{ padding:"6px 4px", textAlign:"center", fontWeight:700, color:D.gold, borderBottom:`1px solid ${D.border}`, minWidth:30, borderLeft:`1px solid ${D.border}` }}>TOT</td>
+                    <td style={{ padding:"6px 3px", textAlign:"center", fontWeight:700, color:D.textSub, borderBottom:`1px solid ${D.border}`, minWidth:24 }}>HC</td>
+                    <td style={{ padding:"6px 4px", textAlign:"center", fontWeight:700, color:"#1A5C24", borderBottom:`1px solid ${D.border}`, minWidth:34, borderLeft:`1px solid ${D.border}` }}>VS Par</td>
+                    <td style={{ padding:"6px 4px", textAlign:"center", fontWeight:700, color:D.gold, borderBottom:`1px solid ${D.border}`, minWidth:40, borderLeft:`1px solid ${D.border}` }}>VS Par-HC</td>
+                    <td style={{ padding:"6px 3px", textAlign:"center", fontWeight:700, color:"#1A5C24", borderBottom:`1px solid ${D.border}`, minWidth:30, borderLeft:`1px solid ${D.border}` }}>MK pts</td>
+                    <td style={{ padding:"6px 3px", textAlign:"center", fontWeight:700, color:"#1A5C24", borderBottom:`1px solid ${D.border}`, minWidth:38 }}>MK $</td>
+                    <td style={{ padding:"6px 3px", textAlign:"center", fontWeight:700, color:D.danger, borderBottom:`1px solid ${D.border}`, minWidth:38, borderLeft:`1px solid ${D.border}` }}>TARJ $</td>
+                    <td style={{ padding:"6px 4px", textAlign:"center", fontWeight:700, color:D.gold, borderBottom:`1px solid ${D.border}`, minWidth:48, borderLeft:`1px solid ${D.border}` }}>TOTAL $</td>
+                  </tr>
+                  <tr>
+                    <td style={{ padding:"4px 6px", fontSize:10, color:D.textDim, position:"sticky", left:0, background:D.card, borderBottom:`1px solid ${D.border}` }}>PAR</td>
+                    {pars.map((p,i) => <td key={i} style={{ padding:"4px 3px", textAlign:"center", fontSize:10, color:D.textSub, borderBottom:`1px solid ${D.border}` }}>{p}</td>)}
+                    <td style={{ padding:"4px 4px", textAlign:"center", fontSize:10, color:D.textSub, borderBottom:`1px solid ${D.border}`, borderLeft:`1px solid ${D.border}` }}>{parTotal}</td>
+                    <td style={{ borderBottom:`1px solid ${D.border}` }}></td>
+                    <td style={{ borderBottom:`1px solid ${D.border}`, borderLeft:`1px solid ${D.border}` }}></td>
+                    <td style={{ borderBottom:`1px solid ${D.border}`, borderLeft:`1px solid ${D.border}` }}></td>
+                    <td style={{ borderBottom:`1px solid ${D.border}`, borderLeft:`1px solid ${D.border}` }}></td>
+                    <td style={{ borderBottom:`1px solid ${D.border}` }}></td>
+                    <td style={{ borderBottom:`1px solid ${D.border}`, borderLeft:`1px solid ${D.border}` }}></td>
+                    <td style={{ borderBottom:`1px solid ${D.border}`, borderLeft:`1px solid ${D.border}` }}></td>
+                  </tr>
+                </thead>
+                <tbody>
+                  {resTabla.map((p, pos) => (
+                    <tr key={p.id} style={{ borderBottom:`1px solid ${D.border}`, background:pos===0?D.goldDim:D.card }}>
+                      <td style={{ padding:"7px 6px", position:"sticky", left:0, background:pos===0?D.goldDim:D.card, zIndex:1 }}>
+                        <div style={{ display:"flex", alignItems:"center", gap:5 }}>
+                          <span style={{ fontSize:11, fontWeight:700, color:pos===0?D.gold:D.textSub }}>{pos+1}</span>
+                          <Avatar name={p.name} id={p.id} size={20} />
+                          <span style={{ fontSize:10, fontWeight:600, whiteSpace:"nowrap" }}>{p.name}</span>
+                        </div>
+                      </td>
+                      {p.raw.map((s,hi) => (
+                        <td key={hi} style={{ textAlign:"center", padding:"3px 1px" }}><ScoreCell s={s??null} par={pars[hi]} size={20} isSalida={!!torneoConfig?.hoyoSalida&&hi===(torneoConfig.hoyoSalida||1)-1} /></td>
+                      ))}
+                      <td style={{ textAlign:"center", padding:"5px 4px", fontWeight:700, fontSize:11, borderLeft:`1px solid ${D.border}` }}>{p.brutoReal??'—'}</td>
+                      <td style={{ textAlign:"center", padding:"5px 3px", fontSize:11, color:D.textSub }}>{nHoles<=9?Math.ceil(p.hc/2):p.hc}</td>
+                      <td style={{ textAlign:"center", padding:"5px 4px", fontWeight:700, fontSize:11, color:p.vsPar!==null?vsColor(p.vsPar):D.textDim, borderLeft:`1px solid ${D.border}` }}>{p.vsPar!==null?fmtVs(p.vsPar):'—'}</td>
+                      <td style={{ textAlign:"center", padding:"5px 4px", fontWeight:900, fontSize:12, color:p.vsParHC!==null?vsColor(p.vsParHC):D.textDim, borderLeft:`1px solid ${D.border}` }}>{p.vsParHC!==null?fmtVs(p.vsParHC):'—'}</td>
+                      <td style={{ textAlign:"center", padding:"5px 3px", fontWeight:700, fontSize:11, color:"#1A5C24", borderLeft:`1px solid ${D.border}` }}>{p.pts}</td>
+                      <td style={{ textAlign:"center", padding:"5px 3px", fontWeight:700, fontSize:11, color:fmtC(p.marcasMoney) }}>{fmt(p.marcasMoney)}</td>
+                      <td style={{ textAlign:"center", padding:"5px 3px", fontWeight:700, fontSize:11, color:fmtC(p.tarjetasMoney), borderLeft:`1px solid ${D.border}` }}>{fmt(p.tarjetasMoney)}</td>
+                      <td style={{ textAlign:"center", padding:"5px 4px", fontWeight:900, fontSize:12, color:fmtC(p.total), borderLeft:`1px solid ${D.border}` }}>{fmt(p.total)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <ScoreLegend />
+            </div>
+            );
+          })()}
+
+          {!showTabla && ranked.map((p, pos) => (
+            <Card key={p.id} style={{ borderColor:pos===0?`${D.gold}66`:D.border }}>
+              <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:12, paddingBottom:12, borderBottom:`1px solid ${D.border}` }}>
+                <div style={{ width:26,height:26,borderRadius:"50%",background:pos===0?D.goldDim:D.surface,border:`1px solid ${pos===0?D.gold:D.border}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:900,color:pos===0?D.gold:D.textSub }}>{pos+1}</div>
+                <Avatar name={p.name} id={p.id} size={36} />
+                <div style={{ flex:1 }}>
+                  <div style={{ fontSize:15, fontWeight:700 }}>{p.name}</div>
+                  <div style={{ fontSize:11, color:D.textSub }}>HC {nHoles<=9?Math.ceil(p.hc/2):p.hc}{nHoles<=9?" (de "+p.hc+")":""} · {p.net} golpes netos</div>
+                </div>
+                <div style={{ textAlign:"right" }}>
+                  <div style={{ fontSize:20, fontWeight:900, color:fmtC(p.total) }}>{fmt(p.total)}</div>
+                  <div style={{ fontSize:10, color:D.textSub, textTransform:"uppercase", letterSpacing:1 }}>Total</div>
+                </div>
+              </div>
+              {[
+                {icon:"📊",label:"Score",sub:`${p.bruto} bruto · HC ${nHoles<=9?Math.ceil(p.hc/2):p.hc} · ${p.net} neto`,val:p.scoreMoney},
+                {icon:"⭐",label:"Marcas",sub:`${p.pts} puntos · $${marcaVal} por punto`,val:p.marcasMoney},
+                {icon:"🃏",label:"Tarjetas",sub:`${p.cards} tarjeta${p.cards!==1?"s":""} · $${tarjetaVal} por tarjeta`,val:p.tarjetasMoney},
+                ...(p.castigoMoney > 0 ? [{icon:"🚪",label:"Castigo abandono",sub:"Reparto del fondo de abandonos",val:p.castigoMoney}] : []),
+              ].map((row, i, arr) => (
+                <div key={row.label} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"8px 0", borderBottom:i<arr.length-1?`1px solid ${D.border}`:"none" }}>
+                  <div>
+                    <div style={{ fontSize:12, fontWeight:700, marginBottom:2 }}>{row.icon} {row.label}</div>
+                    <div style={{ fontSize:11, color:D.textSub }}>{row.sub}</div>
+                  </div>
+                  <div style={{ fontSize:15, fontWeight:700, color:fmtC(row.val) }}>{fmt(row.val)}</div>
+                </div>
+              ))}
+            </Card>
+          ))}
+
+          {/* Jugadores que abandonaron */}
+          {castigosRes.length > 0 && castigosRes.map((c, i) => (
+            <Card key={"abandono-"+i} style={{ borderColor:`${D.danger}66`, border:`1px solid ${D.danger}44` }}>
+              <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:8, paddingBottom:8, borderBottom:`1px solid ${D.border}` }}>
+                <div style={{ width:26,height:26,borderRadius:"50%",background:D.redBg,border:`1px solid ${D.danger}44`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:900,color:D.danger }}>🚪</div>
+                <div style={{ flex:1 }}>
+                  <div style={{ fontSize:15, fontWeight:700 }}>{c.name}</div>
+                  <div style={{ fontSize:11, color:D.danger }}>Abandono{c.conCastigo ? " con castigo" : " sin castigo"}</div>
+                </div>
+                <div style={{ textAlign:"right" }}>
+                  <div style={{ fontSize:20, fontWeight:900, color:c.conCastigo?D.danger:D.textSub }}>
+                    {c.conCastigo ? "-$"+(c.scorePago+c.tarjetaPago) : "$0"}
+                  </div>
+                  <div style={{ fontSize:11, color:D.textSub }}>TOTAL</div>
+                </div>
+              </div>
+              {c.conCastigo && (
+                <div>
+                  <div style={{ display:"flex", justifyContent:"space-between", padding:"6px 0", borderBottom:`1px solid ${D.border}` }}>
+                    <div><div style={{ fontSize:12, fontWeight:700 }}>📊 Score</div><div style={{ fontSize:11, color:D.textSub }}>Apuesta de la ronda</div></div>
+                    <div style={{ fontSize:15, fontWeight:700, color:D.danger }}>-{"$"+String(c.scorePago)}</div>
+                  </div>
+                  <div style={{ display:"flex", justifyContent:"space-between", padding:"6px 0" }}>
+                    <div><div style={{ fontSize:12, fontWeight:700 }}>🃏 Tarjeta abandono</div><div style={{ fontSize:11, color:D.textSub }}>{"$"+String(tarjetaVal)} a cada uno de los {players.length} jugadores activos</div></div>
+                    <div style={{ fontSize:15, fontWeight:700, color:D.danger }}>-{"$"+String(c.tarjetaPago)}</div>
+                  </div>
+                </div>
+              )}
+            </Card>
+          ))}
+
+          <Card>
+            <SLabel>Resumen de marcas</SLabel>
+            {players.map((pl, pi) => {
+              const myMarcas = [];
+              marcas.forEach((hd, hi) => {
+                MARCAS_MULTI.forEach(m => { if (hd.multi[pi][m.key]) myMarcas.push({hoyo:hi+1,label:m.label,pts:m.pts}); });
+                if (hd.oyes===pi) myMarcas.push({hoyo:hi+1,label:"📍 O'Yes",pts:1});
+                if (hd.regulation===pi) myMarcas.push({hoyo:hi+1,label:"🎯 Regulation",pts:1});
+              });
+              return (
+                <div key={pl.id} style={{ padding:"10px 0", borderBottom:pi<players.length-1?`1px solid ${D.border}`:"none" }}>
+                  <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:myMarcas.length>0?8:0 }}>
+                    <Avatar name={pl.name} id={pl.id} size={28} />
+                    <div style={{ flex:1, fontSize:13, fontWeight:600 }}>{pl.name}</div>
+                    <div style={{ fontSize:12, color:D.textSub, marginRight:8 }}>{marcasPts[pi]} pts</div>
+                    <div style={{ fontSize:13, fontWeight:700, color:fmtC(marcasMoney[pi]) }}>{fmt(marcasMoney[pi])}</div>
+                  </div>
+                  {myMarcas.length>0 ? (
+                    <div style={{ paddingLeft:36, display:"flex", flexWrap:"wrap", gap:6 }}>
+                      {myMarcas.map((m,i) => (
+                        <div key={i} style={{ display:"flex", alignItems:"center", gap:4, padding:"3px 8px", background:D.surface, border:`1px solid ${D.border}`, borderRadius:12, fontSize:11 }}>
+                          <span>{m.label}</span><span style={{ color:D.textSub }}>H{m.hoyo}</span><span style={{ color:D.gold, fontWeight:700 }}>+{m.pts}pt</span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div style={{ paddingLeft:36, fontSize:11, color:D.textDim }}>Sin marcas</div>
+                  )}
+                </div>
+              );
+            })}
+          </Card>
+
+          <Card>
+            <SLabel>Resumen de tarjetas</SLabel>
+            {TARJETAS.map((tj, idx) => {
+              const owner = tarjetas[tj.key];
+              const ownerArr = Array.isArray(owner) ? owner : (owner !== null && owner !== undefined ? [owner] : []);
+              return (
+                <div key={tj.key} style={{ display:"flex", alignItems:"center", gap:8, padding:"7px 0", borderBottom:idx<TARJETAS.length-1?`1px solid ${D.border}`:"none" }}>
+                  <div style={{ flex:1, fontSize:13 }}>{tj.label}</div>
+                  {ownerArr.length > 0 ? (
+                    <div style={{ display:"flex", alignItems:"center", gap:4 }}>
+                      {ownerArr.map(oi => players[oi] ? (
+                        <div key={oi} style={{ display:"flex", alignItems:"center", gap:4 }}>
+                          <Avatar name={players[oi].name} id={players[oi].id} size={22} />
+                          <div style={{ fontSize:13, fontWeight:700, color:D.danger }}>{players[oi].name}</div>
+                        </div>
+                      ) : null)}
+                    </div>
+                  ) : (
+                    <div style={{ fontSize:12, color:D.textDim }}>Sin dueño</div>
+                  )}
+                </div>
+              );
+            })}
+          </Card>
+
+          <Card>
+            <SLabel>Ajuste de handicaps</SLabel>
+            {hcUpdates.map((u, i) => {
+              const up=u.delta>0, dn=u.delta<0;
+              return (
+                <div key={u.id} style={{ display:"flex", alignItems:"center", gap:8, padding:"9px 0", borderBottom:i<hcUpdates.length-1?`1px solid ${D.border}`:"none" }}>
+                  <Avatar name={u.name} id={u.id} size={30} />
+                  <div style={{ flex:1 }}>
+                    <div style={{ fontSize:13, fontWeight:600 }}>{u.name}</div>
+                    <div style={{ fontSize:11, color:D.textSub }}>HC {u.before}</div>
+                  </div>
+                  <div style={{ fontSize:12, padding:"3px 10px", borderRadius:10, fontWeight:700, background:up?D.redBg:dn?D.greenBg:D.surface, color:up?D.danger:dn?D.success:D.textSub, border:`1px solid ${up?D.danger+"44":dn?D.success+"44":D.border}` }}>
+                    {up?`+${u.delta} -> HC ${u.after}`:dn?`${u.delta} -> HC ${u.after}`:"Sin cambio"}
+                  </div>
+                </div>
+              );
+            })}
+          </Card>
+
+          <Card>
+            <SLabel>Resumen de apuesta</SLabel>
+            {[
+              ["Apuesta score por jugador", `$${apuesta}.00`],
+              ["Jugadores", nn],
+              ["Pozo score total", `$${pot}.00`],
+              ...(nn>=10&&fi.length===1?[["1er lugar (60%)",`$${Math.round(pot*0.6)}.00`],["2do lugar (40%)",`$${Math.round(pot*0.4)}.00`]]:[["1er lugar (100%)",`$${pot}.00`]]),
+              ["Premio 1er lugar c/u", `$${fp}.00`],
+              ["Marcas", `$${marcaVal} por punto`],
+              ["Tarjetas", `$${tarjetaVal} por tarjeta`],
+            ].map(([k,v], i) => (
+              <div key={i} style={{ display:"flex", justifyContent:"space-between", fontSize:13, padding:"5px 0", borderBottom:`1px solid ${D.border}` }}>
+                <span style={{ color:D.textSub }}>{k}</span>
+                <span style={{ fontWeight:700, color:D.gold }}>{v}</span>
+              </div>
+            ))}
+          </Card>
+
+          {/* Castigos por abandono */}
+          {castigosRes.length > 0 && (
+            <Card>
+              <SLabel>🚪 Abandonos</SLabel>
+              {castigosRes.map((c, i) => (
+                <div key={i} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"8px 0", borderBottom:i<castigosRes.length-1?`1px solid ${D.border}`:"none" }}>
+                  <div>
+                    <div style={{ fontSize:13, fontWeight:600 }}>{c.name}</div>
+                    <div style={{ fontSize:11, color:D.textSub }}>
+                      {c.conCastigo ? "Score $" + c.scorePago + " + Tarjeta $" + c.tarjetaPago + " a cada uno" : "Sin castigo"}
+                    </div>
+                  </div>
+                  <div style={{ fontSize:14, fontWeight:900, color:c.conCastigo?D.danger:D.textSub }}>
+                    {c.conCastigo ? "-$" + (c.scorePago + c.tarjetaPago) : "Sin cargo"}
+                  </div>
+                </div>
+              ))}
+              {castigosRes.some(c=>c.conCastigo) && (
+                <div style={{ fontSize:11, color:D.textSub, marginTop:8, textAlign:"center", paddingTop:8, borderTop:`1px solid ${D.border}` }}>
+                  {"Cada jugador activo recibe $" + castigosRes.filter(c=>c.conCastigo).reduce((a,c)=>a+c.scorePago/players.length + c.tarjetaVal,0).toFixed(0) + " del fondo de abandonos"}
+                </div>
+              )}
+            </Card>
+          )}
+
+          {/* Comprobación de cuentas */}
+          {(() => {
+            const totalesActivos = ranked.map(p => p.total);
+            const totalScoreAbandonos = castigosRes.filter(c=>c.conCastigo).reduce((a,c)=>a+c.scorePago,0);
+            const totalTarjetaAbandonos = castigosRes.filter(c=>c.conCastigo).reduce((a,c)=>a+c.tarjetaPago,0);
+            const totalCastigoPool = totalScoreAbandonos + totalTarjetaAbandonos;
+            const ganancias = totalesActivos.filter(t => t > 0).reduce((a,b)=>a+b,0);
+            const perdidas = Math.abs(totalesActivos.filter(t => t < 0).reduce((a,b)=>a+b,0));
+            // Total que entra = pérdidas activos + score abandono (en calcMoney) + tarjeta abandono (distribuida)
+            const totalEntrada = perdidas + totalCastigoPool;
+            const cuadra = Math.abs(ganancias - totalEntrada) <= 2;
+            return (
+              <Card style={{ border:`1px solid ${cuadra?D.success:D.danger}` }}>
+                <SLabel>✅ Comprobación de cuentas</SLabel>
+                <div style={{ display:"flex", justifyContent:"space-between", padding:"8px 0", borderBottom:`1px solid ${D.border}` }}>
+                  <span style={{ fontSize:13, color:D.textSub }}>Ganancias jugadores activos</span>
+                  <span style={{ fontSize:14, fontWeight:700, color:D.success }}>+{"$"+String(ganancias)}</span>
+                </div>
+                <div style={{ display:"flex", justifyContent:"space-between", padding:"8px 0", borderBottom:`1px solid ${D.border}` }}>
+                  <span style={{ fontSize:13, color:D.textSub }}>Pérdidas jugadores activos</span>
+                  <span style={{ fontSize:14, fontWeight:700, color:D.danger }}>-{"$"+String(perdidas)}</span>
+                </div>
+                {totalCastigoPool > 0 && (
+                  <div style={{ display:"flex", justifyContent:"space-between", padding:"8px 0", borderBottom:`1px solid ${D.border}` }}>
+                    <span style={{ fontSize:13, color:D.textSub }}>Pago por abandono</span>
+                    <span style={{ fontSize:14, fontWeight:700, color:D.danger }}>-{"$"+String(totalCastigoPool)}</span>
+                  </div>
+                )}
+                <div style={{ display:"flex", justifyContent:"space-between", padding:"8px 0" }}>
+                  <span style={{ fontSize:13, fontWeight:700 }}>Balance total</span>
+                  <span style={{ fontSize:14, fontWeight:900, color:cuadra?D.success:D.danger }}>
+                    {cuadra ? "✓ Cuadra" : "⚠️ Revisar"}
+                  </span>
+                </div>
+              </Card>
+            );
+          })()}
+
+          {/* Compartir resultados */}
+          <Card>
+            <SLabel>📤 Compartir resultados</SLabel>
+            <div style={{ display:"flex", gap:8, marginBottom:8 }}>
+              <button onClick={() => {
+                const url = `${window.location.origin}${window.location.pathname}?ronda=${rondaId}`;
+                if (navigator.clipboard) { navigator.clipboard.writeText(url); }
+                alert("¡Link copiado! Compártelo para ver los resultados finales.");
+              }} style={{ flex:1, padding:"12px", border:`1px solid ${D.gold}`, borderRadius:12, background:D.goldDim, color:D.gold, fontSize:13, fontWeight:700, cursor:"pointer" }}>
+                🔗 Copiar link
+              </button>
+              <button onClick={() => {
+                const winner = fi.map(i => players[i].name).join(" y ");
+                const eventos = calcMarcasResumen(players, marcas);
+                const lines = [
+                  `⛳ *H19 Golf — Resultados finales*`,
+                  nombreRonda.trim() ? `📋 ${nombreRonda.trim()}` : null,
+                  `🏆 *Ganador: ${winner}* (${nets[fi[0]]} neto)`,
+                  ``,
+                  `*Clasificación y desglose:*`,
+                  ...ranked.map((p,pos) => {
+                    const total = p.scoreMoney + p.marcasMoney + p.tarjetasMoney;
+                    const signo = total >= 0 ? `+$${total}` : `-$${Math.abs(total)}`;
+                    return [
+                      `${pos+1}. *${p.name}* — ${p.bruto} bruto / ${p.net} neto — ${signo}`,
+                      `   Score: $${p.scoreMoney} · Marcas: $${p.marcasMoney} (${p.pts}pts) · Tarjetas: $${p.tarjetasMoney} (${p.cards})`
+                    ].join("\n");
+                  }),
+                  eventos.length > 0 ? `` : null,
+                  eventos.length > 0 ? `*⭐ Resumen de marcas:*` : null,
+                  ...eventos.map(ev => `Hoyo ${ev.hole} — ${ev.label}: *${ev.playerName}*`),
+                  ``,
+                  `Ver detalles: ${window.location.origin}${window.location.pathname}?ronda=${rondaId}`
+                ].filter(Boolean).join("\n");
+                const url = `https://wa.me/?text=${encodeURIComponent(lines)}`;
+                window.open(url, "_blank");
+              }} style={{ flex:1, padding:"12px", border:"none", borderRadius:12, background:"#25D366", color:"#fff", fontSize:13, fontWeight:700, cursor:"pointer" }}>
+                💬 WhatsApp
+              </button>
+            </div>
+            <div style={{ fontSize:11, color:D.textSub, textAlign:"center" }}>
+              El link muestra los resultados finales en tiempo real
+            </div>
+          </Card>
+
+          {torneoConfig ? (
+            <div style={{ background:D.goldDim, border:`1px solid ${D.gold}`, borderRadius:12, padding:"14px", marginBottom:8, textAlign:"center" }}>
+              <div style={{ fontSize:14, fontWeight:700, color:D.gold, marginBottom:6 }}>🏆 Grupo finalizado</div>
+              <div style={{ fontSize:12, color:D.textSub }}>El administrador general del torneo confirmará los handicaps y cerrará el torneo cuando todos los grupos terminen.</div>
+            </div>
+          ) : (
+            <Btn onClick={confirmHC}>Confirmar y guardar handicaps</Btn>
+          )}
+          {torneoConfig ? (
+            <div style={{ display:"flex", flexDirection:"column", gap:8, marginTop:8 }}>
+              <button onClick={() => window.open(`${window.location.origin}${window.location.pathname}?torneo=${torneoConfig.torneoId}`, "_blank")}
+                style={{ width:"100%", padding:"12px", border:"none", borderRadius:12, background:`linear-gradient(135deg,#1A5C24,#2E7D32)`, color:"#fff", fontSize:14, fontWeight:700, cursor:"pointer" }}>
+                🏆 Ver torneo global
+              </button>
+              <button onClick={() => onExit()}
+                style={{ width:"100%", padding:"10px", border:`1px solid ${D.border}`, borderRadius:12, background:"transparent", color:D.textSub, fontSize:13, cursor:"pointer" }}>
+                Salir al inicio
+              </button>
+            </div>
+          ) : (
+            <Btn outline onClick={() => { setSel(new Set()); setScreen("sel"); }} style={{ marginTop:8 }}>Nueva ronda sin guardar</Btn>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  return null;
+}
+
+// Alias para compatibilidad con index.jsx que hace: import App from './App'
+const App = H19;
+export default App;
