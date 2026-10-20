@@ -3411,6 +3411,7 @@ function H19() {
         )}
         {/* Fase 4: acceso por NIP de jugador */}
         <Btn onClick={() => setMode("jugador-login")} style={{ background:`linear-gradient(135deg,#1A1A2E,#16213E)`, border:`1px solid ${D.gold}44` }}>🔑 Entrar como jugador</Btn>
+        <Btn outline onClick={() => setMode("jugador-registro")}>📝 Registrarse como jugador nuevo</Btn>
         <div style={{ width:"100%", borderTop:`1px solid ${D.border}`, margin:"4px 0" }} />
         <Btn onClick={() => setMode("pin")}>🏌️ Admin - Única salida</Btn>
         <Btn onClick={() => setMode("pin-torneo")} style={{ background:`linear-gradient(135deg,#1A5C24,#2E7D32)` }}>🏌️🏌️ Admin - Crear torneo</Btn>
@@ -3580,12 +3581,125 @@ function H19() {
       onSuccess={(jugador) => { setMode("jugador-home"); setPinInput(""); setPinError(false); setActiveJugador(jugador); }} />;
   }
 
+  if (mode === "jugador-registro") {
+    return <JugadorRegistroScreen appStyle={appStyle} onExit={() => setMode("home")}
+      onSuccess={(jugador) => { setMode("jugador-home"); setActiveJugador(jugador); }} />;
+  }
+
   if (mode === "jugador-home" && activeJugador) {
     return <JugadorHomeScreen jugador={activeJugador} appStyle={appStyle}
       onExit={() => { setMode("home"); setActiveJugador(null); }} />;
   }
 
   return null;
+}
+
+// ─── REGISTRO JUGADOR NUEVO ────────────────────────────────────────────────
+
+function JugadorRegistroScreen({ appStyle, onExit, onSuccess }) {
+  const [nombre, setNombre]   = React.useState("");
+  const [nip, setNip]         = React.useState("");
+  const [nip2, setNip2]       = React.useState("");
+  const [email, setEmail]     = React.useState("");
+  const [tel, setTel]         = React.useState("");
+  const [saving, setSaving]   = React.useState(false);
+  const [error, setError]     = React.useState("");
+
+  const inp = { background:D.surface, border:`1px solid ${D.border}`, borderRadius:10, color:D.text, fontSize:15, padding:"12px 14px", width:"100%", boxSizing:"border-box" };
+
+  const handleRegistro = async () => {
+    setError("");
+    if (!nombre.trim()) return setError("El nombre es obligatorio.");
+    if (nip.length < 4) return setError("El NIP debe tener al menos 4 dígitos.");
+    if (nip !== nip2) return setError("Los NIPs no coinciden.");
+    setSaving(true);
+    try {
+      // Leer directorio actual
+      const snap = await get(clubRef("directorio"));
+      const dir = snap.exists() ? snap.val() : {};
+      const players = Array.isArray(dir.players) ? dir.players : [];
+
+      // Verificar que el nombre no esté tomado
+      if (players.some(p => p.name.trim().toLowerCase() === nombre.trim().toLowerCase())) {
+        setError("Ya existe un jugador con ese nombre. Si ya estás registrado, usa 'Entrar como jugador'.");
+        setSaving(false); return;
+      }
+
+      // Generar ID consecutivo
+      const maxId = players.reduce((max, p) => Math.max(max, parsePlayerId(p.id) || 0), 0);
+      const newId = maxId + 1;
+      const nipHash = await hashNIP(nip, CLUB_H19_ID, newId);
+
+      const nuevoJugador = {
+        id: newId,
+        name: nombre.trim(),
+        email: email.trim(),
+        tel: tel.trim(),
+        hc: 0,
+        whs: 0,
+        nipHash,
+        estado: "activo",
+        registradoPor: "self",
+        creadoAt: Date.now(),
+      };
+
+      players.push(nuevoJugador);
+      await set(clubRef("directorio"), { ...dir, players });
+      // dual-write raíz
+      try { await set(ref(db, "directorio"), { ...dir, players }); } catch(_) {}
+
+      onSuccess(nuevoJugador);
+    } catch(e) {
+      setError("Error al registrar. Intenta de nuevo.");
+    }
+    setSaving(false);
+  };
+
+  return (
+    <div style={{ ...appStyle, display:"flex", flexDirection:"column", padding:24, gap:14, minHeight:"100vh" }}>
+      {/* Header */}
+      <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:4 }}>
+        <button onClick={onExit} style={{ border:"none", background:"transparent", color:D.gold, fontSize:22, cursor:"pointer", padding:0 }}>‹</button>
+        <div style={{ fontSize:20, fontWeight:800, color:D.gold }}>Registro de jugador</div>
+      </div>
+      <div style={{ fontSize:12, color:D.textSub, marginBottom:4 }}>
+        Crea tu cuenta para acceder a tu historial y rondas. El administrador del club asignará tu handicap.
+      </div>
+
+      <div>
+        <div style={{ fontSize:12, color:D.textSub, marginBottom:5, fontWeight:600 }}>Nombre completo *</div>
+        <input style={inp} value={nombre} onChange={e => setNombre(e.target.value)} placeholder="Tu nombre como aparecerá en el marcador" autoFocus />
+      </div>
+      <div>
+        <div style={{ fontSize:12, color:D.textSub, marginBottom:5, fontWeight:600 }}>NIP (mínimo 4 dígitos) *</div>
+        <input style={inp} type="password" inputMode="numeric" maxLength={6} value={nip}
+          onChange={e => setNip(e.target.value.replace(/\D/g,""))} placeholder="••••" />
+      </div>
+      <div>
+        <div style={{ fontSize:12, color:D.textSub, marginBottom:5, fontWeight:600 }}>Confirmar NIP *</div>
+        <input style={inp} type="password" inputMode="numeric" maxLength={6} value={nip2}
+          onChange={e => setNip2(e.target.value.replace(/\D/g,""))} placeholder="••••" />
+      </div>
+      <div>
+        <div style={{ fontSize:12, color:D.textSub, marginBottom:5, fontWeight:600 }}>Correo electrónico (opcional)</div>
+        <input style={inp} type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="correo@ejemplo.com" />
+      </div>
+      <div>
+        <div style={{ fontSize:12, color:D.textSub, marginBottom:5, fontWeight:600 }}>Teléfono (opcional)</div>
+        <input style={inp} type="tel" value={tel} onChange={e => setTel(e.target.value)} placeholder="+52 55 1234 5678" />
+      </div>
+
+      {error && <div style={{ color:D.danger, fontSize:13, fontWeight:600, padding:"8px 12px", background:`${D.danger}11`, borderRadius:8 }}>{error}</div>}
+
+      <button onClick={handleRegistro} disabled={saving}
+        style={{ width:"100%", padding:"15px", border:"none", borderRadius:14, background:saving?"#555":`linear-gradient(135deg,${D.gold},#B8860B)`, color:saving?"#999":"#000", fontSize:16, fontWeight:800, cursor:saving?"default":"pointer", marginTop:4 }}>
+        {saving ? "Registrando…" : "✅ Crear cuenta"}
+      </button>
+      <div style={{ fontSize:11, color:D.textSub, textAlign:"center" }}>
+        Tu NIP es personal. No lo compartas. El administrador puede restablecer tu NIP si lo olvidas.
+      </div>
+    </div>
+  );
 }
 
 // ─── FASE 4: LOGIN POR NIP ─────────────────────────────────────────────────
@@ -4366,68 +4480,145 @@ function AdminGruposPanel({ directorio }) {
 // Solo guarda en historial y actualiza WHS — sin apuestas.
 function JugadorRondaScreen({ jugador, appStyle, onTerminada, onCancelar }) {
   const FASE = { CONFIG:"config", JUGANDO:"jugando", RESUMEN:"resumen" };
-  const [fase, setFase]       = React.useState(FASE.CONFIG);
-  const [campo, setCampo]     = React.useState("huerta");
-  const [nHoles, setNHoles]   = React.useState(9);
-  const [saleHoyo, setSaleHoyo] = React.useState(1); // 1-9
-  const [scores, setScores]   = React.useState([]); // scores[hoyoIndex] = golpes | null
-  const [hoyoActual, setHoyoActual] = React.useState(0); // índice 0-8 en el orden de juego
+  const [fase, setFase]         = React.useState(FASE.CONFIG);
+  const [campo, setCampo]       = React.useState("huerta");
+  const [nHoles, setNHoles]     = React.useState(9);
+  const [saleHoyo, setSaleHoyo] = React.useState(1);
   const [guardando, setGuardando] = React.useState(false);
   const [guardado, setGuardado]   = React.useState(false);
 
+  // Modo: "individual" | "grupo"
+  const [modoRonda, setModoRonda] = React.useState("individual");
+  const [grupos, setGrupos]       = React.useState([]);
+  const [loadingGrupos, setLoadingGrupos] = React.useState(false);
+  const [grupoSel, setGrupoSel]   = React.useState(null); // grupo seleccionado
+  // jugadoresRonda: array de { id, name, hc } — jugador propio + miembros del grupo
+  const [jugadoresRonda, setJugadoresRonda] = React.useState([]);
+  // jugActivo: en modo grupo, qué fila (jugador) tiene foco para +/- con botones grandes
+  const [jugActivo, setJugActivo] = React.useState(0);
+
+  // scores[jugadorIdx][hoyoIdx]
+  const [scores, setScores] = React.useState([]);
+  const [hoyoActual, setHoyoActual] = React.useState(0);
+
+  // Cargar grupos del jugador
+  React.useEffect(() => {
+    if (modoRonda !== "grupo") return;
+    setLoadingGrupos(true);
+    get(clubRef("grupos")).then(snap => {
+      if (!snap.exists()) { setGrupos([]); setLoadingGrupos(false); return; }
+      const todos = Object.entries(snap.val()).map(([k,v]) => ({ ...v, _key:k }));
+      // Solo grupos donde el jugador es miembro activo
+      const miGrupos = todos.filter(g =>
+        g.miembros && Object.entries(g.miembros).some(([id, m]) =>
+          String(id) === String(jugador.id) && m.estado === "activo"
+        )
+      );
+      setGrupos(miGrupos);
+      setLoadingGrupos(false);
+    }).catch(() => setLoadingGrupos(false));
+  }, [modoRonda, jugador.id]);
+
+  // Cuando se selecciona un grupo, armar la lista de jugadores
+  React.useEffect(() => {
+    if (modoRonda === "individual") {
+      setJugadoresRonda([{ id: jugador.id, name: jugador.name, hc: jugador.hc }]);
+    } else if (grupoSel) {
+      const miembros = Object.entries(grupoSel.miembros || {})
+        .filter(([, m]) => m.estado === "activo")
+        .map(([id, m]) => ({ id, name: m.nombre || id, hc: m.hc || 0 }));
+      // Asegurar que el jugador propio esté primero
+      const propio = miembros.find(m => String(m.id) === String(jugador.id));
+      const resto  = miembros.filter(m => String(m.id) !== String(jugador.id));
+      const orden  = propio ? [propio, ...resto] : [{ id: jugador.id, name: jugador.name, hc: jugador.hc }, ...miembros];
+      setJugadoresRonda(orden);
+    }
+  }, [modoRonda, grupoSel, jugador]);
+
   const campoConfig  = CAMPOS[campo] || CAMPOS["huerta"];
   const parsCompleto = campoConfig.pares || Array(18).fill(4);
-  // Pares del campo para nHoles, empezando desde saleHoyo-1 (circular)
+
   const parsOrden = React.useMemo(() => {
     const pars9 = parsCompleto.slice(0, 9);
     const orden = [];
-    for (let i = 0; i < nHoles; i++) {
-      orden.push(pars9[(saleHoyo - 1 + i) % 9]);
-    }
+    for (let i = 0; i < nHoles; i++) orden.push(pars9[(saleHoyo - 1 + i) % 9]);
     return orden;
   }, [campo, nHoles, saleHoyo, parsCompleto]);
 
-  // Número de hoyo real (1-9) para mostrar
   const hoyoReal = (hoyoIdx) => ((saleHoyo - 1 + hoyoIdx) % 9) + 1;
 
+  // Inicializar scores cuando cambian jugadores o hoyos
   React.useEffect(() => {
-    setScores(Array(nHoles).fill(null));
+    const nJ = jugadoresRonda.length || 1;
+    setScores(Array.from({ length: nJ }, () => Array(nHoles).fill(null)));
     setHoyoActual(0);
-  }, [nHoles, campo, saleHoyo]);
+    setJugActivo(0);
+  }, [nHoles, campo, saleHoyo, jugadoresRonda.length]);
 
-  const scoreActual = scores[hoyoActual] ?? parsOrden[hoyoActual];
-  const setScoreActual = (val) => setScores(prev => { const s=[...prev]; s[hoyoActual]=Math.max(1,val); return s; });
+  // Score del jugador activo en el hoyo actual
+  const scoreActual = (scores[jugActivo]?.[hoyoActual]) ?? parsOrden[hoyoActual] ?? 4;
+  const setScoreActual = (val) => setScores(prev => {
+    const s = prev.map(row => [...row]);
+    if (!s[jugActivo]) s[jugActivo] = Array(nHoles).fill(null);
+    s[jugActivo][hoyoActual] = Math.max(1, val);
+    return s;
+  });
 
-  const totalGolpes = scores.reduce((a, b) => a + (b ?? 0), 0);
   const parTotal    = parsOrden.reduce((a, b) => a + b, 0);
-  const holesJugados = scores.filter(s => s !== null).length;
+  // Para el jugador propio (índice 0): hoyos anotados
+  const holesJugados = (scores[0] || []).filter(s => s !== null).length;
+  // Total del jugador activo
+  const totalActivo = (scores[jugActivo] || []).reduce((a,b) => a + (b ?? 0), 0);
 
-  const irAnterior = () => { if (hoyoActual > 0) setHoyoActual(h => h - 1); };
+  // Avanzar jugador activo dentro del mismo hoyo, luego al siguiente hoyo
+  const confirmarHoyo = () => {
+    // Completar con par si algún jugador no anotó
+    setScores(prev => {
+      const s = prev.map(row => [...row]);
+      s.forEach((row, ji) => { if (row[hoyoActual] === null) row[hoyoActual] = parsOrden[hoyoActual]; });
+      return s;
+    });
+  };
+
+  const irAnterior = () => { if (hoyoActual > 0) { setHoyoActual(h => h-1); setJugActivo(0); } };
   const irSiguiente = () => {
-    // Confirmar el score actual si no estaba anotado
-    setScores(prev => { const s=[...prev]; if (s[hoyoActual]===null) s[hoyoActual]=parsOrden[hoyoActual]; return s; });
-    if (hoyoActual < nHoles - 1) setHoyoActual(h => h + 1);
+    confirmarHoyo();
+    if (hoyoActual < nHoles - 1) { setHoyoActual(h => h+1); setJugActivo(0); }
     else setFase(FASE.RESUMEN);
   };
 
   const guardarRonda = async () => {
     setGuardando(true);
-    const fullScores = scores.map((s, i) => s ?? parsOrden[i]);
-    const bruto = fullScores.reduce((a, b) => a + b, 0);
     const fecha = new Date();
     const fechaStr = `${fecha.getDate().toString().padStart(2,'0')}/${(fecha.getMonth()+1).toString().padStart(2,'0')}`;
     const rondaId = `ind_${jugador.id}_${Date.now()}`;
+    const modo = modoRonda === "grupo" && grupoSel ? "grupal" : "individual";
+    const nombre = modo === "grupal"
+      ? `Ronda ${grupoSel.nombre} · ${fechaStr}`
+      : `Ronda individual · ${fechaStr}`;
+
+    const fullScoresArr = jugadoresRonda.map((_, ji) =>
+      (scores[ji] || []).map((s, hi) => s ?? parsOrden[hi])
+    );
+    const jugadoresDetalle = jugadoresRonda.map((jug, ji) => {
+      const bruto = fullScoresArr[ji].reduce((a,b) => a+b, 0);
+      const hcEfectivo = nHoles <= 9 ? Math.ceil((jug.hc||0)/2) : (jug.hc||0);
+      return { nombre: jug.name, id: jug.id, hc: jug.hc||0, bruto, neto: bruto - hcEfectivo };
+    });
+    // Ganador: menor neto
+    const ganadorIdx = jugadoresDetalle.reduce((best, j, i) => j.neto < jugadoresDetalle[best].neto ? i : best, 0);
+
     const histData = {
-      nombre: `Ronda individual · ${fechaStr}`,
-      campo, nHoles, fecha: fechaStr, fechaTs: Date.now(),
-      modoIndividual: true,
-      playerNames: [jugador.name],
-      playerIds: [String(jugador.id)],
-      playerOptsArr: [{ score:true, marcas:false, tarjetas:false }],
-      scoresPorHoyo: [fullScores],
+      nombre, campo, nHoles, fecha: fechaStr, fechaTs: Date.now(),
+      modoIndividual: modo === "individual",
+      grupoNombre: modo === "grupal" ? grupoSel.nombre : null,
+      playerNames: jugadoresRonda.map(j => j.name),
+      playerIds: jugadoresRonda.map(j => String(j.id)),
+      playerOptsArr: jugadoresRonda.map(() => ({ score:true, marcas:false, tarjetas:false })),
+      scoresPorHoyo: fullScoresArr,
       pars: parsOrden,
-      jugadores: [{ nombre: jugador.name, id: jugador.id, hc: jugador.hc, bruto, neto: bruto - Math.ceil(jugador.hc/2) }],
-      ganador: jugador.name,
+      jugadores: jugadoresDetalle,
+      ganador: jugadoresDetalle[ganadorIdx]?.nombre || jugador.name,
     };
     try {
       await set(clubRef(`historial/${rondaId}`), histData);
@@ -4439,7 +4630,8 @@ function JugadorRondaScreen({ jugador, appStyle, onTerminada, onCancelar }) {
     }
   };
 
-  const appSt = appStyle || { minHeight:"100vh", background:D.bg, color:D.text, fontFamily:"system-ui,sans-serif" };
+  // Siempre forzar fondo y color para evitar pantalla en blanco
+  const appSt = { minHeight:"100vh", background:D.bg, color:D.text, fontFamily:"system-ui,sans-serif", ...(appStyle||{}) };
 
   // ── FASE: CONFIG ──
   if (fase === FASE.CONFIG) {
@@ -4448,9 +4640,18 @@ function JugadorRondaScreen({ jugador, appStyle, onTerminada, onCancelar }) {
       <div style={appSt}>
         <div style={{ padding:"16px 16px 80px" }}>
           {/* Header */}
-          <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:20 }}>
+          <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:16 }}>
             <button onClick={onCancelar} style={{ border:"none", background:"transparent", color:D.gold, fontSize:22, cursor:"pointer", padding:0 }}>‹</button>
             <div style={{ fontSize:18, fontWeight:800, color:D.gold }}>Nueva ronda individual</div>
+          </div>
+
+          {/* Aviso: esta ronda es para historial/WHS */}
+          <div style={{ background:D.surface, border:`1px solid ${D.border}`, borderRadius:12, padding:"12px 14px", marginBottom:16 }}>
+            <div style={{ fontSize:13, color:D.text, fontWeight:600, marginBottom:4 }}>📊 Ronda para historial y WHS</div>
+            <div style={{ fontSize:12, color:D.textSub }}>Anota tu ronda para guardarla en tu historial y actualizar tu Handicap Index (WHS).</div>
+            <div style={{ height:1, background:D.border, margin:"10px 0" }} />
+            <div style={{ fontSize:12, color:D.textSub }}>¿Vas a jugar con apuestas (score, marcas, tarjetas)?</div>
+            <div style={{ fontSize:12, color:D.gold, marginTop:4, fontWeight:600 }}>→ Usa "Entrar con código de grupo" desde la pantalla de inicio.</div>
           </div>
 
           {/* Campo */}
@@ -4513,27 +4714,24 @@ function JugadorRondaScreen({ jugador, appStyle, onTerminada, onCancelar }) {
   // ── FASE: JUGANDO ──
   if (fase === FASE.JUGANDO) {
     const par = parsOrden[hoyoActual];
-    const sc  = scores[hoyoActual] ?? par;
+    const sc   = scoreActual;
     const diff = sc - par;
     const diffColor = diff < 0 ? "#2ecc71" : diff === 0 ? D.textSub : D.gold;
     const diffLabel = diff === 0 ? "Par" : diff > 0 ? `+${diff}` : String(diff);
 
-    // Mini-tarjeta de hoyos jugados
     const miniCards = Array.from({length: nHoles}, (_, i) => {
-      const s = scores[i];
+      const s = scores[0]?.[i] ?? null;
       const p = parsOrden[i];
       const activo = i === hoyoActual;
-      const jugado = s !== null;
-      let bg = "transparent";
-      let col = D.textSub;
+      let bg = "transparent", col = D.textSub;
       if (activo) { bg = D.gold; col = "#000"; }
-      else if (jugado) {
+      else if (s !== null) {
         const d = s - p;
-        if (d <= -2) { bg="#FFD700"; col="#000"; }      // eagle+
-        else if (d === -1) { bg="#2ecc71"; col="#fff"; } // birdie
-        else if (d === 0)  { bg="#888"; col="#fff"; }    // par
-        else if (d === 1)  { bg="#e67e22"; col="#fff"; } // bogey
-        else               { bg="#c0392b"; col="#fff"; } // doble+
+        if (d <= -2) { bg="#FFD700"; col="#000"; }
+        else if (d === -1) { bg="#2ecc71"; col="#fff"; }
+        else if (d === 0)  { bg="#888"; col="#fff"; }
+        else if (d === 1)  { bg="#e67e22"; col="#fff"; }
+        else               { bg="#c0392b"; col="#fff"; }
       }
       return (
         <div key={i} onClick={() => setHoyoActual(i)}
@@ -4545,47 +4743,35 @@ function JugadorRondaScreen({ jugador, appStyle, onTerminada, onCancelar }) {
 
     return (
       <div style={appSt}>
-        <div style={{ padding:"14px 16px", display:"flex", flexDirection:"column", gap:16, minHeight:"100vh", boxSizing:"border-box" }}>
-          {/* Header */}
+        <div style={{ padding:"14px 16px", display:"flex", flexDirection:"column", gap:14, minHeight:"100vh", boxSizing:"border-box" }}>
           <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
             <button onClick={onCancelar} style={{ border:"none", background:"transparent", color:D.textSub, fontSize:13, cursor:"pointer" }}>✕ Cancelar</button>
-            <div style={{ fontSize:13, fontWeight:700, color:D.gold }}>{campoConfig.nombre}</div>
+            <div style={{ fontSize:13, fontWeight:700, color:D.gold }}>{campoConfig.nombre} — Hoyo {hoyoReal(hoyoActual)}</div>
             <div style={{ fontSize:13, color:D.textSub }}>{holesJugados}/{nHoles}</div>
           </div>
 
-          {/* Mini-tarjeta */}
           <div style={{ display:"flex", flexWrap:"wrap", gap:4, justifyContent:"center" }}>{miniCards}</div>
 
-          {/* Hoyo actual */}
           <div style={{ background:D.surface, border:`2px solid ${D.gold}55`, borderRadius:16, padding:"20px 16px", display:"flex", flexDirection:"column", alignItems:"center", gap:8, flex:1 }}>
-            <div style={{ fontSize:12, color:D.textSub, fontWeight:600, textTransform:"uppercase", letterSpacing:1 }}>Hoyo {hoyoReal(hoyoActual)}</div>
-            <div style={{ fontSize:13, color:D.textSub }}>Par {par}</div>
-
-            {/* Score grande */}
-            <div style={{ display:"flex", alignItems:"center", gap:20, margin:"12px 0" }}>
+            <div style={{ fontSize:12, color:D.textSub, fontWeight:600, textTransform:"uppercase", letterSpacing:1 }}>Hoyo {hoyoReal(hoyoActual)} · Par {par}</div>
+            <div style={{ display:"flex", alignItems:"center", gap:20, margin:"8px 0" }}>
               <button onClick={() => setScoreActual(sc - 1)}
-                style={{ width:52, height:52, borderRadius:"50%", border:`2px solid ${D.border}`, background:"transparent", color:D.text, fontSize:28, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>
-                −
-              </button>
+                style={{ width:56, height:56, borderRadius:"50%", border:`2px solid ${D.border}`, background:"transparent", color:D.text, fontSize:30, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>−</button>
               <div style={{ textAlign:"center" }}>
-                <div style={{ fontSize:64, fontWeight:900, color:D.gold, lineHeight:1 }}>{sc}</div>
+                <div style={{ fontSize:72, fontWeight:900, color:D.gold, lineHeight:1 }}>{sc}</div>
                 <div style={{ fontSize:16, fontWeight:700, color:diffColor }}>{diffLabel}</div>
               </div>
               <button onClick={() => setScoreActual(sc + 1)}
-                style={{ width:52, height:52, borderRadius:"50%", border:`2px solid ${D.border}`, background:"transparent", color:D.text, fontSize:28, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>
-                +
-              </button>
+                style={{ width:56, height:56, borderRadius:"50%", border:`2px solid ${D.border}`, background:"transparent", color:D.text, fontSize:30, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>+</button>
             </div>
-
-            {/* Atajos rápidos par-1 / par / par+1 / par+2 */}
-            <div style={{ display:"flex", gap:8, marginTop:4 }}>
+            <div style={{ display:"flex", gap:8 }}>
               {[-1,0,1,2].map(delta => {
                 const val = par + delta;
-                const label = delta === -1 ? "Birdie" : delta === 0 ? "Par" : delta === 1 ? "Bogey" : "+2";
-                const activo = sc === val;
+                const label = delta===-1?"Birdie":delta===0?"Par":delta===1?"Bogey":"+2";
+                const sel = sc === val;
                 return (
                   <button key={delta} onClick={() => setScoreActual(val)}
-                    style={{ padding:"7px 12px", borderRadius:20, border:`1px solid ${activo?D.gold:D.border}`, background:activo?`${D.gold}22`:"transparent", color:activo?D.gold:D.textSub, fontSize:11, fontWeight:activo?700:400, cursor:"pointer" }}>
+                    style={{ padding:"7px 12px", borderRadius:20, border:`1px solid ${sel?D.gold:D.border}`, background:sel?`${D.gold}22`:"transparent", color:sel?D.gold:D.textSub, fontSize:11, fontWeight:sel?700:400, cursor:"pointer" }}>
                     {label} ({val})
                   </button>
                 );
@@ -4593,15 +4779,13 @@ function JugadorRondaScreen({ jugador, appStyle, onTerminada, onCancelar }) {
             </div>
           </div>
 
-          {/* Total acumulado */}
-          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", background:D.surface, borderRadius:12, padding:"10px 16px" }}>
+          <div style={{ display:"flex", justifyContent:"space-between", background:D.surface, borderRadius:12, padding:"10px 16px" }}>
             <div style={{ fontSize:12, color:D.textSub }}>Total acumulado</div>
             <div style={{ fontSize:16, fontWeight:800, color:D.text }}>
-              {holesJugados > 0 ? totalGolpes : "—"} <span style={{ fontSize:12, color:D.textSub }}>golpes</span>
+              {totalActivo > 0 ? totalActivo : "—"} <span style={{ fontSize:12, color:D.textSub }}>golpes</span>
             </div>
           </div>
 
-          {/* Botones navegación */}
           <div style={{ display:"flex", gap:10 }}>
             <button onClick={irAnterior} disabled={hoyoActual === 0}
               style={{ flex:1, padding:"12px", border:`1px solid ${D.border}`, borderRadius:12, background:"transparent", color:hoyoActual===0?D.border:D.textSub, fontSize:14, cursor:hoyoActual===0?"default":"pointer" }}>
@@ -4618,18 +4802,23 @@ function JugadorRondaScreen({ jugador, appStyle, onTerminada, onCancelar }) {
   }
 
   // ── FASE: RESUMEN ──
-  const brutoFinal = scores.reduce((a,b) => a+(b??0), 0);
+  // Calcular brutos por jugador
+  const brutosPorJugador = jugadoresRonda.map((_, ji) =>
+    (scores[ji] || []).reduce((a,b) => a+(b??parsOrden[0]??4), 0)
+  );
+  const brutoFinal = brutosPorJugador[0] || 0; // jugador propio (idx 0)
   const diffFinal  = brutoFinal - parTotal;
   const diffFinalStr = diffFinal === 0 ? "Par" : diffFinal > 0 ? `+${diffFinal}` : String(diffFinal);
-  const hcEfFinal  = nHoles <= 9 ? Math.ceil(jugador.hc/2) : jugador.hc;
+  const hcEfFinal  = nHoles <= 9 ? Math.ceil((jugador.hc||0)/2) : (jugador.hc||0);
   const netoFinal  = brutoFinal - hcEfFinal;
+  const esGrupoRes = jugadoresRonda.length > 1;
 
   if (guardado) return (
     <div style={{ ...appSt, display:"flex", alignItems:"center", justifyContent:"center" }}>
       <div style={{ textAlign:"center", padding:32 }}>
         <div style={{ fontSize:56 }}>✅</div>
         <div style={{ fontSize:18, fontWeight:800, color:"#2ecc71", marginTop:12 }}>¡Ronda guardada!</div>
-        <div style={{ fontSize:13, color:D.textSub, marginTop:8 }}>Actualizando tu historial y WHS…</div>
+        <div style={{ fontSize:13, color:D.textSub, marginTop:8 }}>Actualizando historial y WHS…</div>
       </div>
     </div>
   );
@@ -4643,24 +4832,24 @@ function JugadorRondaScreen({ jugador, appStyle, onTerminada, onCancelar }) {
           <div style={{ fontSize:18, fontWeight:800, color:D.gold }}>Resumen de ronda</div>
         </div>
 
-        {/* Tarjeta de resultado */}
+        {/* Tarjeta resultado propio */}
         <div style={{ background:D.surface, border:`2px solid ${D.gold}55`, borderRadius:16, padding:"20px", marginBottom:16, textAlign:"center" }}>
-          <div style={{ fontSize:13, color:D.textSub }}>{campoConfig.nombre} · {nHoles} hoyos</div>
+          <div style={{ fontSize:13, color:D.textSub }}>{campoConfig.nombre} · {nHoles} hoyos{esGrupoRes ? ` · ${grupoSel?.nombre}` : ""}</div>
           <div style={{ fontSize:60, fontWeight:900, color:D.gold, lineHeight:1.1, marginTop:8 }}>{brutoFinal}</div>
           <div style={{ fontSize:20, fontWeight:700, color: diffFinal<=0?"#2ecc71":D.gold, marginTop:4 }}>{diffFinalStr} · Par {parTotal}</div>
           <div style={{ fontSize:13, color:D.textSub, marginTop:8 }}>Neto: {netoFinal} (HC {hcEfFinal})</div>
         </div>
 
-        {/* Tarjeta hoyo por hoyo */}
+        {/* Tarjeta hoyo por hoyo del jugador propio */}
         <div style={{ background:D.surface, border:`1px solid ${D.border}`, borderRadius:12, padding:"14px", marginBottom:16 }}>
-          <div style={{ fontSize:12, fontWeight:700, color:D.textSub, marginBottom:10 }}>TARJETA</div>
+          <div style={{ fontSize:12, fontWeight:700, color:D.textSub, marginBottom:10 }}>TARJETA — {jugador.name}</div>
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr", gap:"6px 0", fontSize:12 }}>
             <div style={{ color:D.textSub, fontWeight:700 }}>Hoyo</div>
             <div style={{ color:D.textSub, fontWeight:700, textAlign:"center" }}>Par</div>
             <div style={{ color:D.textSub, fontWeight:700, textAlign:"center" }}>Score</div>
             <div style={{ color:D.textSub, fontWeight:700, textAlign:"center" }}>+/−</div>
             {Array.from({length: nHoles}, (_, i) => {
-              const s   = scores[i] ?? parsOrden[i];
+              const s   = scores[0]?.[i] ?? parsOrden[i];
               const p   = parsOrden[i];
               const d   = s - p;
               const col = d < 0 ? "#2ecc71" : d === 0 ? D.textSub : D.gold;
@@ -4673,6 +4862,31 @@ function JugadorRondaScreen({ jugador, appStyle, onTerminada, onCancelar }) {
             })}
           </div>
         </div>
+
+        {/* Tabla resumen de todos los jugadores (modo grupo) */}
+        {esGrupoRes && (
+          <div style={{ background:D.surface, border:`1px solid ${D.border}`, borderRadius:12, padding:"14px", marginBottom:16 }}>
+            <div style={{ fontSize:12, fontWeight:700, color:D.textSub, marginBottom:10 }}>RESULTADOS DEL GRUPO</div>
+            {jugadoresRonda.map((jug, ji) => {
+              const bruto = brutosPorJugador[ji];
+              const hcEf = nHoles <= 9 ? Math.ceil((jug.hc||0)/2) : (jug.hc||0);
+              const neto = bruto - hcEf;
+              const diff2 = bruto - parTotal;
+              return (
+                <div key={jug.id} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"8px 0", borderBottom:`1px solid ${D.border}33` }}>
+                  <div>
+                    <div style={{ fontSize:13, fontWeight:ji===0?700:400, color:ji===0?D.gold:D.text }}>{jug.name}</div>
+                    <div style={{ fontSize:11, color:D.textSub }}>HC {jug.hc||0}</div>
+                  </div>
+                  <div style={{ textAlign:"right" }}>
+                    <div style={{ fontSize:15, fontWeight:700, color:D.gold }}>{bruto}</div>
+                    <div style={{ fontSize:11, color:D.textSub }}>Neto {neto} ({diff2>=0?"+":""}{diff2})</div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
 
         {/* Botón guardar */}
         <button onClick={guardarRonda} disabled={guardando}
@@ -4853,7 +5067,12 @@ function JugadorHomeScreen({ jugador: jugadorInicial, appStyle, onExit }) {
                 <div style={{ fontSize:18, fontWeight:700, color:D.text }}>{avgScore}</div>
               </div>
             )}
-            {totalRondas === 0 && <div style={{ textAlign:"center", color:D.textSub, padding:24, fontSize:13 }}>Aún no hay rondas para {jugador.name}.</div>}
+            {totalRondas === 0 && <div style={{ textAlign:"center", color:D.textSub, padding:"16px 0 8px", fontSize:13 }}>Aún no hay rondas registradas.</div>}
+            {/* Acceso rápido a nueva ronda desde el Resumen */}
+            <button onClick={() => setJugandoRonda(true)}
+              style={{ marginTop:8, padding:"13px", border:`1px dashed ${D.gold}99`, borderRadius:12, background:`${D.gold}11`, color:D.gold, fontSize:14, fontWeight:700, cursor:"pointer", textAlign:"center", display:"flex", alignItems:"center", justifyContent:"center", gap:8, width:"100%", boxSizing:"border-box" }}>
+              ⛳ Nueva ronda individual
+            </button>
           </div>
           )
         )}
