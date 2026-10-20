@@ -1941,6 +1941,14 @@ function CerrarTorneoPanel({ torneoId, torneo, grupos, allPlayers, ranked, pars,
         }
       }
 
+      // ── Dual-write torneo finalizado a clubes/club_h19/torneos (para historial) ──
+      try {
+        const torneoSnap = await get(ref(db, `torneos/${torneoId}`));
+        if (torneoSnap.exists()) {
+          await set(clubRef(`torneos/${torneoId}`), torneoSnap.val());
+        }
+      } catch(e) {}
+
       setCerrado(true);
       setTimeout(() => onCerrado(), 2000);
     } catch(e) {
@@ -2020,7 +2028,7 @@ class ErrorBoundary extends React.Component {
   }
 }
 
-function TorneoSpectator({ torneoId, appStyle, isAdmin = false, onExit }) {
+function TorneoSpectator({ torneoId, appStyle, isAdmin = false, canClose = false, onExit }) {
   const [torneo, setTorneo] = useState(null);
   const [loading, setLoading] = useState(true);
   const [showSplash, setShowSplash] = useState(true);
@@ -2579,14 +2587,15 @@ function TorneoSpectator({ torneoId, appStyle, isAdmin = false, onExit }) {
           })}
         </Card>
 
-        {isAdmin && grupos.length > 0 && grupos.every(([,g]) => g.status === "finalizada") && (
+        {(isAdmin || canClose) && grupos.length > 0 && grupos.every(([,g]) => g.status === "finalizada") && (
           <CerrarTorneoPanel torneoId={torneoId} torneo={torneo} grupos={grupos} allPlayers={allPlayers} ranked={ranked} pars={pars} onCerrado={() => {
             try { localStorage.removeItem("h19-torneo-admin"); } catch(e) {}
-            window.location.href = window.location.pathname;
+            try { localStorage.removeItem("h19-jugador-torneo"); } catch(e) {}
+            if (onExit) onExit(); else window.location.href = window.location.pathname;
           }} />
         )}
 
-        {isAdmin && grupos.some(([,g]) => g.status !== "finalizada") && (
+        {(isAdmin || canClose) && grupos.some(([,g]) => g.status !== "finalizada") && (
           <div style={{ background:D.goldDim, border:`1px solid ${D.gold}`, borderRadius:12, padding:"12px", marginBottom:12, textAlign:"center", fontSize:12, color:D.gold }}>
             ⏳ Esperando que todos los grupos finalicen...
           </div>
@@ -3853,7 +3862,7 @@ function H19() {
   if (mode === "jugador-ver-torneo" && activeJugador) {
     const td = (() => { try { return JSON.parse(localStorage.getItem("h19-jugador-torneo")||"null"); } catch(e) { return null; } })();
     if (!td) { setMode("jugador-home"); return null; }
-    return <TorneoSpectator torneoId={td.torneoId} appStyle={appStyle} isAdmin={false} onExit={() => setMode("jugador-home")} />;
+    return <TorneoSpectator torneoId={td.torneoId} appStyle={appStyle} isAdmin={false} canClose={true} onExit={() => setMode("jugador-home")} />;
   }
 
   if (mode === "jugador-ver-codigos" && activeJugador) {
