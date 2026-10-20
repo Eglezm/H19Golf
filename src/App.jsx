@@ -1162,6 +1162,7 @@ function TorneoCrear({ onExit, onIniciarGrupo, appStyle, jugadorOrganizador }) {
   const [paso, setPaso] = useState(1); // 1=config, 2=grupos+jugadores, 3=compartir
   const [campo, setCampo] = useState("huerta");
   const [nHoles, setNHoles] = useState(9);
+  const [conApuestas, setConApuestas] = useState(false); // toggle apuestas
   const [apuesta, setApuesta] = useState(50);
   const [marcaVal, setMarcaVal] = useState(10);
   const [tarjetaVal, setTarjetaVal] = useState(10);
@@ -1250,7 +1251,10 @@ function TorneoCrear({ onExit, onIniciarGrupo, appStyle, jugadorOrganizador }) {
   // Guardar torneoId en localStorage cuando lleguemos al paso 3
   useEffect(() => {
     if (paso === 3 && torneoId) {
-      try { localStorage.setItem("h19-torneo-admin", JSON.stringify({ torneoId, nombre: nombre.trim() || "Torneo", campo, nHoles, apuesta, marcaVal, tarjetaVal })); } catch(e) {}
+      const td = { torneoId, nombre: nombre.trim() || "Torneo", campo, nHoles, apuesta: conApuestas?apuesta:0, marcaVal: conApuestas?marcaVal:0, tarjetaVal: conApuestas?tarjetaVal:0 };
+      try { localStorage.setItem("h19-torneo-admin", JSON.stringify(td)); } catch(e) {}
+      // También guardarlo para que el jugador organizador lo vea en su home
+      if (jugadorOrganizador) { try { localStorage.setItem("h19-jugador-torneo", JSON.stringify(td)); } catch(e) {} }
     }
   }, [paso, torneoId]);
 
@@ -1278,12 +1282,16 @@ function TorneoCrear({ onExit, onIniciarGrupo, appStyle, jugadorOrganizador }) {
     const data = {
       torneoId: tid,
       nombre: nombre.trim() || `Torneo ${new Date().toLocaleDateString('es-MX')}`,
-      campo, nHoles, apuesta, marcaVal, tarjetaVal,
+      campo, nHoles,
+      apuesta: conApuestas ? apuesta : 0,
+      marcaVal: conApuestas ? marcaVal : 0,
+      tarjetaVal: conApuestas ? tarjetaVal : 0,
       status: "en_juego", createdAt: Date.now(),
       gruposConfig: gruposConId,
       grupos: {}
     };
     await set(ref(db, `torneos/${tid}`), data);
+    set(clubRef(`torneos/${tid}`), data).catch(() => {}); // dual-write para panel admin
     // Registrar código de grupo y pre-cargar jugadores asignados
     for (const g of gruposConId) {
       await set(ref(db, `codigosGrupo/${g.id}`), {
@@ -1297,7 +1305,7 @@ function TorneoCrear({ onExit, onIniciarGrupo, appStyle, jugadorOrganizador }) {
     setPaso(3);
   };
 
-  const torneoData = { torneoId, nombre: nombre.trim() || `Torneo`, campo, nHoles, apuesta, marcaVal, tarjetaVal };
+  const torneoData = { torneoId, nombre: nombre.trim() || `Torneo`, campo, nHoles, apuesta: conApuestas?apuesta:0, marcaVal: conApuestas?marcaVal:0, tarjetaVal: conApuestas?tarjetaVal:0 };
 
   // ── PASO 1: Configuración del torneo ──
   if (paso === 1) {
@@ -1328,15 +1336,30 @@ function TorneoCrear({ onExit, onIniciarGrupo, appStyle, jugadorOrganizador }) {
             </div>
           </Card>
           <Card>
-            <SLabel>💰 Apuestas (iguales para todos los grupos)</SLabel>
-            {[{label:"Score — por jugador",val:apuesta,set:setApuesta},{label:"Marcas — por punto",val:marcaVal,set:setMarcaVal},{label:"Tarjetas — por tarjeta",val:tarjetaVal,set:setTarjetaVal}].map(({label,val,set:setVal}) => (
-              <div key={label} style={{ display:"flex", alignItems:"center", gap:10, padding:"8px 0", borderBottom:`1px solid ${D.border}` }}>
-                <div style={{ flex:1, fontSize:13, color:D.textSub }}>{label}</div>
-                <button onClick={() => setVal(Math.max(0,val-10))} style={{ width:30,height:30,borderRadius:"50%",border:`1px solid ${D.border}`,background:"transparent",color:D.text,cursor:"pointer",fontSize:18 }}>-</button>
-                <div style={{ width:50, textAlign:"center", fontSize:15, fontWeight:700, color:D.gold }}>{"$"+String(val)}</div>
-                <button onClick={() => setVal(val+10)} style={{ width:30,height:30,borderRadius:"50%",border:`1px solid ${D.gold}`,background:D.goldDim,color:D.gold,cursor:"pointer",fontSize:18 }}>+</button>
+            <SLabel>💰 Apuestas</SLabel>
+            {/* Toggle Con/Sin apuestas */}
+            <div style={{ display:"flex", gap:8, marginBottom:12 }}>
+              {[["Sin apuestas", false, D.textSub], ["Con apuestas 💵", true, "#f39c12"]].map(([label, val, color]) => (
+                <button key={String(val)} onClick={() => setConApuestas(val)}
+                  style={{ flex:1, padding:"11px 8px", border:`2px solid ${conApuestas===val?color:D.border}`, borderRadius:12, background:conApuestas===val?`${color}22`:"transparent", color:conApuestas===val?color:D.textSub, fontSize:13, fontWeight:700, cursor:"pointer" }}>
+                  {conApuestas===val?"✓ ":""}{label}
+                </button>
+              ))}
+            </div>
+            {/* Montos — solo si hay apuestas */}
+            {conApuestas && (
+              <div style={{ borderTop:`1px solid ${D.border}`, paddingTop:10 }}>
+                <div style={{ fontSize:11, color:D.textSub, marginBottom:8 }}>Iguales para todos los grupos</div>
+                {[{label:"Score — por jugador",val:apuesta,set:setApuesta},{label:"Marcas — por punto",val:marcaVal,set:setMarcaVal},{label:"Tarjetas — por tarjeta",val:tarjetaVal,set:setTarjetaVal}].map(({label,val,set:setVal}) => (
+                  <div key={label} style={{ display:"flex", alignItems:"center", gap:10, padding:"8px 0", borderBottom:`1px solid ${D.border}` }}>
+                    <div style={{ flex:1, fontSize:13, color:D.textSub }}>{label}</div>
+                    <button onClick={() => setVal(Math.max(0,val-10))} style={{ width:30,height:30,borderRadius:"50%",border:`1px solid ${D.border}`,background:"transparent",color:D.text,cursor:"pointer",fontSize:18 }}>-</button>
+                    <div style={{ width:50, textAlign:"center", fontSize:15, fontWeight:700, color:D.gold }}>{"$"+String(val)}</div>
+                    <button onClick={() => setVal(val+10)} style={{ width:30,height:30,borderRadius:"50%",border:`1px solid ${D.gold}`,background:D.goldDim,color:D.gold,cursor:"pointer",fontSize:18 }}>+</button>
+                  </div>
+                ))}
               </div>
-            ))}
+            )}
           </Card>
           <Btn onClick={() => setPaso(2)}>Siguiente: Definir grupos</Btn>
         </div>
@@ -3393,6 +3416,8 @@ function H19() {
   const [activeJugador, setActiveJugador] = useState(null);
   // Fase 4: config de salida grupal lanzada por jugador (para AdminApp)
   const [salidaGrupalConfig, setSalidaGrupalConfig] = useState(null);
+  // Torneos en curso (para panel admin)
+  const [torneosEnCurso, setTorneosEnCurso] = useState([]);
 
   useEffect(() => {
     // Escuchar cambios de auth; si el login anónimo aún no completó al montar
@@ -3410,6 +3435,20 @@ function H19() {
       const saved = localStorage.getItem("h19-torneo-admin");
       if (saved) setSavedTorneoAdmin(JSON.parse(saved));
     } catch(e) {}
+  }, []);
+
+  // Escuchar torneos en curso desde Firebase
+  useEffect(() => {
+    const unsub = onValue(ref(db, "torneos"), snap => {
+      if (!snap.exists()) { setTorneosEnCurso([]); return; }
+      const data = snap.val();
+      const lista = Object.entries(data)
+        .filter(([,t]) => t.status === "en_juego")
+        .map(([id, t]) => ({ id, ...t }))
+        .sort((a,b) => (b.createdAt||0) - (a.createdAt||0));
+      setTorneosEnCurso(lista);
+    });
+    return () => unsub();
   }, []);
 
   useEffect(() => {
@@ -3473,13 +3512,13 @@ function H19() {
             </div>
           </div>
         )}
-        {/* Fase 4: acceso por NIP de jugador */}
+        {/* Jugador */}
         <Btn onClick={() => setMode("jugador-login")} style={{ background:`linear-gradient(135deg,#1A1A2E,#16213E)`, border:`1px solid ${D.gold}44` }}>🔑 Entrar como jugador</Btn>
         <Btn outline onClick={() => setMode("jugador-registro")}>📝 Registrarse como jugador nuevo</Btn>
-        <div style={{ width:"100%", borderTop:`1px solid ${D.border}`, margin:"4px 0" }} />
-        <Btn onClick={() => setMode("pin")}>🏌️ Admin - Única salida</Btn>
-        <Btn onClick={() => setMode("pin-torneo")} style={{ background:`linear-gradient(135deg,#1A5C24,#2E7D32)` }}>🏌️🏌️ Admin - Crear torneo</Btn>
         <Btn outline onClick={() => setMode("torneo-unirse")}>🔗 Entrar con código de grupo</Btn>
+        <div style={{ width:"100%", borderTop:`1px solid ${D.border}`, margin:"4px 0" }} />
+        {/* Admin — un solo botón */}
+        <Btn onClick={() => setMode("pin-admin-panel")} style={{ background:`linear-gradient(135deg,#2C1810,#4A2C1A)`, border:`1px solid #8B6914` }}>🛠️ Administrador</Btn>
         <div style={{ width:"100%", borderTop:`1px solid ${D.border}`, margin:"4px 0" }} />
         <Btn outline onClick={() => setMode("spectator-input")}>👀 Ver ronda en vivo</Btn>
         <Btn outline onClick={() => setMode("torneo-spectator-input")}>🏆 Ver torneo en vivo</Btn>
@@ -3599,6 +3638,142 @@ function H19() {
     </>
   );
 
+  // ── PIN único para todo el panel admin ──────────────────────────────────
+  if (mode === "pin-admin-panel") {
+    return (
+      <>
+      <div style={{ ...appStyle, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:24, gap:14 }}>
+        <div style={{ fontSize:40, fontWeight:900, color:D.gold }}>H19</div>
+        <div style={{ fontSize:15, fontWeight:700, color:D.text, marginBottom:4 }}>Panel de Administrador</div>
+        <div style={{ fontSize:13, color:D.textSub, marginBottom:8 }}>Ingresa tu PIN</div>
+        <input type="password" value={pinInput} onChange={e => setPinInput(e.target.value)}
+          onKeyDown={e => { if (e.key==="Enter" && pinInput===ADMIN_PIN) { setMode("admin-panel"); setPinError(false); setPinInput(""); } }}
+          placeholder="PIN" maxLength={6}
+          style={{ width:"100%", padding:14, border:`1px solid ${pinError?D.danger:D.border}`, borderRadius:12, background:D.surface, color:D.text, fontSize:22, textAlign:"center", letterSpacing:8, fontWeight:700 }} />
+        {pinError && <div style={{ color:D.danger, fontSize:13 }}>PIN incorrecto</div>}
+        <Btn onClick={() => { if (pinInput===ADMIN_PIN) { setMode("admin-panel"); setPinError(false); setPinInput(""); } else setPinError(true); }}>Entrar</Btn>
+        <button onClick={() => { setMode("home"); setPinInput(""); setPinError(false); }} style={{ fontSize:13, color:D.textSub, background:"none", border:"none", cursor:"pointer" }}>Volver</button>
+      </div>
+      <BarBtn />
+      </>
+    );
+  }
+
+  // ── PANEL ADMIN GENERAL ───────────────────────────────────────────────────
+  if (mode === "admin-panel") {
+    return (
+      <>
+      <div style={{ ...appStyle, minHeight:"100vh", padding:"0 0 32px" }}>
+        {/* Header */}
+        <div style={{ background:D.surface, borderBottom:`1px solid ${D.border}`, padding:"20px 20px 14px", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+          <div>
+            <div style={{ fontSize:28, fontWeight:900, color:D.gold, letterSpacing:-1 }}>H19</div>
+            <div style={{ fontSize:11, color:D.textSub, letterSpacing:2, textTransform:"uppercase" }}>Panel Administrador</div>
+          </div>
+          <button onClick={() => setMode("home")} style={{ fontSize:12, color:D.textSub, background:"none", border:`1px solid ${D.border}`, borderRadius:8, padding:"6px 12px", cursor:"pointer" }}>Salir</button>
+        </div>
+
+        <div style={{ padding:"16px 16px" }}>
+          {/* Torneos en curso */}
+          {torneosEnCurso.length > 0 && (
+            <div style={{ marginBottom:16 }}>
+              <div style={{ fontSize:11, fontWeight:700, color:D.textSub, letterSpacing:1, textTransform:"uppercase", marginBottom:8 }}>🟢 Torneos en curso</div>
+              {torneosEnCurso.map(t => {
+                const grupos = t.gruposConfig || [];
+                const nGrupos = Array.isArray(grupos) ? grupos.length : Object.keys(grupos).length;
+                return (
+                  <div key={t.id} style={{ background:D.surface, border:`1px solid #4CAF5055`, borderRadius:14, padding:"14px 16px", marginBottom:8 }}>
+                    <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", marginBottom:8 }}>
+                      <div>
+                        <div style={{ fontSize:15, fontWeight:800, color:D.text }}>{t.nombre}</div>
+                        <div style={{ fontSize:12, color:D.textSub, marginTop:2 }}>{CAMPOS[t.campo]?.nombre||t.campo} · {t.nHoles} hoyos · {nGrupos} grupos</div>
+                      </div>
+                      <div style={{ fontSize:10, fontWeight:700, color:"#4CAF50", background:"#4CAF5022", padding:"3px 8px", borderRadius:20 }}>EN CURSO</div>
+                    </div>
+                    <div style={{ display:"flex", gap:8 }}>
+                      <button onClick={() => { setRondaId(t.id); setTorneoIsAdmin(true); setMode("torneo-spectator"); }}
+                        style={{ flex:1, padding:"9px 8px", border:"none", borderRadius:8, background:"#4CAF50", color:"#fff", fontSize:12, fontWeight:700, cursor:"pointer" }}>
+                        👁️ Ver torneo
+                      </button>
+                      <button onClick={() => { setSavedTorneoAdmin(t); setMode("pin-torneo-codigos"); }}
+                        style={{ flex:1, padding:"9px 8px", border:`1px solid #4CAF50`, borderRadius:8, background:"transparent", color:"#4CAF50", fontSize:12, fontWeight:700, cursor:"pointer" }}>
+                        🔑 Códigos
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Torneo guardado en local */}
+          {savedTorneoAdmin && !torneosEnCurso.find(t => t.id === savedTorneoAdmin.torneoId) && (
+            <div style={{ background:D.surface, border:`1px solid ${D.gold}55`, borderRadius:14, padding:"14px 16px", marginBottom:16 }}>
+              <div style={{ fontSize:11, fontWeight:700, color:D.gold, marginBottom:6 }}>🏆 Torneo activo (local)</div>
+              <div style={{ fontSize:14, fontWeight:700, marginBottom:8 }}>{savedTorneoAdmin.nombre}</div>
+              <div style={{ display:"flex", gap:8 }}>
+                <button onClick={() => setMode("pin-torneo-ver")}
+                  style={{ flex:1, padding:"9px", border:"none", borderRadius:8, background:D.gold, color:"#000", fontSize:12, fontWeight:700, cursor:"pointer" }}>
+                  👁️ Ver torneo
+                </button>
+                <button onClick={() => setMode("pin-torneo-codigos")}
+                  style={{ flex:1, padding:"9px", border:`1px solid ${D.gold}`, borderRadius:8, background:"transparent", color:D.gold, fontSize:12, fontWeight:700, cursor:"pointer" }}>
+                  🔑 Códigos
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Acciones rápidas */}
+          <div style={{ fontSize:11, fontWeight:700, color:D.textSub, letterSpacing:1, textTransform:"uppercase", marginBottom:10 }}>Acciones</div>
+          <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+            <button onClick={() => setMode("admin")}
+              style={{ display:"flex", alignItems:"center", gap:14, padding:"16px 18px", border:`2px solid ${D.gold}44`, borderRadius:16, background:`linear-gradient(135deg,${D.gold}18,${D.gold}08)`, cursor:"pointer", textAlign:"left" }}>
+              <div style={{ fontSize:32, lineHeight:1 }}>⛳</div>
+              <div style={{ flex:1 }}>
+                <div style={{ fontSize:16, fontWeight:800, color:D.gold }}>Salida única</div>
+                <div style={{ fontSize:12, color:D.textSub, marginTop:3 }}>Ronda para un grupo de jugadores</div>
+              </div>
+              <div style={{ fontSize:18, color:D.gold, opacity:0.6 }}>›</div>
+            </button>
+
+            <button onClick={() => setMode("torneo-menu")}
+              style={{ display:"flex", alignItems:"center", gap:14, padding:"16px 18px", border:`2px solid #4CAF5044`, borderRadius:16, background:`linear-gradient(135deg,#4CAF5018,#4CAF5008)`, cursor:"pointer", textAlign:"left" }}>
+              <div style={{ fontSize:32, lineHeight:1 }}>🏆</div>
+              <div style={{ flex:1 }}>
+                <div style={{ fontSize:16, fontWeight:800, color:"#4CAF50" }}>Crear torneo</div>
+                <div style={{ fontSize:12, color:D.textSub, marginTop:3 }}>Múltiples grupos con códigos</div>
+              </div>
+              <div style={{ fontSize:18, color:"#4CAF50", opacity:0.6 }}>›</div>
+            </button>
+
+            <button onClick={() => setMode("admin")}
+              style={{ display:"flex", alignItems:"center", gap:14, padding:"16px 18px", border:`2px solid #2196F344`, borderRadius:16, background:`linear-gradient(135deg,#2196F318,#2196F308)`, cursor:"pointer", textAlign:"left" }}>
+              <div style={{ fontSize:32, lineHeight:1 }}>👥</div>
+              <div style={{ flex:1 }}>
+                <div style={{ fontSize:16, fontWeight:800, color:"#2196F3" }}>Directorio y grupos</div>
+                <div style={{ fontSize:12, color:D.textSub, marginTop:3 }}>Jugadores, handicaps, grupos del club</div>
+              </div>
+              <div style={{ fontSize:18, color:"#2196F3", opacity:0.6 }}>›</div>
+            </button>
+
+            <button onClick={() => setMode("estadisticas")}
+              style={{ display:"flex", alignItems:"center", gap:14, padding:"16px 18px", border:`2px solid ${D.border}`, borderRadius:16, background:"transparent", cursor:"pointer", textAlign:"left" }}>
+              <div style={{ fontSize:32, lineHeight:1 }}>📈</div>
+              <div style={{ flex:1 }}>
+                <div style={{ fontSize:16, fontWeight:800, color:D.text }}>Estadísticas</div>
+                <div style={{ fontSize:12, color:D.textSub, marginTop:3 }}>Historial de rondas y torneos</div>
+              </div>
+              <div style={{ fontSize:18, color:D.textSub, opacity:0.6 }}>›</div>
+            </button>
+          </div>
+        </div>
+      </div>
+      <BarBtn />
+      </>
+    );
+  }
+
   if (mode === "pin") {
     return (
       <>
@@ -3664,7 +3839,27 @@ function H19() {
       onExit={() => { setMode("home"); setActiveJugador(null); }}
       onCrearTorneo={() => setMode("jugador-torneo-crear")}
       onIniciarRonda={() => setMode("jugador-ronda")}
-      onSalidaGrupal={() => setMode("jugador-salida-grupal")} />;
+      onSalidaGrupal={() => setMode("jugador-salida-grupal")}
+      onEntrarCodigo={() => setMode("jugador-codigo-grupo")}
+      onVerTorneo={() => setMode("jugador-ver-torneo")}
+      onVerCodigos={() => setMode("jugador-ver-codigos")} />;
+  }
+
+  if (mode === "jugador-codigo-grupo" && activeJugador) {
+    return <TorneoUnirse appStyle={appStyle} onExit={() => setMode("jugador-home")} />;
+  }
+
+  if (mode === "jugador-ver-torneo" && activeJugador) {
+    // Cargar torneo del jugador desde localStorage y mostrar como spectator
+    const td = (() => { try { return JSON.parse(localStorage.getItem("h19-jugador-torneo")||"null"); } catch(e) { return null; } })();
+    if (!td) { setMode("jugador-home"); return null; }
+    return <SpectatorView rondaId={td.torneoId} onExit={() => setMode("jugador-home")} />;
+  }
+
+  if (mode === "jugador-ver-codigos" && activeJugador) {
+    const td = (() => { try { return JSON.parse(localStorage.getItem("h19-jugador-torneo")||"null"); } catch(e) { return null; } })();
+    if (!td) { setMode("jugador-home"); return null; }
+    return <TorneoCodigosView torneoAdmin={td} appStyle={appStyle} onExit={() => setMode("jugador-home")} />;
   }
 
   if (mode === "jugador-salida-grupal" && activeJugador) {
@@ -3686,7 +3881,7 @@ function H19() {
     return <TorneoCrear appStyle={appStyle}
       jugadorOrganizador={activeJugador}
       onExit={() => setMode("jugador-home")}
-      onIniciarGrupo={() => setMode("jugador-home")} />;
+      onIniciarGrupo={() => setMode("jugador-codigo-grupo")} />;
   }
 
   return null;
@@ -5683,7 +5878,7 @@ function EstadisticasJugadorPanel({ jugador, todasRondas, loading }) {
 }
 
 // ─── JUGADOR HOME SCREEN ──────────────────────────────────────────────────────
-function JugadorHomeScreen({ jugador: jugadorInicial, appStyle, onExit, onCrearTorneo, onIniciarRonda, onSalidaGrupal }) {
+function JugadorHomeScreen({ jugador: jugadorInicial, appStyle, onExit, onCrearTorneo, onIniciarRonda, onSalidaGrupal, onEntrarCodigo, onVerTorneo, onVerCodigos }) {
   const [jugador, setJugador]   = React.useState(jugadorInicial);
   const [historial, setHistorial] = React.useState([]);
   const [todasRondas, setTodasRondas] = React.useState([]);
@@ -5691,6 +5886,10 @@ function JugadorHomeScreen({ jugador: jugadorInicial, appStyle, onExit, onCrearT
   const [tab, setTab]           = React.useState("resumen");
   const [editandoPerfil, setEditandoPerfil] = React.useState(false);
   const [notifBadge, setNotifBadge] = React.useState(0);
+  // Torneo activo creado por este jugador
+  const [torneoJugador, setTorneoJugador] = React.useState(() => {
+    try { return JSON.parse(localStorage.getItem("h19-jugador-torneo")||"null"); } catch(e) { return null; }
+  });
 
   const cargarHistorial = React.useCallback(() => {
     setLoading(true);
@@ -5849,7 +6048,29 @@ function JugadorHomeScreen({ jugador: jugadorInicial, appStyle, onExit, onCrearT
               </div>
             )}
             {totalRondas === 0 && <div style={{ textAlign:"center", color:D.textSub, padding:"8px 0 0", fontSize:13 }}>Aún no hay rondas registradas.</div>}
-            {/* ── 3 Tipos de salida ── */}
+
+            {/* ── Banner torneo activo (si creó uno) ── */}
+            {torneoJugador && (
+              <div style={{ background:"#E8F5E9", border:`1px solid #4CAF50`, borderRadius:12, padding:"12px 14px" }}>
+                <div style={{ fontSize:12, fontWeight:700, color:"#2E7D32", marginBottom:8 }}>🏆 Torneo activo: {torneoJugador.nombre}</div>
+                <div style={{ display:"flex", gap:6 }}>
+                  <button onClick={() => onVerTorneo?.()}
+                    style={{ flex:1, padding:"9px 8px", border:"none", borderRadius:8, background:"#4CAF50", color:"#fff", fontSize:12, fontWeight:700, cursor:"pointer" }}>
+                    👁️ Ver torneo
+                  </button>
+                  <button onClick={() => onVerCodigos?.()}
+                    style={{ flex:1, padding:"9px 8px", border:`1px solid #4CAF50`, borderRadius:8, background:"transparent", color:"#2E7D32", fontSize:12, fontWeight:700, cursor:"pointer" }}>
+                    🔑 Ver códigos
+                  </button>
+                  <button onClick={() => { try{localStorage.removeItem("h19-jugador-torneo");}catch(e){} setTorneoJugador(null); }}
+                    style={{ padding:"9px 10px", border:`1px solid #ccc`, borderRadius:8, background:"transparent", color:"#999", fontSize:12, cursor:"pointer" }}>
+                    ✕
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* ── 3 Tipos de salida + Entrar con código ── */}
             <div style={{ marginTop:4 }}>
               <div style={{ fontSize:11, color:D.textSub, fontWeight:700, textTransform:"uppercase", letterSpacing:1, marginBottom:10 }}>⛳ Selecciona tu tipo de salida</div>
               <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
@@ -5885,6 +6106,17 @@ function JugadorHomeScreen({ jugador: jugadorInicial, appStyle, onExit, onCrearT
                     <div style={{ fontSize:12, color:D.textSub, marginTop:3 }}>2+ grupos · Salidas múltiples · Con o sin apuestas</div>
                   </div>
                   <div style={{ fontSize:18, color:"#4CAF50", opacity:0.6 }}>›</div>
+                </button>
+
+                {/* 4 — Entrar con código de grupo */}
+                <button onClick={() => onEntrarCodigo?.()}
+                  style={{ display:"flex", alignItems:"center", gap:14, padding:"16px 18px", border:`2px solid #AB47BC55`, borderRadius:16, background:`linear-gradient(135deg,#AB47BC18,#AB47BC08)`, cursor:"pointer", textAlign:"left", width:"100%", boxSizing:"border-box" }}>
+                  <div style={{ fontSize:32, lineHeight:1 }}>🔗</div>
+                  <div style={{ flex:1 }}>
+                    <div style={{ fontSize:16, fontWeight:800, color:"#AB47BC" }}>Entrar con código</div>
+                    <div style={{ fontSize:12, color:D.textSub, marginTop:3 }}>Úsate al torneo que creó el organizador</div>
+                  </div>
+                  <div style={{ fontSize:18, color:"#AB47BC", opacity:0.6 }}>›</div>
                 </button>
 
               </div>
@@ -7357,6 +7589,22 @@ function AdminApp({ onExit, torneoConfig = null }) {
   const [abandonandoIdx, setAbandonandoIdx] = useState(null);
   const [agregandoJugador, setAgregandoJugador] = useState(false);
   const [totalJugadoresTorneoAdmin, setTotalJugadoresTorneoAdmin] = useState(0);
+  // ── Filtro por grupo en pantalla sel ──────────────────────────────────────
+  const [gruposAdmin, setGruposAdmin] = useState([]);
+  const [grupoFiltroAdmin, setGrupoFiltroAdmin] = useState(null); // { _key, nombre, miembros }
+
+  // Cargar grupos del club para filtro en sel
+  useEffect(() => {
+    const unsub = onValue(clubRef("grupos"), snap => {
+      if (!snap.exists()) { setGruposAdmin([]); return; }
+      const data = snap.val();
+      const lista = Object.entries(data).map(([k, g]) => ({ _key: k, nombre: g.nombre || k, miembros: g.miembros || {} }))
+        .filter(g => Object.keys(g.miembros).length > 0)
+        .sort((a, b) => a.nombre.localeCompare(b.nombre));
+      setGruposAdmin(lista);
+    });
+    return () => unsub();
+  }, []);
 
   // En modo torneo, obtener total de jugadores de todos los grupos automáticamente
   useEffect(() => {
@@ -8517,7 +8765,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
                     {confirmDeleteHist === r.id ? (
                       <div style={{ display:"flex", alignItems:"center", gap:8 }}>
                         <span style={{ fontSize:12, color:D.danger, flex:1 }}>¿Eliminar esta ronda del historial?</span>
-                        <button onClick={() => { remove(ref(db, `historial/${r.id}`)); setConfirmDeleteHist(null); setExpandedHist(null); }} style={{ padding:"6px 12px", border:`1px solid ${D.danger}`, borderRadius:8, background:D.redBg, color:D.danger, fontSize:11, fontWeight:700, cursor:"pointer" }}>Sí, eliminar</button>
+                        <button onClick={() => { remove(ref(db, `historial/${r.id}`)); remove(clubRef(`historial/${r.id}`)).catch(()=>{}); setConfirmDeleteHist(null); setExpandedHist(null); }} style={{ padding:"6px 12px", border:`1px solid ${D.danger}`, borderRadius:8, background:D.redBg, color:D.danger, fontSize:11, fontWeight:700, cursor:"pointer" }}>Sí, eliminar</button>
                         <button onClick={() => setConfirmDeleteHist(null)} style={{ padding:"6px 12px", border:`1px solid ${D.border}`, borderRadius:8, background:"transparent", color:D.textSub, fontSize:11, cursor:"pointer" }}>Cancelar</button>
                       </div>
                     ) : (
@@ -8562,7 +8810,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
                       {confirmDeleteTorneo === t.id ? (
                         <div style={{ display:"flex", gap:6, alignItems:"center" }}>
                           <span style={{ fontSize:11, color:D.danger, fontWeight:700 }}>¿Eliminar?</span>
-                          <button onClick={e => { e.stopPropagation(); remove(ref(db, `torneos/${t.id}`)); setExpandedTorneoHist(null); setConfirmDeleteTorneo(null); }}
+                          <button onClick={e => { e.stopPropagation(); remove(ref(db, `torneos/${t.id}`)); remove(clubRef(`torneos/${t.id}`)).catch(()=>{}); setExpandedTorneoHist(null); setConfirmDeleteTorneo(null); }}
                             style={{ fontSize:11, color:"#fff", background:D.danger, border:"none", borderRadius:6, padding:"3px 10px", cursor:"pointer", fontWeight:700 }}>
                             Sí, eliminar
                           </button>
@@ -8736,6 +8984,31 @@ function AdminApp({ onExit, torneoConfig = null }) {
             </div>
           ))}
         </Card>
+        {gruposAdmin.length > 0 && (
+          <Card>
+            <SLabel>👥 Filtrar por grupo</SLabel>
+            <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
+              <button onClick={() => { setGrupoFiltroAdmin(null); setSel(new Set()); }}
+                style={{ padding:"8px 12px", border:`1px solid ${!grupoFiltroAdmin?D.gold:D.border}`, borderRadius:10, background:!grupoFiltroAdmin?`${D.gold}22`:"transparent", color:!grupoFiltroAdmin?D.gold:D.textSub, fontSize:12, fontWeight:700, cursor:"pointer" }}>
+                Todos
+              </button>
+              {gruposAdmin.map(g => (
+                <button key={g._key} onClick={() => { setGrupoFiltroAdmin(g); setSel(new Set()); }}
+                  style={{ padding:"8px 12px", border:`1px solid ${grupoFiltroAdmin?._key===g._key?D.gold:D.border}`, borderRadius:10, background:grupoFiltroAdmin?._key===g._key?`${D.gold}22`:"transparent", color:grupoFiltroAdmin?._key===g._key?D.gold:D.text, fontSize:12, fontWeight:700, cursor:"pointer" }}>
+                  {g.nombre}
+                </button>
+              ))}
+            </div>
+            {grupoFiltroAdmin && (
+              <div style={{ fontSize:11, color:D.textSub, marginTop:8 }}>
+                Mostrando {(() => {
+                  const memberNums = new Set(Object.entries(grupoFiltroAdmin.miembros||{}).filter(([,m])=>m.estado==="activo"||m.estado==null).map(([id])=>parseInt(String(id).replace(/\D/g,""),10)).filter(n=>!isNaN(n)));
+                  return dir.filter(p=>{ const pNum=parseInt(String(p.id||"").replace(/\D/g,""),10); return !isNaN(pNum)&&memberNums.has(pNum); }).length;
+                })()} miembros activos de {grupoFiltroAdmin.nombre}
+              </div>
+            )}
+          </Card>
+        )}
         <Card>
           <SLabel>¿Quién juega hoy?</SLabel>
           <div style={{ fontSize:12, color:n<2?D.textSub:D.gold, marginBottom:10, fontWeight:600 }}>
@@ -8746,16 +9019,29 @@ function AdminApp({ onExit, torneoConfig = null }) {
               🏆 Premio <span style={{ color:D.gold, fontWeight:700 }}>{"$"+String(pot)}</span> · {n>=10?`1er ${"$"+String(Math.round(pot*0.6))} (60%) · 2do ${"$"+String(Math.round(pot*0.4))} (40%)`:"Todo para el 1er lugar"}
             </div>
           )}
-          {dir.slice().sort((a,b)=>a.name.localeCompare(b.name)).map((p, idx) => (
-            <div key={p.id} onClick={() => toggleSel(p.id)} style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 0", borderBottom:idx<dir.length-1?`1px solid ${D.border}`:"none", cursor:"pointer", userSelect:"none" }}>
-              <div style={{ width:22,height:22,borderRadius:6,border:`2px solid ${sel.has(p.id)?D.gold:D.border}`,background:sel.has(p.id)?D.goldDim:"transparent",color:D.gold,display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:700,flexShrink:0 }}>
-                {sel.has(p.id)?"✓":""}
+          {(() => {
+            const dirFiltradoAdmin = grupoFiltroAdmin
+              ? (() => {
+                  const memberNums = new Set(
+                    Object.entries(grupoFiltroAdmin.miembros || {})
+                      .filter(([,m]) => m.estado === "activo" || m.estado == null)
+                      .map(([id]) => parseInt(String(id).replace(/\D/g,""), 10))
+                      .filter(n => !isNaN(n))
+                  );
+                  return dir.filter(p => { const pNum = parseInt(String(p.id||"").replace(/\D/g,""), 10); return !isNaN(pNum) && memberNums.has(pNum); });
+                })()
+              : dir;
+            return dirFiltradoAdmin.slice().sort((a,b)=>a.name.localeCompare(b.name)).map((p, idx) => (
+              <div key={p.id} onClick={() => toggleSel(p.id)} style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 0", borderBottom:idx<dirFiltradoAdmin.length-1?`1px solid ${D.border}`:"none", cursor:"pointer", userSelect:"none" }}>
+                <div style={{ width:22,height:22,borderRadius:6,border:`2px solid ${sel.has(p.id)?D.gold:D.border}`,background:sel.has(p.id)?D.goldDim:"transparent",color:D.gold,display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:700,flexShrink:0 }}>
+                  {sel.has(p.id)?"✓":""}
+                </div>
+                <Avatar name={p.name} id={p.id} size={32} />
+                <div style={{ flex:1, fontSize:14, fontWeight:600 }}>{p.name}</div>
+                <div style={{ fontSize:12, color:D.gold }}>HC {nHoles<=9?Math.ceil(p.hc/2):p.hc}{nHoles<=9?" (de "+p.hc+")":""}</div>
               </div>
-              <Avatar name={p.name} id={p.id} size={32} />
-              <div style={{ flex:1, fontSize:14, fontWeight:600 }}>{p.name}</div>
-              <div style={{ fontSize:12, color:D.gold }}>HC {nHoles<=9?Math.ceil(p.hc/2):p.hc}{nHoles<=9?" (de "+p.hc+")":""}</div>
-            </div>
-          ))}
+            ));
+          })()}
         </Card>
         {n>=2 && (
           <Card>
