@@ -1233,11 +1233,15 @@ function TorneoCrear({ onExit, onIniciarGrupo, appStyle, jugadorOrganizador }) {
     get(clubRef("grupos")).then(snap => {
       if (!snap.exists()) return;
       const todos = Object.entries(snap.val()).map(([k,v]) => ({ ...v, _key:k }));
-      const misGrupos = todos.filter(g =>
-        g.miembros && Object.entries(g.miembros).some(([id, m]) =>
-          String(id) === String(jugadorOrganizador.id) && m.estado === "activo"
-        )
-      );
+      const orgIdNum = parseInt(String(jugadorOrganizador.id).replace(/\D/g,""), 10);
+      const misGrupos = todos.filter(g => {
+        if (!g.miembros) return false;
+        if (g.creadorId === jugadorOrganizador.id) return true;
+        return Object.keys(g.miembros).some(k => {
+          const kNum = parseInt(String(k).replace(/\D/g,""), 10);
+          return String(k) === String(jugadorOrganizador.id) || kNum === orgIdNum;
+        });
+      });
       setGruposClub(misGrupos);
       if (misGrupos.length === 1) setGrupoFiltroSel(misGrupos[0]);
     }).catch(() => {});
@@ -5114,9 +5118,7 @@ function JugadorSalidaGrupalScreen({ jugador, appStyle, onVolver }) {
   }, [jugador.id]);
 
   const handleContinuar = () => {
-    // La salida grupal usa el flujo de código de grupo existente (TorneoUnirse)
-    // Pasamos al modo de unirse con código del grupo
-    if (!grupoSel?.codigo) return;
+    if (!grupoSel) return;
     setBuscarCodigo(false);
     setPaso(2);
   };
@@ -5216,27 +5218,57 @@ function JugadorSalidaGrupalScreen({ jugador, appStyle, onVolver }) {
           )}
         </>)}
 
-        {paso === 2 && grupoSel && (
-          <div style={{ display:"flex", flexDirection:"column", gap:16, alignItems:"center", paddingTop:20 }}>
-            <div style={{ fontSize:40 }}>🤝</div>
-            <div style={{ textAlign:"center" }}>
-              <div style={{ fontSize:18, fontWeight:800, color:"#4FC3F7" }}>{grupoSel.nombre}</div>
-              <div style={{ fontSize:13, color:D.textSub, marginTop:6 }}>{conApuestas ? "Con apuestas 💰" : "Sin apuestas"}</div>
+        {paso === 2 && grupoSel && (() => {
+          const miembros = grupoSel.miembros
+            ? Object.entries(grupoSel.miembros).filter(([,m]) => m.estado === "activo" || m.estado == null)
+            : [];
+          return (
+            <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
+              {/* Resumen */}
+              <div style={{ background:`linear-gradient(135deg,#001A2A,#00263A)`, border:`2px solid #4FC3F755`, borderRadius:16, padding:"18px 16px" }}>
+                <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:12 }}>
+                  <div style={{ fontSize:32 }}>🤝</div>
+                  <div>
+                    <div style={{ fontSize:18, fontWeight:800, color:"#4FC3F7" }}>{grupoSel.nombre}</div>
+                    <div style={{ fontSize:13, color:D.textSub }}>{miembros.length} jugadores · {conApuestas ? "Con apuestas 💰" : "Sin apuestas"}</div>
+                  </div>
+                </div>
+                <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
+                  {miembros.map(([id, m]) => (
+                    <div key={id} style={{ padding:"6px 12px", background:"rgba(79,195,247,0.12)", border:`1px solid #4FC3F733`, borderRadius:20, fontSize:12, color:"#4FC3F7", fontWeight:600 }}>
+                      {m.nombre || id}
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Instrucciones */}
+              <div style={{ background:D.surface, border:`1px solid ${D.border}`, borderRadius:12, padding:"14px 16px" }}>
+                <div style={{ fontSize:12, fontWeight:700, color:D.gold, marginBottom:10 }}>📋 Siguientes pasos</div>
+                {[
+                  `El administrador abre la app en modo Admin`,
+                  `Selecciona el grupo "${grupoSel.nombre}" en el directorio`,
+                  conApuestas ? `Activa las apuestas antes de iniciar la ronda` : `Inicia la ronda sin apuestas`,
+                  `Comparte el código con los jugadores para que sigan el marcador`,
+                ].map((paso, i) => (
+                  <div key={i} style={{ display:"flex", gap:10, alignItems:"flex-start", marginBottom:8 }}>
+                    <div style={{ minWidth:22, height:22, borderRadius:"50%", background:`${D.gold}33`, color:D.gold, fontSize:11, fontWeight:800, display:"flex", alignItems:"center", justifyContent:"center" }}>{i+1}</div>
+                    <div style={{ fontSize:13, color:D.text, lineHeight:1.5 }}>{paso}</div>
+                  </div>
+                ))}
+              </div>
+
+              <button onClick={() => setPaso(1)}
+                style={{ padding:"12px", border:`1px solid ${D.border}`, borderRadius:12, background:"transparent", color:D.textSub, fontSize:13, cursor:"pointer" }}>
+                ← Cambiar configuración
+              </button>
+              <button onClick={onVolver}
+                style={{ padding:"13px", border:"none", borderRadius:12, background:`linear-gradient(135deg,#0078A8,#005F87)`, color:"#fff", fontSize:14, fontWeight:700, cursor:"pointer" }}>
+                ✓ Entendido, volver al inicio
+              </button>
             </div>
-            <div style={{ background:D.surface, border:`1px solid ${D.border}`, borderRadius:12, padding:"14px 20px", textAlign:"center", width:"100%", boxSizing:"border-box" }}>
-              <div style={{ fontSize:12, color:D.textSub, marginBottom:6 }}>Código del grupo</div>
-              <div style={{ fontSize:28, fontWeight:900, color:D.gold, letterSpacing:4 }}>{grupoSel.codigo || "—"}</div>
-              <div style={{ fontSize:11, color:D.textSub, marginTop:6 }}>Comparte este código con tus compañeros para que se unan</div>
-            </div>
-            <div style={{ fontSize:12, color:D.textSub, textAlign:"center", lineHeight:1.6 }}>
-              Para continuar, el administrador del grupo debe iniciar la ronda en modo Admin usando este código, {conApuestas ? "activando las apuestas" : "sin apuestas"}.
-            </div>
-            <button onClick={onVolver}
-              style={{ padding:"13px 32px", border:`1px solid ${D.border}`, borderRadius:12, background:"transparent", color:D.textSub, fontSize:14, cursor:"pointer" }}>
-              ← Volver al inicio
-            </button>
-          </div>
-        )}
+          );
+        })()}
       </div>
 
       <div style={{ padding:"0 16px 24px" }}>
