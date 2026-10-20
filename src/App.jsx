@@ -3386,6 +3386,8 @@ function H19() {
   const [anonUid, setAnonUid] = useState(null);
   // Fase 4: jugador autenticado con NIP
   const [activeJugador, setActiveJugador] = useState(null);
+  // Fase 4: config de salida grupal lanzada por jugador (para AdminApp)
+  const [salidaGrupalConfig, setSalidaGrupalConfig] = useState(null);
 
   useEffect(() => {
     // Escuchar cambios de auth; si el login anónimo aún no completó al montar
@@ -3662,7 +3664,17 @@ function H19() {
 
   if (mode === "jugador-salida-grupal" && activeJugador) {
     return <JugadorSalidaGrupalScreen jugador={activeJugador} appStyle={appStyle}
-      onVolver={() => setMode("jugador-home")} />;
+      onVolver={() => setMode("jugador-home")}
+      onIniciarSalida={(cfg) => { setSalidaGrupalConfig(cfg); setMode("jugador-salida-admin"); }} />;
+  }
+
+  if (mode === "jugador-salida-admin" && salidaGrupalConfig) {
+    return (
+      <AdminApp
+        onExit={() => { setSalidaGrupalConfig(null); setMode("jugador-home"); }}
+        torneoConfig={salidaGrupalConfig}
+      />
+    );
   }
 
   if (mode === "jugador-torneo-crear" && activeJugador) {
@@ -5089,43 +5101,212 @@ function JugadorRondaScreen({ jugador, appStyle, onTerminada, onCancelar }) {
 }
 
 // ─── JUGADOR SALIDA GRUPAL ────────────────────────────────────────────────────
-function JugadorSalidaGrupalScreen({ jugador, appStyle, onVolver }) {
+function JugadorSalidaGrupalScreen({ jugador, appStyle, onVolver, onIniciarSalida }) {
   const [grupos, setGrupos] = React.useState([]);
   const [grupoSel, setGrupoSel] = React.useState(null);
-  const [conApuestas, setConApuestas] = React.useState(false);
-  const [paso, setPaso] = React.useState(1); // 1=selector, 2=confirmar
+  const [paso, setPaso] = React.useState(1); // 1=grupo, 2=config, 3=confirmar
   const [loading, setLoading] = React.useState(true);
-  const [codigoInput, setCodigoInput] = React.useState("");
-  const [buscarCodigo, setBuscarCodigo] = React.useState(false);
+  // Configuración de la ronda (paso 2)
+  const [campo, setCampo] = React.useState("huerta");
+  const [nHoles, setNHoles] = React.useState(9);
+  const [hoyoSalida, setHoyoSalida] = React.useState(1);
+  const [conApuestas, setConApuestas] = React.useState(false);
+  const [dirJugadores, setDirJugadores] = React.useState([]);
 
   React.useEffect(() => {
+    // Cargar grupos donde el jugador es miembro
     get(clubRef("grupos")).then(snap => {
       if (!snap.exists()) { setLoading(false); return; }
-      // miembros es un objeto { [jugadorId]: { nombre, estado, ... } }
       const lista = Object.entries(snap.val()).map(([k, g]) => ({ ...g, _key: k }));
-      // Comparar ID en múltiples formatos: "H19-000003", "3", 3
       const idNum = parseInt(String(jugador.id).replace(/\D/g,""), 10);
       const miGrupos = lista.filter(g => {
         if (!g.miembros) return false;
         if (g.creadorId === jugador.id) return true;
-        const keys = Object.keys(g.miembros);
-        return keys.some(k => String(k) === String(jugador.id) || parseInt(String(k).replace(/\D/g,""), 10) === idNum);
+        return Object.keys(g.miembros).some(k =>
+          String(k) === String(jugador.id) || parseInt(String(k).replace(/\D/g,""), 10) === idNum
+        );
       });
       setGrupos(miGrupos);
       if (miGrupos.length === 1) setGrupoSel(miGrupos[0]);
       setLoading(false);
     }).catch(() => setLoading(false));
+    // Cargar directorio para obtener HCs actualizados
+    get(clubRef("directorio")).then(snap => {
+      if (snap.exists()) setDirJugadores(Object.values(snap.val()));
+    }).catch(() => {});
   }, [jugador.id]);
 
-  const handleContinuar = () => {
-    if (!grupoSel) return;
-    setBuscarCodigo(false);
-    setPaso(2);
+  // Construir lista de jugadores con HC actual desde directorio
+  const buildPlayers = (grupo) => {
+    if (!grupo?.miembros) return [];
+    return Object.entries(grupo.miembros)
+      .filter(([, m]) => m.estado === "activo" || m.estado == null)
+      .map(([id, m]) => {
+        // Buscar HC actualizado en el directorio
+        const idNum = parseInt(String(id).replace(/\D/g,""), 10);
+        const dirEntry = dirJugadores.find(d =>
+          String(d.id) === String(id) || parseInt(String(d.id||"").replace(/\D/g,""), 10) === idNum || d.nombre === m.nombre
+        );
+        const hc = dirEntry?.hc ?? dirEntry?.handicap ?? m.hc ?? 0;
+        return { id, name: m.nombre || id, hc: Number(hc), opts: { score:true, marcas:true, tarjetas:true } };
+      });
   };
+
+  const handleIniciar = () => {
+    if (!grupoSel) return;
+    const players = buildPlayers(grupoSel);
+    if (players.length < 1) return;
+    // Construir torneoConfig similar al que usa AdminApp con playersPreasignados
+    const cfg = {
+      nombre: grupoSel.nombre,
+      grupoNombre: grupoSel.nombre,
+      grupoId: grupoSel._key || grupoSel.id,
+      campo,
+      nHoles,
+      hoyoSalida,
+      apuesta: conApuestas ? DEFAULT_APUESTA : 0,
+      marcaVal: conApuestas ? DEFAULT_MARCA_VAL : 0,
+      tarjetaVal: conApuestas ? DEFAULT_TARJETA_VAL : 0,
+      playersPreasignados: players,
+      // Sin torneoId: es una salida grupal simple, no un torneo
+    };
+    onIniciarSalida(cfg);
+  };
+
+  const camposDisponibles = Object.keys(CAMPOS);
+  const maxHoyo = (CAMPOS[campo]?.pares?.length || 18);
 
   if (loading) return (
     <div style={{ ...appStyle, display:"flex", alignItems:"center", justifyContent:"center", minHeight:"100vh" }}>
       <div style={{ color:D.textSub }}>Cargando grupos…</div>
+    </div>
+  );
+
+  // ── Paso 1: Seleccionar grupo ──
+  const renderPaso1 = () => (
+    <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
+      <div style={{ fontSize:12, color:D.textSub, fontWeight:700, textTransform:"uppercase", letterSpacing:1 }}>Selecciona tu grupo</div>
+      {grupos.length === 0 ? (
+        <div style={{ background:D.surface, border:`1px solid ${D.border}`, borderRadius:12, padding:20, textAlign:"center" }}>
+          <div style={{ fontSize:32, marginBottom:8 }}>🤝</div>
+          <div style={{ fontSize:14, color:D.text, fontWeight:700, marginBottom:6 }}>No perteneces a ningún grupo</div>
+          <div style={{ fontSize:12, color:D.textSub }}>Pide al administrador que te agregue a un grupo, o crea uno nuevo desde el panel de Grupos.</div>
+        </div>
+      ) : (
+        <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+          {grupos.map(g => {
+            const sel = grupoSel?._key === g._key;
+            const miembros = g.miembros ? Object.values(g.miembros).filter(m => m.estado === "activo" || m.estado == null) : [];
+            return (
+              <button key={g._key} onClick={() => setGrupoSel(g)}
+                style={{ display:"flex", alignItems:"center", gap:12, padding:"14px 16px", border:`2px solid ${sel?"#4FC3F7":"#4FC3F733"}`, borderRadius:14, background:sel?"#001A2A":"transparent", cursor:"pointer", textAlign:"left", width:"100%" }}>
+                <div style={{ fontSize:26 }}>🤝</div>
+                <div style={{ flex:1 }}>
+                  <div style={{ fontSize:15, fontWeight:700, color:sel?"#4FC3F7":D.text }}>{g.nombre}</div>
+                  <div style={{ fontSize:11, color:D.textSub, marginTop:2 }}>
+                    {miembros.map(m => m.nombre).filter(Boolean).slice(0,4).join(", ")}
+                    {miembros.length > 4 ? ` +${miembros.length-4} más` : ""}
+                  </div>
+                </div>
+                {sel && <div style={{ fontSize:18, color:"#4FC3F7" }}>✓</div>}
+              </button>
+            );
+          })}
+        </div>
+      )}
+      {grupoSel && (
+        <button onClick={() => setPaso(2)}
+          style={{ padding:"15px", border:"none", borderRadius:14, background:`linear-gradient(135deg,#0078A8,#005F87)`, color:"#fff", fontSize:16, fontWeight:800, cursor:"pointer" }}>
+          Continuar con {grupoSel.nombre} →
+        </button>
+      )}
+    </div>
+  );
+
+  // ── Paso 2: Configurar la ronda ──
+  const renderPaso2 = () => (
+    <div style={{ display:"flex", flexDirection:"column", gap:18 }}>
+      {/* Campo */}
+      <div>
+        <div style={{ fontSize:12, color:D.textSub, fontWeight:700, textTransform:"uppercase", letterSpacing:1, marginBottom:8 }}>⛳ Campo</div>
+        <div style={{ display:"flex", flexWrap:"wrap", gap:8 }}>
+          {camposDisponibles.map(c => (
+            <button key={c} onClick={() => { setCampo(c); setHoyoSalida(1); }}
+              style={{ padding:"10px 14px", border:`2px solid ${campo===c?D.gold:D.border}`, borderRadius:10, background:campo===c?D.goldDim:"transparent", color:campo===c?D.gold:D.text, fontSize:13, fontWeight:campo===c?800:600, cursor:"pointer", textTransform:"capitalize" }}>
+              {CAMPOS[c]?.nombre || c}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Número de hoyos */}
+      <div>
+        <div style={{ fontSize:12, color:D.textSub, fontWeight:700, textTransform:"uppercase", letterSpacing:1, marginBottom:8 }}>🏌️ Hoyos a jugar</div>
+        <div style={{ display:"flex", gap:8 }}>
+          {[9, 18].filter(n => n <= maxHoyo).map(n => (
+            <button key={n} onClick={() => setNHoles(n)}
+              style={{ flex:1, padding:"12px", border:`2px solid ${nHoles===n?D.gold:D.border}`, borderRadius:10, background:nHoles===n?D.goldDim:"transparent", color:nHoles===n?D.gold:D.text, fontSize:15, fontWeight:800, cursor:"pointer" }}>
+              {n} hoyos
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Hoyo de salida */}
+      <div>
+        <div style={{ fontSize:12, color:D.textSub, fontWeight:700, textTransform:"uppercase", letterSpacing:1, marginBottom:8 }}>🚀 Hoyo de salida</div>
+        <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
+          {Array.from({ length: maxHoyo }, (_, i) => i + 1).map(h => (
+            <button key={h} onClick={() => setHoyoSalida(h)}
+              style={{ width:40, height:40, border:`2px solid ${hoyoSalida===h?D.gold:D.border}`, borderRadius:10, background:hoyoSalida===h?D.goldDim:"transparent", color:hoyoSalida===h?D.gold:D.text, fontSize:14, fontWeight:hoyoSalida===h?800:500, cursor:"pointer" }}>
+              {h}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Apuestas */}
+      <div>
+        <div style={{ fontSize:12, color:D.textSub, fontWeight:700, textTransform:"uppercase", letterSpacing:1, marginBottom:8 }}>💰 Apuestas</div>
+        <div style={{ display:"flex", gap:10 }}>
+          {[["Sin apuestas",false,D.textSub],["Con apuestas",true,"#f39c12"]].map(([label,val,color]) => (
+            <button key={String(val)} onClick={() => setConApuestas(val)}
+              style={{ flex:1, padding:"12px 8px", border:`2px solid ${conApuestas===val?color:D.border}`, borderRadius:12, background:conApuestas===val?`${color}22`:"transparent", color:conApuestas===val?color:D.textSub, fontSize:13, fontWeight:700, cursor:"pointer" }}>
+              {conApuestas===val?"✓ ":""}{label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Jugadores del grupo */}
+      {(() => {
+        const players = buildPlayers(grupoSel);
+        return (
+          <div style={{ background:D.surface, border:`1px solid ${D.border}`, borderRadius:12, padding:"12px 14px" }}>
+            <div style={{ fontSize:12, color:D.textSub, fontWeight:700, marginBottom:10 }}>👥 Jugadores ({players.length})</div>
+            <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
+              {players.map(p => (
+                <div key={p.id} style={{ display:"flex", alignItems:"center", gap:6, padding:"6px 10px", background:D.goldDim, border:`1px solid ${D.gold}44`, borderRadius:20 }}>
+                  <Avatar name={p.name} id={p.id} size={20} />
+                  <span style={{ fontSize:12, fontWeight:600, color:D.text }}>{p.name}</span>
+                  <span style={{ fontSize:11, color:D.textSub }}>HC {p.hc}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
+
+      <div style={{ display:"flex", gap:10 }}>
+        <button onClick={() => setPaso(1)}
+          style={{ flex:1, padding:"13px", border:`1px solid ${D.border}`, borderRadius:12, background:"transparent", color:D.textSub, fontSize:13, cursor:"pointer" }}>
+          ← Volver
+        </button>
+        <button onClick={handleIniciar}
+          style={{ flex:2, padding:"15px", border:"none", borderRadius:14, background:`linear-gradient(135deg,#0078A8,#005F87)`, color:"#fff", fontSize:16, fontWeight:800, cursor:"pointer" }}>
+          🏌️ Iniciar ronda
+        </button>
+      </div>
     </div>
   );
 
@@ -5134,145 +5315,23 @@ function JugadorSalidaGrupalScreen({ jugador, appStyle, onVolver }) {
       {/* Header */}
       <div style={{ background:`linear-gradient(135deg,#001A2A,#00263A)`, padding:"20px 16px 14px", borderBottom:`1px solid #4FC3F733` }}>
         <div style={{ display:"flex", alignItems:"center", gap:12 }}>
-          <div style={{ fontSize:28 }}>🤝</div>
+          <button onClick={paso === 1 ? onVolver : () => setPaso(p => p - 1)}
+            style={{ background:"none", border:"none", color:"#4FC3F7", fontSize:22, cursor:"pointer", padding:"0 4px" }}>{"<"}</button>
+          <div style={{ fontSize:26 }}>🤝</div>
           <div>
             <div style={{ fontSize:18, fontWeight:800, color:"#4FC3F7" }}>Única Salida Grupal</div>
-            <div style={{ fontSize:12, color:D.textSub }}>Un grupo · Cualquier hoyo</div>
+            <div style={{ fontSize:12, color:D.textSub }}>Paso {paso} de 2 · {paso===1?"Selecciona grupo":"Configura la ronda"}</div>
           </div>
+        </div>
+        {/* Barra de progreso */}
+        <div style={{ marginTop:10, height:3, background:"#4FC3F722", borderRadius:2 }}>
+          <div style={{ height:"100%", width:`${paso*50}%`, background:"#4FC3F7", borderRadius:2, transition:"width 0.3s" }} />
         </div>
       </div>
 
-      <div style={{ flex:1, padding:"20px 16px", display:"flex", flexDirection:"column", gap:20 }}>
-        {paso === 1 && (<>
-          {/* Seleccionar grupo */}
-          <div>
-            <div style={{ fontSize:12, color:D.textSub, fontWeight:700, textTransform:"uppercase", letterSpacing:1, marginBottom:10 }}>Selecciona tu grupo</div>
-            {grupos.length === 0 ? (
-              <div style={{ background:D.surface, border:`1px solid ${D.border}`, borderRadius:12, padding:16 }}>
-                <div style={{ fontSize:13, color:D.textSub, marginBottom:12 }}>No perteneces a ningún grupo aún. Pide al admin que te agregue, o únete con un código.</div>
-                <button onClick={() => setBuscarCodigo(true)}
-                  style={{ padding:"10px 16px", border:`1px solid #4FC3F755`, borderRadius:10, background:"#001A2A", color:"#4FC3F7", fontSize:13, fontWeight:700, cursor:"pointer", width:"100%" }}>
-                  Unirse con código de grupo
-                </button>
-              </div>
-            ) : (
-              <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
-                {grupos.map(g => {
-                  const sel = grupoSel?.id === g.id;
-                  const miembros = g.miembros ? Object.values(g.miembros) : [];
-                  const activos = miembros.filter(m => m.estado === "activo").length || miembros.length;
-                  return (
-                    <button key={g.id} onClick={() => setGrupoSel(g)}
-                      style={{ display:"flex", alignItems:"center", gap:12, padding:"14px 16px", border:`2px solid ${sel?"#4FC3F7":"#4FC3F733"}`, borderRadius:14, background:sel?"#001A2A":"transparent", cursor:"pointer", textAlign:"left" }}>
-                      <div style={{ fontSize:24 }}>🤝</div>
-                      <div style={{ flex:1 }}>
-                        <div style={{ fontSize:15, fontWeight:700, color:sel?"#4FC3F7":D.text }}>{g.nombre}</div>
-                        <div style={{ fontSize:11, color:D.textSub, marginTop:2 }}>{activos} jugadores activos</div>
-                      </div>
-                      {sel && <div style={{ fontSize:18, color:"#4FC3F7" }}>✓</div>}
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-
-          {/* Unirse con código (si tiene grupos muestra opción extra) */}
-          {grupos.length > 0 && (
-            <button onClick={() => setBuscarCodigo(!buscarCodigo)}
-              style={{ fontSize:12, color:D.textSub, background:"none", border:"none", cursor:"pointer", textAlign:"center" }}>
-              ¿Tienes un código de grupo? Únete aquí
-            </button>
-          )}
-
-          {buscarCodigo && (
-            <div style={{ background:D.surface, border:`1px solid ${D.border}`, borderRadius:12, padding:16 }}>
-              <div style={{ fontSize:12, color:D.textSub, marginBottom:8 }}>Código del grupo:</div>
-              <input value={codigoInput} onChange={e => setCodigoInput(e.target.value.toUpperCase())}
-                placeholder="Ej: H19-G1"
-                style={{ width:"100%", padding:12, border:`1px solid ${D.border}`, borderRadius:10, background:"transparent", color:D.text, fontSize:15, fontWeight:700, boxSizing:"border-box", textAlign:"center", letterSpacing:3 }} />
-            </div>
-          )}
-
-          {/* Con/sin apuestas */}
-          {(grupoSel || buscarCodigo) && (
-            <div>
-              <div style={{ fontSize:12, color:D.textSub, fontWeight:700, textTransform:"uppercase", letterSpacing:1, marginBottom:10 }}>¿Juegan con apuestas?</div>
-              <div style={{ display:"flex", gap:10 }}>
-                {[["Sí, con apuestas",true,"#f39c12"],["No, solo scores",false,D.textSub]].map(([label,val,color]) => (
-                  <button key={String(val)} onClick={() => setConApuestas(val)}
-                    style={{ flex:1, padding:"12px 8px", border:`2px solid ${conApuestas===val?color:D.border}`, borderRadius:12, background:conApuestas===val?`${color}22`:"transparent", color:conApuestas===val?color:D.textSub, fontSize:13, fontWeight:700, cursor:"pointer" }}>
-                    {label}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Continuar */}
-          {grupoSel && (
-            <button onClick={handleContinuar}
-              style={{ padding:"15px", border:"none", borderRadius:14, background:`linear-gradient(135deg,#0078A8,#005F87)`, color:"#fff", fontSize:16, fontWeight:800, cursor:"pointer" }}>
-              Continuar con {grupoSel.nombre} →
-            </button>
-          )}
-        </>)}
-
-        {paso === 2 && grupoSel && (() => {
-          const miembros = grupoSel.miembros
-            ? Object.entries(grupoSel.miembros).filter(([,m]) => m.estado === "activo" || m.estado == null)
-            : [];
-          return (
-            <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
-              {/* Resumen */}
-              <div style={{ background:`linear-gradient(135deg,#001A2A,#00263A)`, border:`2px solid #4FC3F755`, borderRadius:16, padding:"18px 16px" }}>
-                <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:12 }}>
-                  <div style={{ fontSize:32 }}>🤝</div>
-                  <div>
-                    <div style={{ fontSize:18, fontWeight:800, color:"#4FC3F7" }}>{grupoSel.nombre}</div>
-                    <div style={{ fontSize:13, color:D.textSub }}>{miembros.length} jugadores · {conApuestas ? "Con apuestas 💰" : "Sin apuestas"}</div>
-                  </div>
-                </div>
-                <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
-                  {miembros.map(([id, m]) => (
-                    <div key={id} style={{ padding:"6px 12px", background:"rgba(79,195,247,0.12)", border:`1px solid #4FC3F733`, borderRadius:20, fontSize:12, color:"#4FC3F7", fontWeight:600 }}>
-                      {m.nombre || id}
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Instrucciones */}
-              <div style={{ background:D.surface, border:`1px solid ${D.border}`, borderRadius:12, padding:"14px 16px" }}>
-                <div style={{ fontSize:12, fontWeight:700, color:D.gold, marginBottom:10 }}>📋 Siguientes pasos</div>
-                {[
-                  `El administrador abre la app en modo Admin`,
-                  `Selecciona el grupo "${grupoSel.nombre}" en el directorio`,
-                  conApuestas ? `Activa las apuestas antes de iniciar la ronda` : `Inicia la ronda sin apuestas`,
-                  `Comparte el código con los jugadores para que sigan el marcador`,
-                ].map((paso, i) => (
-                  <div key={i} style={{ display:"flex", gap:10, alignItems:"flex-start", marginBottom:8 }}>
-                    <div style={{ minWidth:22, height:22, borderRadius:"50%", background:`${D.gold}33`, color:D.gold, fontSize:11, fontWeight:800, display:"flex", alignItems:"center", justifyContent:"center" }}>{i+1}</div>
-                    <div style={{ fontSize:13, color:D.text, lineHeight:1.5 }}>{paso}</div>
-                  </div>
-                ))}
-              </div>
-
-              <button onClick={() => setPaso(1)}
-                style={{ padding:"12px", border:`1px solid ${D.border}`, borderRadius:12, background:"transparent", color:D.textSub, fontSize:13, cursor:"pointer" }}>
-                ← Cambiar configuración
-              </button>
-              <button onClick={onVolver}
-                style={{ padding:"13px", border:"none", borderRadius:12, background:`linear-gradient(135deg,#0078A8,#005F87)`, color:"#fff", fontSize:14, fontWeight:700, cursor:"pointer" }}>
-                ✓ Entendido, volver al inicio
-              </button>
-            </div>
-          );
-        })()}
-      </div>
-
-      <div style={{ padding:"0 16px 24px" }}>
-        <button onClick={onVolver} style={{ fontSize:13, color:D.textSub, background:"none", border:"none", cursor:"pointer" }}>← Volver</button>
+      <div style={{ flex:1, padding:"20px 16px 40px", overflowY:"auto" }}>
+        {paso === 1 && renderPaso1()}
+        {paso === 2 && renderPaso2()}
       </div>
     </div>
   );
@@ -7188,7 +7247,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
   const [screen, setScreen] = useState(() => {
     if (!torneoConfig) return "dir";
     if (torneoConfig.rondaActiva) return "torneo-resume"; // ronda en curso, retomar
-    if (torneoConfig.playersPreasignados?.length >= 2) return "score-torneo-init";
+    if (torneoConfig.playersPreasignados?.length >= 1) return "score-torneo-init";
     return "grupo-nombre";
   });
   const [grupoNombre, setGrupoNombre] = useState("");
@@ -7968,7 +8027,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
   }
 
   // ── INICIO AUTOMÁTICO EN MODO TORNEO CON JUGADORES PRE-ASIGNADOS ──
-  if (screen === "score-torneo-init" && torneoConfig?.playersPreasignados?.length >= 2) {
+  if (screen === "score-torneo-init" && torneoConfig?.playersPreasignados?.length >= 1) {
     const ps = torneoConfig.playersPreasignados;
     const basePares = CAMPOS[campo]?.pares || Array(18).fill(4);
     // NO reordenar pars - los scores siempre van en orden 0,1,2...
@@ -7987,9 +8046,12 @@ function AdminApp({ onExit, torneoConfig = null }) {
       const state = { players:ps, pars:p, scores:initScores, marcas:initMarcas, tarjetas:initTarjetas, hole:hoyoInicial, campo, status:"en_juego", rondaId:rid, grupoNombre:torneoConfig.grupoNombre, hoyoSalida:torneoConfig.hoyoSalida||1 };
       saveToLocal(state);
       try { set(ref(db, `rondas/${rid}`), { ...state, createdAt:Date.now(), updatedAt:Date.now() }); } catch(e) {}
-      try { set(ref(db, `torneos/${torneoConfig.torneoId}/grupos/${torneoConfig.grupoId}`), {
-        nombre: torneoConfig.grupoNombre, players:ps, scores:initScores, marcas:initMarcas, tarjetas:initTarjetas, hole:hoyoInicial, status:"en_juego", hoyoSalida:torneoConfig.hoyoSalida||1, updatedAt:Date.now()
-      }); } catch(e) {}
+      // Solo guardar en torneos/ si hay un torneoId real
+      if (torneoConfig.torneoId && torneoConfig.grupoId) {
+        try { set(ref(db, `torneos/${torneoConfig.torneoId}/grupos/${torneoConfig.grupoId}`), {
+          nombre: torneoConfig.grupoNombre, players:ps, scores:initScores, marcas:initMarcas, tarjetas:initTarjetas, hole:hoyoInicial, status:"en_juego", hoyoSalida:torneoConfig.hoyoSalida||1, updatedAt:Date.now()
+        }); } catch(e) {}
+      }
     }
     return (
       <div style={appSt}>
