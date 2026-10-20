@@ -3652,7 +3652,13 @@ function H19() {
     return <JugadorHomeScreen jugador={activeJugador} appStyle={appStyle}
       onExit={() => { setMode("home"); setActiveJugador(null); }}
       onCrearTorneo={() => setMode("jugador-torneo-crear")}
-      onIniciarRonda={() => setMode("jugador-ronda")} />;
+      onIniciarRonda={() => setMode("jugador-ronda")}
+      onSalidaGrupal={() => setMode("jugador-salida-grupal")} />;
+  }
+
+  if (mode === "jugador-salida-grupal" && activeJugador) {
+    return <JugadorSalidaGrupalScreen jugador={activeJugador} appStyle={appStyle}
+      onVolver={() => setMode("jugador-home")} />;
   }
 
   if (mode === "jugador-torneo-crear" && activeJugador) {
@@ -3776,12 +3782,15 @@ function JugadorRegistroScreen({ appStyle, onExit, onSuccess }) {
 // ─── FASE 4: LOGIN POR NIP ─────────────────────────────────────────────────
 
 function JugadorLoginScreen({ appStyle, onExit, onSuccess }) {
-  const [dir, setDir] = React.useState([]);
+  const [dir, setDir]           = React.useState([]);
+  const [busqueda, setBusqueda] = React.useState("");
   const [selectedId, setSelectedId] = React.useState(null);
   const [nipInput, setNipInput] = React.useState("");
-  const [error, setError] = React.useState(null);
-  const [loading, setLoading] = React.useState(false);
+  const [error, setError]       = React.useState(null);
+  const [loading, setLoading]   = React.useState(false);
   const [loadingDir, setLoadingDir] = React.useState(true);
+  const [showSugerencias, setShowSugerencias] = React.useState(false);
+  const inputRef = React.useRef(null);
 
   React.useEffect(() => {
     get(clubRef("directorio")).then(snap => {
@@ -3795,72 +3804,173 @@ function JugadorLoginScreen({ appStyle, onExit, onSuccess }) {
     setLoading(true); setError(null);
     try {
       const jugador = dir.find(p => p.id === selectedId);
-      if (!jugador?.nipHash) { setError("Este jugador aún no tiene NIP asignado. Pide al admin que te asigne uno."); setLoading(false); return; }
+      if (!jugador?.nipHash) {
+        setError("Este jugador aún no tiene NIP asignado. Pide al admin que te asigne uno.");
+        setLoading(false); return;
+      }
       const hash = await hashNIP(nipInput, CLUB_H19_ID, selectedId);
       if (hash === jugador.nipHash) {
         onSuccess(jugador);
       } else {
-        setError("NIP incorrecto");
+        setError("NIP incorrecto. Intenta de nuevo.");
       }
     } catch(e) { setError("Error al verificar NIP"); }
     setLoading(false);
   };
 
-  const jugadoresConNip = dir.filter(p => p.nipHash);
-  const jugadoresSinNip = dir.filter(p => !p.nipHash);
   const selected = dir.find(p => p.id === selectedId);
 
-  return (
-    <div style={{ ...appStyle, display:"flex", flexDirection:"column", alignItems:"center", padding:24, gap:14, minHeight:"100vh", justifyContent:"center" }}>
-      <div style={{ fontSize:48, fontWeight:900, color:D.gold }}>H19</div>
-      <div style={{ fontSize:15, fontWeight:700, color:D.text }}>¿Quién eres?</div>
-      <div style={{ fontSize:12, color:D.textSub, marginBottom:4, textAlign:"center" }}>Selecciona tu nombre e ingresa tu NIP personal</div>
+  // Sugerencias: jugadores que coincidan con lo escrito (solo con NIP)
+  const sugerencias = busqueda.trim().length >= 1
+    ? dir
+        .filter(p => p.nipHash && p.name.toLowerCase().includes(busqueda.toLowerCase()))
+        .sort((a,b) => a.name.localeCompare(b.name))
+        .slice(0, 6)
+    : [];
 
-      {loadingDir ? (
-        <div style={{ color:D.textSub, fontSize:13 }}>Cargando jugadores…</div>
-      ) : jugadoresConNip.length === 0 ? (
-        <div style={{ background:D.surface, border:`1px solid ${D.border}`, borderRadius:12, padding:16, textAlign:"center" }}>
-          <div style={{ fontSize:13, color:D.textSub, marginBottom:8 }}>Ningún jugador tiene NIP asignado aún.</div>
-          <div style={{ fontSize:12, color:D.textSub }}>El admin debe asignar NIPs desde el Directorio.</div>
-        </div>
-      ) : (
-        <>
-          {/* Selector de jugador */}
-          <div style={{ width:"100%", display:"flex", flexDirection:"column", gap:8 }}>
-            <div style={{ fontSize:12, color:D.textSub, fontWeight:600 }}>Jugadores con NIP:</div>
-            <div style={{ display:"flex", flexWrap:"wrap", gap:8 }}>
-              {jugadoresConNip.sort((a,b)=>a.name.localeCompare(b.name)).map(p => (
-                <button key={p.id} onClick={() => { setSelectedId(p.id); setNipInput(""); setError(null); }}
-                  style={{ padding:"10px 16px", border:`2px solid ${selectedId===p.id?D.gold:D.border}`, borderRadius:20, background:selectedId===p.id?D.goldDim:"transparent", color:selectedId===p.id?D.gold:D.text, fontSize:14, fontWeight:selectedId===p.id?700:400, cursor:"pointer", transition:"all 0.15s" }}>
-                  {p.name}
-                </button>
-              ))}
+  const seleccionarJugador = (p) => {
+    setSelectedId(p.id);
+    setBusqueda(p.name);
+    setShowSugerencias(false);
+    setNipInput("");
+    setError(null);
+    setTimeout(() => document.getElementById("nip-input")?.focus(), 100);
+  };
+
+  return (
+    <div style={{ ...appStyle, display:"flex", flexDirection:"column", minHeight:"100vh" }}>
+      {/* Header */}
+      <div style={{ background:`linear-gradient(135deg,#1A1200,#2A1E00)`, padding:"28px 20px 20px", textAlign:"center", borderBottom:`1px solid ${D.gold}33` }}>
+        <div style={{ fontSize:44, fontWeight:900, color:D.gold, letterSpacing:2 }}>H19</div>
+        <div style={{ fontSize:14, color:D.textSub, marginTop:4 }}>Ingresa tu nombre y NIP</div>
+      </div>
+
+      <div style={{ flex:1, padding:"24px 20px", display:"flex", flexDirection:"column", gap:20 }}>
+
+        {loadingDir ? (
+          <div style={{ textAlign:"center", color:D.textSub, padding:32 }}>Cargando jugadores…</div>
+        ) : (<>
+
+          {/* ── PASO 1: Buscar nombre ── */}
+          <div>
+            <div style={{ fontSize:12, color:D.textSub, fontWeight:700, marginBottom:8, textTransform:"uppercase", letterSpacing:1 }}>
+              {selectedId ? "✓ Jugador seleccionado" : "Paso 1 — Escribe tu nombre"}
             </div>
-            {jugadoresSinNip.length > 0 && (
-              <div style={{ fontSize:11, color:D.textSub, marginTop:2 }}>Sin NIP: {jugadoresSinNip.map(p=>p.name).join(", ")}</div>
-            )}
+            <div style={{ position:"relative" }}>
+              <input
+                ref={inputRef}
+                value={busqueda}
+                onChange={e => {
+                  setBusqueda(e.target.value);
+                  setSelectedId(null);
+                  setShowSugerencias(true);
+                  setError(null);
+                }}
+                onFocus={() => setShowSugerencias(true)}
+                placeholder="Escribe tu nombre…"
+                style={{
+                  width:"100%", padding:"14px 16px", fontSize:16, fontWeight:600,
+                  border:`2px solid ${selectedId ? D.gold : D.border}`,
+                  borderRadius:14, background:D.surface, color:D.text,
+                  boxSizing:"border-box", outline:"none",
+                }}
+              />
+              {selectedId && (
+                <div style={{ position:"absolute", right:14, top:"50%", transform:"translateY(-50%)", fontSize:18, color:D.gold }}>✓</div>
+              )}
+              {/* Lista de sugerencias */}
+              {showSugerencias && sugerencias.length > 0 && (
+                <div style={{
+                  position:"absolute", top:"100%", left:0, right:0, zIndex:100,
+                  background:D.surface, border:`1px solid ${D.gold}55`,
+                  borderRadius:12, marginTop:4, boxShadow:"0 8px 24px rgba(0,0,0,0.3)",
+                  overflow:"hidden",
+                }}>
+                  {sugerencias.map((p, i) => (
+                    <div key={p.id}
+                      onMouseDown={e => { e.preventDefault(); seleccionarJugador(p); }}
+                      style={{
+                        padding:"13px 16px", cursor:"pointer", fontSize:15, fontWeight:600,
+                        borderBottom: i < sugerencias.length-1 ? `1px solid ${D.border}` : "none",
+                        display:"flex", alignItems:"center", gap:10,
+                        background:"transparent",
+                      }}
+                      onMouseEnter={e => e.currentTarget.style.background=D.goldDim}
+                      onMouseLeave={e => e.currentTarget.style.background="transparent"}
+                    >
+                      <Avatar name={p.name} id={p.id} size={32} />
+                      <div>
+                        <div style={{ color:D.text }}>{p.name}</div>
+                        <div style={{ fontSize:11, color:D.textSub }}>HC {p.hc} · {fmtPlayerId(p.id)}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {showSugerencias && busqueda.trim().length >= 2 && sugerencias.length === 0 && !selectedId && (
+                <div style={{ position:"absolute", top:"100%", left:0, right:0, zIndex:100, background:D.surface, border:`1px solid ${D.border}`, borderRadius:12, marginTop:4, padding:"12px 16px", fontSize:13, color:D.textSub }}>
+                  No se encontró ningún jugador con NIP. ¿Eres nuevo? <span style={{ color:D.gold, fontWeight:700 }}>Regístrate en la pantalla anterior.</span>
+                </div>
+              )}
+            </div>
           </div>
 
-          {/* Input NIP */}
+          {/* ── PASO 2: NIP ── */}
           {selectedId && (
-            <div style={{ width:"100%", display:"flex", flexDirection:"column", gap:10 }}>
-              <div style={{ fontSize:13, color:D.gold, fontWeight:700, textAlign:"center" }}>NIP de {selected?.name}</div>
-              <input type="password" inputMode="numeric" maxLength={6} value={nipInput}
+            <div>
+              <div style={{ fontSize:12, color:D.textSub, fontWeight:700, marginBottom:8, textTransform:"uppercase", letterSpacing:1 }}>
+                Paso 2 — NIP de {selected?.name}
+              </div>
+              <input
+                id="nip-input"
+                type="password"
+                inputMode="numeric"
+                maxLength={6}
+                value={nipInput}
                 onChange={e => { setNipInput(e.target.value.replace(/\D/g,"")); setError(null); }}
+                onKeyDown={e => e.key==="Enter" && handleLogin()}
                 placeholder="••••"
-                style={{ width:"100%", padding:16, border:`2px solid ${error?D.danger:D.gold}44`, borderRadius:14, background:D.surface, color:D.text, fontSize:28, textAlign:"center", letterSpacing:10, fontWeight:700, boxSizing:"border-box" }}
-                onKeyDown={e => e.key==="Enter" && handleLogin()} autoFocus />
-              {error && <div style={{ color:D.danger, fontSize:13, textAlign:"center", fontWeight:600 }}>{error}</div>}
-              <button onClick={handleLogin} disabled={loading||nipInput.length<4}
-                style={{ width:"100%", padding:14, border:"none", borderRadius:14, background:nipInput.length>=4?D.gold:"#555", color:nipInput.length>=4?"#000":"#999", fontSize:16, fontWeight:800, cursor:nipInput.length>=4?"pointer":"default" }}>
+                autoFocus
+                style={{
+                  width:"100%", padding:"16px", fontSize:32, textAlign:"center",
+                  letterSpacing:12, fontWeight:900,
+                  border:`2px solid ${error ? D.danger : D.gold}55`,
+                  borderRadius:14, background:D.surface, color:D.text,
+                  boxSizing:"border-box", outline:"none",
+                }}
+              />
+              {error && (
+                <div style={{ color:D.danger, fontSize:13, textAlign:"center", fontWeight:600, marginTop:8 }}>{error}</div>
+              )}
+              <button
+                onClick={handleLogin}
+                disabled={loading || nipInput.length < 4}
+                style={{
+                  width:"100%", padding:"15px", marginTop:12, border:"none", borderRadius:14,
+                  background: nipInput.length >= 4 ? `linear-gradient(135deg,${D.gold},#B8860B)` : D.surface,
+                  color: nipInput.length >= 4 ? "#000" : D.textSub,
+                  fontSize:16, fontWeight:800, cursor: nipInput.length >= 4 ? "pointer" : "default",
+                  border: nipInput.length >= 4 ? "none" : `1px solid ${D.border}`,
+                }}>
                 {loading ? "Verificando…" : "Entrar →"}
               </button>
             </div>
           )}
-        </>
-      )}
 
-      <button onClick={onExit} style={{ fontSize:13, color:D.textSub, background:"none", border:"none", cursor:"pointer", marginTop:8 }}>← Volver</button>
+          {/* Cambiar jugador */}
+          {selectedId && (
+            <button onClick={() => { setSelectedId(null); setBusqueda(""); setNipInput(""); setError(null); inputRef.current?.focus(); }}
+              style={{ fontSize:12, color:D.textSub, background:"none", border:"none", cursor:"pointer", textAlign:"center" }}>
+              ¿No eres {selected?.name}? Cambiar jugador
+            </button>
+          )}
+
+        </>)}
+      </div>
+
+      <div style={{ padding:"0 20px 32px", textAlign:"center" }}>
+        <button onClick={onExit} style={{ fontSize:13, color:D.textSub, background:"none", border:"none", cursor:"pointer" }}>← Volver al inicio</button>
+      </div>
     </div>
   );
 }
@@ -4969,8 +5079,167 @@ function JugadorRondaScreen({ jugador, appStyle, onTerminada, onCancelar }) {
   );
 }
 
+// ─── JUGADOR SALIDA GRUPAL ────────────────────────────────────────────────────
+function JugadorSalidaGrupalScreen({ jugador, appStyle, onVolver }) {
+  const [grupos, setGrupos] = React.useState([]);
+  const [grupoSel, setGrupoSel] = React.useState(null);
+  const [conApuestas, setConApuestas] = React.useState(false);
+  const [paso, setPaso] = React.useState(1); // 1=selector, 2=confirmar
+  const [loading, setLoading] = React.useState(true);
+  const [codigoInput, setCodigoInput] = React.useState("");
+  const [buscarCodigo, setBuscarCodigo] = React.useState(false);
+
+  React.useEffect(() => {
+    get(clubRef("grupos")).then(snap => {
+      if (!snap.exists()) { setLoading(false); return; }
+      const lista = Object.entries(snap.val()).map(([id, g]) => ({ ...g, id }));
+      // Solo grupos donde el jugador es miembro activo
+      const miGrupos = lista.filter(g => {
+        if (!g.miembros) return false;
+        const miembros = Array.isArray(g.miembros) ? g.miembros : Object.values(g.miembros);
+        return miembros.some(m => (m.jugadorId || m.id) === jugador.id && m.activo !== false);
+      });
+      setGrupos(miGrupos);
+      if (miGrupos.length === 1) setGrupoSel(miGrupos[0]);
+      setLoading(false);
+    }).catch(() => setLoading(false));
+  }, [jugador.id]);
+
+  const handleContinuar = () => {
+    // La salida grupal usa el flujo de código de grupo existente (TorneoUnirse)
+    // Pasamos al modo de unirse con código del grupo
+    if (!grupoSel?.codigo) return;
+    setBuscarCodigo(false);
+    setPaso(2);
+  };
+
+  if (loading) return (
+    <div style={{ ...appStyle, display:"flex", alignItems:"center", justifyContent:"center", minHeight:"100vh" }}>
+      <div style={{ color:D.textSub }}>Cargando grupos…</div>
+    </div>
+  );
+
+  return (
+    <div style={{ ...appStyle, display:"flex", flexDirection:"column", minHeight:"100vh" }}>
+      {/* Header */}
+      <div style={{ background:`linear-gradient(135deg,#001A2A,#00263A)`, padding:"20px 16px 14px", borderBottom:`1px solid #4FC3F733` }}>
+        <div style={{ display:"flex", alignItems:"center", gap:12 }}>
+          <div style={{ fontSize:28 }}>🤝</div>
+          <div>
+            <div style={{ fontSize:18, fontWeight:800, color:"#4FC3F7" }}>Única Salida Grupal</div>
+            <div style={{ fontSize:12, color:D.textSub }}>Un grupo · Cualquier hoyo</div>
+          </div>
+        </div>
+      </div>
+
+      <div style={{ flex:1, padding:"20px 16px", display:"flex", flexDirection:"column", gap:20 }}>
+        {paso === 1 && (<>
+          {/* Seleccionar grupo */}
+          <div>
+            <div style={{ fontSize:12, color:D.textSub, fontWeight:700, textTransform:"uppercase", letterSpacing:1, marginBottom:10 }}>Selecciona tu grupo</div>
+            {grupos.length === 0 ? (
+              <div style={{ background:D.surface, border:`1px solid ${D.border}`, borderRadius:12, padding:16 }}>
+                <div style={{ fontSize:13, color:D.textSub, marginBottom:12 }}>No perteneces a ningún grupo aún. Pide al admin que te agregue, o únete con un código.</div>
+                <button onClick={() => setBuscarCodigo(true)}
+                  style={{ padding:"10px 16px", border:`1px solid #4FC3F755`, borderRadius:10, background:"#001A2A", color:"#4FC3F7", fontSize:13, fontWeight:700, cursor:"pointer", width:"100%" }}>
+                  Unirse con código de grupo
+                </button>
+              </div>
+            ) : (
+              <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+                {grupos.map(g => {
+                  const sel = grupoSel?.id === g.id;
+                  const miembros = Array.isArray(g.miembros) ? g.miembros : Object.values(g.miembros || {});
+                  const activos = miembros.filter(m => m.activo !== false).length;
+                  return (
+                    <button key={g.id} onClick={() => setGrupoSel(g)}
+                      style={{ display:"flex", alignItems:"center", gap:12, padding:"14px 16px", border:`2px solid ${sel?"#4FC3F7":"#4FC3F733"}`, borderRadius:14, background:sel?"#001A2A":"transparent", cursor:"pointer", textAlign:"left" }}>
+                      <div style={{ fontSize:24 }}>🤝</div>
+                      <div style={{ flex:1 }}>
+                        <div style={{ fontSize:15, fontWeight:700, color:sel?"#4FC3F7":D.text }}>{g.nombre}</div>
+                        <div style={{ fontSize:11, color:D.textSub, marginTop:2 }}>{activos} jugadores activos</div>
+                      </div>
+                      {sel && <div style={{ fontSize:18, color:"#4FC3F7" }}>✓</div>}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* Unirse con código (si tiene grupos muestra opción extra) */}
+          {grupos.length > 0 && (
+            <button onClick={() => setBuscarCodigo(!buscarCodigo)}
+              style={{ fontSize:12, color:D.textSub, background:"none", border:"none", cursor:"pointer", textAlign:"center" }}>
+              ¿Tienes un código de grupo? Únete aquí
+            </button>
+          )}
+
+          {buscarCodigo && (
+            <div style={{ background:D.surface, border:`1px solid ${D.border}`, borderRadius:12, padding:16 }}>
+              <div style={{ fontSize:12, color:D.textSub, marginBottom:8 }}>Código del grupo:</div>
+              <input value={codigoInput} onChange={e => setCodigoInput(e.target.value.toUpperCase())}
+                placeholder="Ej: H19-G1"
+                style={{ width:"100%", padding:12, border:`1px solid ${D.border}`, borderRadius:10, background:"transparent", color:D.text, fontSize:15, fontWeight:700, boxSizing:"border-box", textAlign:"center", letterSpacing:3 }} />
+            </div>
+          )}
+
+          {/* Con/sin apuestas */}
+          {(grupoSel || buscarCodigo) && (
+            <div>
+              <div style={{ fontSize:12, color:D.textSub, fontWeight:700, textTransform:"uppercase", letterSpacing:1, marginBottom:10 }}>¿Juegan con apuestas?</div>
+              <div style={{ display:"flex", gap:10 }}>
+                {[["Sí, con apuestas",true,"#f39c12"],["No, solo scores",false,D.textSub]].map(([label,val,color]) => (
+                  <button key={String(val)} onClick={() => setConApuestas(val)}
+                    style={{ flex:1, padding:"12px 8px", border:`2px solid ${conApuestas===val?color:D.border}`, borderRadius:12, background:conApuestas===val?`${color}22`:"transparent", color:conApuestas===val?color:D.textSub, fontSize:13, fontWeight:700, cursor:"pointer" }}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Continuar */}
+          {grupoSel && (
+            <button onClick={handleContinuar}
+              style={{ padding:"15px", border:"none", borderRadius:14, background:`linear-gradient(135deg,#0078A8,#005F87)`, color:"#fff", fontSize:16, fontWeight:800, cursor:"pointer" }}>
+              Continuar con {grupoSel.nombre} →
+            </button>
+          )}
+        </>)}
+
+        {paso === 2 && grupoSel && (
+          <div style={{ display:"flex", flexDirection:"column", gap:16, alignItems:"center", paddingTop:20 }}>
+            <div style={{ fontSize:40 }}>🤝</div>
+            <div style={{ textAlign:"center" }}>
+              <div style={{ fontSize:18, fontWeight:800, color:"#4FC3F7" }}>{grupoSel.nombre}</div>
+              <div style={{ fontSize:13, color:D.textSub, marginTop:6 }}>{conApuestas ? "Con apuestas 💰" : "Sin apuestas"}</div>
+            </div>
+            <div style={{ background:D.surface, border:`1px solid ${D.border}`, borderRadius:12, padding:"14px 20px", textAlign:"center", width:"100%", boxSizing:"border-box" }}>
+              <div style={{ fontSize:12, color:D.textSub, marginBottom:6 }}>Código del grupo</div>
+              <div style={{ fontSize:28, fontWeight:900, color:D.gold, letterSpacing:4 }}>{grupoSel.codigo || "—"}</div>
+              <div style={{ fontSize:11, color:D.textSub, marginTop:6 }}>Comparte este código con tus compañeros para que se unan</div>
+            </div>
+            <div style={{ fontSize:12, color:D.textSub, textAlign:"center", lineHeight:1.6 }}>
+              Para continuar, el administrador del grupo debe iniciar la ronda en modo Admin usando este código, {conApuestas ? "activando las apuestas" : "sin apuestas"}.
+            </div>
+            <button onClick={onVolver}
+              style={{ padding:"13px 32px", border:`1px solid ${D.border}`, borderRadius:12, background:"transparent", color:D.textSub, fontSize:14, cursor:"pointer" }}>
+              ← Volver al inicio
+            </button>
+          </div>
+        )}
+      </div>
+
+      <div style={{ padding:"0 16px 24px" }}>
+        <button onClick={onVolver} style={{ fontSize:13, color:D.textSub, background:"none", border:"none", cursor:"pointer" }}>← Volver</button>
+      </div>
+    </div>
+  );
+}
+
 // ─── JUGADOR HOME SCREEN ──────────────────────────────────────────────────────
-function JugadorHomeScreen({ jugador: jugadorInicial, appStyle, onExit, onCrearTorneo, onIniciarRonda }) {
+function JugadorHomeScreen({ jugador: jugadorInicial, appStyle, onExit, onCrearTorneo, onIniciarRonda, onSalidaGrupal }) {
   const [jugador, setJugador]   = React.useState(jugadorInicial);
   const [historial, setHistorial] = React.useState([]);
   const [todasRondas, setTodasRondas] = React.useState([]);
@@ -5124,17 +5393,46 @@ function JugadorHomeScreen({ jugador: jugadorInicial, appStyle, onExit, onCrearT
                 <div style={{ fontSize:18, fontWeight:700, color:D.text }}>{avgScore}</div>
               </div>
             )}
-            {totalRondas === 0 && <div style={{ textAlign:"center", color:D.textSub, padding:"16px 0 8px", fontSize:13 }}>Aún no hay rondas registradas.</div>}
-            {/* Acceso rápido desde Resumen */}
-            <div style={{ display:"flex", flexDirection:"column", gap:8, marginTop:8 }}>
-              <button onClick={() => onIniciarRonda?.()}
-                style={{ padding:"13px", border:`1px dashed ${D.gold}99`, borderRadius:12, background:`${D.gold}11`, color:D.gold, fontSize:14, fontWeight:700, cursor:"pointer", textAlign:"center", display:"flex", alignItems:"center", justifyContent:"center", gap:8, width:"100%", boxSizing:"border-box" }}>
-                ⛳ Nueva ronda individual
-              </button>
-              <button onClick={onCrearTorneo}
-                style={{ padding:"13px", border:`1px solid #4CAF5044`, borderRadius:12, background:"#0D1F0D", color:"#4CAF50", fontSize:14, fontWeight:700, cursor:"pointer", textAlign:"center", display:"flex", alignItems:"center", justifyContent:"center", gap:8, width:"100%", boxSizing:"border-box" }}>
-                🏆 Crear torneo (salida múltiple)
-              </button>
+            {totalRondas === 0 && <div style={{ textAlign:"center", color:D.textSub, padding:"8px 0 0", fontSize:13 }}>Aún no hay rondas registradas.</div>}
+            {/* ── 3 Tipos de salida ── */}
+            <div style={{ marginTop:4 }}>
+              <div style={{ fontSize:11, color:D.textSub, fontWeight:700, textTransform:"uppercase", letterSpacing:1, marginBottom:10 }}>⛳ Selecciona tu tipo de salida</div>
+              <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+
+                {/* 1 — Ronda Individual */}
+                <button onClick={() => onIniciarRonda?.()}
+                  style={{ display:"flex", alignItems:"center", gap:14, padding:"16px 18px", border:`2px solid ${D.gold}55`, borderRadius:16, background:`linear-gradient(135deg,${D.gold}18,${D.gold}08)`, cursor:"pointer", textAlign:"left", width:"100%", boxSizing:"border-box" }}>
+                  <div style={{ fontSize:32, lineHeight:1 }}>⛳</div>
+                  <div style={{ flex:1 }}>
+                    <div style={{ fontSize:16, fontWeight:800, color:D.gold }}>Ronda Individual</div>
+                    <div style={{ fontSize:12, color:D.textSub, marginTop:3 }}>Cualquier hoyo · Solo historial y WHS</div>
+                  </div>
+                  <div style={{ fontSize:18, color:D.gold, opacity:0.6 }}>›</div>
+                </button>
+
+                {/* 2 — Única Salida Grupal */}
+                <button onClick={() => onSalidaGrupal?.()}
+                  style={{ display:"flex", alignItems:"center", gap:14, padding:"16px 18px", border:`2px solid #4FC3F755`, borderRadius:16, background:`linear-gradient(135deg,#4FC3F718,#4FC3F708)`, cursor:"pointer", textAlign:"left", width:"100%", boxSizing:"border-box" }}>
+                  <div style={{ fontSize:32, lineHeight:1 }}>🤝</div>
+                  <div style={{ flex:1 }}>
+                    <div style={{ fontSize:16, fontWeight:800, color:"#4FC3F7" }}>Única Salida Grupal</div>
+                    <div style={{ fontSize:12, color:D.textSub, marginTop:3 }}>Un grupo · Cualquier hoyo · Con o sin apuestas</div>
+                  </div>
+                  <div style={{ fontSize:18, color:"#4FC3F7", opacity:0.6 }}>›</div>
+                </button>
+
+                {/* 3 — Crear Torneo */}
+                <button onClick={onCrearTorneo}
+                  style={{ display:"flex", alignItems:"center", gap:14, padding:"16px 18px", border:`2px solid #4CAF5055`, borderRadius:16, background:`linear-gradient(135deg,#4CAF5018,#4CAF5008)`, cursor:"pointer", textAlign:"left", width:"100%", boxSizing:"border-box" }}>
+                  <div style={{ fontSize:32, lineHeight:1 }}>🏆</div>
+                  <div style={{ flex:1 }}>
+                    <div style={{ fontSize:16, fontWeight:800, color:"#4CAF50" }}>Crear Torneo</div>
+                    <div style={{ fontSize:12, color:D.textSub, marginTop:3 }}>2+ grupos · Salidas múltiples · Con o sin apuestas</div>
+                  </div>
+                  <div style={{ fontSize:18, color:"#4CAF50", opacity:0.6 }}>›</div>
+                </button>
+
+              </div>
             </div>
           </div>
           )
@@ -5144,11 +5442,6 @@ function JugadorHomeScreen({ jugador: jugadorInicial, appStyle, onExit, onCrearT
         {tab === "rondas" && (
           loading ? <div style={{ textAlign:"center", color:D.textSub, padding:32 }}>Cargando…</div> : (
           <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
-            {/* Botón iniciar ronda individual */}
-            <button onClick={() => onIniciarRonda?.()}
-              style={{ padding:"13px", border:`1px dashed ${D.gold}99`, borderRadius:12, background:`${D.gold}11`, color:D.gold, fontSize:14, fontWeight:700, cursor:"pointer", textAlign:"center", display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}>
-              ⛳ Nueva ronda individual
-            </button>
             {historial.length === 0 ? (
               <div style={{ textAlign:"center", color:D.textSub, padding:24, fontSize:13 }}>Sin rondas registradas aún.</div>
             ) : historial.map((r, i) => {
