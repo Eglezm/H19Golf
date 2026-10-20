@@ -4071,10 +4071,13 @@ function GruposPanel({ jugador }) {
     get(clubRef("grupos")).then(snap => {
       if (!snap.exists()) { setLoading(false); return; }
       const todos = Object.entries(snap.val()).map(([k,v]) => ({ ...v, _key:k }));
-      const misGrupos = todos.filter(g =>
-        g.creadorId === jugador.id ||
-        (g.miembros && Object.keys(g.miembros).includes(String(jugador.id)))
-      );
+      const idNum = parseInt(String(jugador.id).replace(/\D/g,""), 10);
+      const esMiembro = (g) => {
+        if (!g.miembros) return false;
+        if (g.creadorId === jugador.id) return true;
+        return Object.keys(g.miembros).some(k => String(k) === String(jugador.id) || parseInt(String(k).replace(/\D/g,""),10) === idNum);
+      };
+      const misGrupos = todos.filter(esMiembro);
       setGrupos(misGrupos);
       setLoading(false);
     }).catch(() => setLoading(false));
@@ -4086,11 +4089,13 @@ function GruposPanel({ jugador }) {
   const refrescarGrupos = async () => {
     const snap = await get(clubRef("grupos"));
     if (!snap.exists()) { setGrupos([]); return; }
+    const idNum = parseInt(String(jugador.id).replace(/\D/g,""), 10);
     const todos = Object.entries(snap.val()).map(([k,v]) => ({ ...v, _key:k }));
-    setGrupos(todos.filter(g =>
-      g.creadorId === jugador.id ||
-      (g.miembros && Object.keys(g.miembros).includes(String(jugador.id)))
-    ));
+    setGrupos(todos.filter(g => {
+      if (!g.miembros) return false;
+      if (g.creadorId === jugador.id) return true;
+      return Object.keys(g.miembros).some(k => String(k) === String(jugador.id) || parseInt(String(k).replace(/\D/g,""),10) === idNum);
+    }));
   };
 
   if (loading) return <div style={{ textAlign:"center", color:D.textSub, padding:32 }}>Cargando grupos…</div>;
@@ -5092,12 +5097,15 @@ function JugadorSalidaGrupalScreen({ jugador, appStyle, onVolver }) {
   React.useEffect(() => {
     get(clubRef("grupos")).then(snap => {
       if (!snap.exists()) { setLoading(false); return; }
-      const lista = Object.entries(snap.val()).map(([id, g]) => ({ ...g, id }));
-      // Solo grupos donde el jugador es miembro activo
+      // miembros es un objeto { [jugadorId]: { nombre, estado, ... } }
+      const lista = Object.entries(snap.val()).map(([k, g]) => ({ ...g, _key: k }));
+      // Comparar ID en múltiples formatos: "H19-000003", "3", 3
+      const idNum = parseInt(String(jugador.id).replace(/\D/g,""), 10);
       const miGrupos = lista.filter(g => {
         if (!g.miembros) return false;
-        const miembros = Array.isArray(g.miembros) ? g.miembros : Object.values(g.miembros);
-        return miembros.some(m => (m.jugadorId || m.id) === jugador.id && m.activo !== false);
+        if (g.creadorId === jugador.id) return true;
+        const keys = Object.keys(g.miembros);
+        return keys.some(k => String(k) === String(jugador.id) || parseInt(String(k).replace(/\D/g,""), 10) === idNum);
       });
       setGrupos(miGrupos);
       if (miGrupos.length === 1) setGrupoSel(miGrupos[0]);
@@ -5149,8 +5157,8 @@ function JugadorSalidaGrupalScreen({ jugador, appStyle, onVolver }) {
               <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
                 {grupos.map(g => {
                   const sel = grupoSel?.id === g.id;
-                  const miembros = Array.isArray(g.miembros) ? g.miembros : Object.values(g.miembros || {});
-                  const activos = miembros.filter(m => m.activo !== false).length;
+                  const miembros = g.miembros ? Object.values(g.miembros) : [];
+                  const activos = miembros.filter(m => m.estado === "activo").length || miembros.length;
                   return (
                     <button key={g.id} onClick={() => setGrupoSel(g)}
                       style={{ display:"flex", alignItems:"center", gap:12, padding:"14px 16px", border:`2px solid ${sel?"#4FC3F7":"#4FC3F733"}`, borderRadius:14, background:sel?"#001A2A":"transparent", cursor:"pointer", textAlign:"left" }}>
@@ -5238,6 +5246,288 @@ function JugadorSalidaGrupalScreen({ jugador, appStyle, onVolver }) {
   );
 }
 
+// ─── ESTADÍSTICAS PANEL (jugador fijo, sin selector) ─────────────────────────
+function EstadisticasJugadorPanel({ jugador, todasRondas, loading }) {
+  const [nRondas, setNRondas]       = React.useState(10);
+  const [campoFiltro, setCampoFiltro] = React.useState("todos");
+
+  // Extraer el número numérico del ID del jugador para comparación flexible
+  const jugIdNum = parseInt(String(jugador.id).replace(/\D/g,""), 10);
+
+  // Filtrar TODAS las rondas donde aparece este jugador (por ID o por nombre)
+  const misRondas = React.useMemo(() => {
+    return todasRondas
+      .filter(r => {
+        // Por playerIds (formato H19-XXXXXX o número)
+        if (r.playerIds) {
+          const found = r.playerIds.some(pid => {
+            const pidNum = parseInt(String(pid).replace(/\D/g,""), 10);
+            return String(pid) === String(jugador.id) || pidNum === jugIdNum;
+          });
+          if (found) return true;
+        }
+        // Por nombre como fallback
+        if (r.playerNames) return r.playerNames.includes(jugador.name);
+        if (r.jugadores) {
+          const jugsArr = Array.isArray(r.jugadores) ? r.jugadores : Object.values(r.jugadores);
+          return jugsArr.some(j => j.nombre === jugador.name || j.name === jugador.name);
+        }
+        return false;
+      })
+      .sort((a,b) => (b.fechaTs||0) - (a.fechaTs||0));
+  }, [todasRondas, jugador.id, jugador.name, jugIdNum]);
+
+  // Índice del jugador en cada ronda (flexible)
+  const getIdx = (r) => {
+    if (r.playerIds) {
+      const i = r.playerIds.findIndex(pid => {
+        const pidNum = parseInt(String(pid).replace(/\D/g,""), 10);
+        return String(pid) === String(jugador.id) || pidNum === jugIdNum;
+      });
+      if (i >= 0) return i;
+    }
+    if (r.playerNames) {
+      const i = r.playerNames.indexOf(jugador.name);
+      if (i >= 0) return i;
+    }
+    if (r.jugadores) {
+      const arr = Array.isArray(r.jugadores) ? r.jugadores : Object.values(r.jugadores);
+      return arr.findIndex(j => j.nombre === jugador.name || j.name === jugador.name);
+    }
+    return -1;
+  };
+
+  const getBruto = (r) => {
+    const pi = getIdx(r);
+    if (pi < 0) return null;
+    const jugsArr = Array.isArray(r.jugadores) ? r.jugadores : Object.values(r.jugadores||{});
+    return jugsArr[pi]?.bruto
+      ?? (r.scoresPorHoyo?.[pi]?.reduce((a,b) => a+(b||0), 0) || null)
+      ?? r.totalScores?.[pi]
+      ?? null;
+  };
+
+  const todosCampos = [...new Set(misRondas.map(r=>r.campo).filter(Boolean))].sort();
+
+  // Rondas filtradas para cálculo
+  const rondasFiltradas = React.useMemo(() => {
+    let rds = misRondas;
+    if (campoFiltro !== "todos") rds = rds.filter(r => r.campo === campoFiltro);
+    return rds.slice(0, nRondas);
+  }, [misRondas, campoFiltro, nRondas]);
+
+  // WHS directo usando motor existente
+  const whsRes = React.useMemo(() => {
+    if (todasRondas.length === 0) return null;
+    try { return whs_resumenJugador(jugador.name, todasRondas, jugador.id); } catch(e) { return null; }
+  }, [todasRondas, jugador.name, jugador.id]);
+  const whsHI = whsRes?.hiEstablecido ? whsRes.currentHI : null;
+
+  // Calcular stats
+  const stats = React.useMemo(() => {
+    const conBruto = rondasFiltradas.map(r => ({ bruto: getBruto(r), hc: (() => {
+      const pi = getIdx(r);
+      const arr = Array.isArray(r.jugadores) ? r.jugadores : Object.values(r.jugadores||{});
+      return arr[pi]?.hc ?? jugador.hc ?? 0;
+    })(), fecha: r.fecha || (r.fechaTs ? new Date(r.fechaTs).toLocaleDateString("es-MX",{day:"2-digit",month:"short",year:"2-digit"}) : null), campo: r.campo, nHoles: r.nHoles||9, pars: r.pars })).filter(r => r.bruto != null && r.bruto > 0);
+    if (conBruto.length === 0) return null;
+    const brutos = conBruto.map(r=>r.bruto);
+    const promBruto = Math.round(brutos.reduce((a,b)=>a+b,0)/brutos.length*10)/10;
+    const promNeto  = Math.round(conBruto.map(r=>r.bruto-r.hc).reduce((a,b)=>a+b,0)/conBruto.length*10)/10;
+    const mejorBruto = Math.min(...brutos);
+    const peorBruto  = Math.max(...brutos);
+    const diffs = conBruto.map(r => {
+      const par = r.pars ? r.pars.reduce((a,b)=>a+b,0) : (r.nHoles===9?29:58);
+      return r.bruto - par;
+    }).sort((a,b)=>a-b);
+    const nBest = Math.max(1, Math.floor(diffs.length*0.4));
+    const hcSugerido = Math.round(diffs.slice(0,nBest).reduce((a,b)=>a+b,0)/nBest);
+    const evolucion = [...conBruto].reverse();
+    const porCampo = {};
+    conBruto.forEach(r => {
+      if (!r.campo) return;
+      if (!porCampo[r.campo]) porCampo[r.campo] = [];
+      porCampo[r.campo].push(r.bruto);
+    });
+    return { promBruto, promNeto, mejorBruto, peorBruto, hcSugerido, evolucion, porCampo, nRondasConScore: conBruto.length, hcActual: conBruto[0]?.hc };
+  }, [rondasFiltradas]);
+
+  if (loading) return <div style={{ textAlign:"center", color:D.textSub, padding:40 }}>Cargando estadísticas…</div>;
+
+  if (misRondas.length === 0) return (
+    <div style={{ textAlign:"center", padding:40 }}>
+      <div style={{ fontSize:40, marginBottom:12 }}>📈</div>
+      <div style={{ fontSize:15, fontWeight:700, color:D.text, marginBottom:8 }}>Sin estadísticas aún</div>
+      <div style={{ fontSize:13, color:D.textSub }}>Juega tu primera ronda individual para ver tu evolución aquí.</div>
+    </div>
+  );
+
+  return (
+    <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+      {/* Filtros */}
+      <div style={{ background:D.surface, border:`1px solid ${D.border}`, borderRadius:12, padding:"12px 14px", display:"flex", gap:12, flexWrap:"wrap", alignItems:"flex-end" }}>
+        <div>
+          <div style={{ fontSize:10, color:D.textSub, marginBottom:6, fontWeight:700, textTransform:"uppercase", letterSpacing:1 }}>Últimas N rondas</div>
+          <div style={{ display:"flex", gap:6 }}>
+            {[5,10,15,20].map(n => (
+              <button key={n} onClick={() => setNRondas(n)}
+                style={{ padding:"6px 12px", border:`1px solid ${nRondas===n?D.gold:D.border}`, borderRadius:10, background:nRondas===n?`${D.gold}22`:"transparent", color:nRondas===n?D.gold:D.textSub, fontSize:12, fontWeight:700, cursor:"pointer" }}>
+                {n}
+              </button>
+            ))}
+          </div>
+        </div>
+        {todosCampos.length > 1 && (
+          <div style={{ flex:1, minWidth:120 }}>
+            <div style={{ fontSize:10, color:D.textSub, marginBottom:6, fontWeight:700, textTransform:"uppercase", letterSpacing:1 }}>Campo</div>
+            <select value={campoFiltro} onChange={e=>setCampoFiltro(e.target.value)}
+              style={{ padding:"7px 10px", border:`1px solid ${D.border}`, borderRadius:10, background:D.surface, color:D.text, fontSize:12, width:"100%" }}>
+              <option value="todos">Todos</option>
+              {todosCampos.map(c => <option key={c} value={c}>{CAMPOS[c]?.nombre||c}</option>)}
+            </select>
+          </div>
+        )}
+      </div>
+
+      {stats ? (<>
+        {/* Métricas principales */}
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
+          {[
+            { label:"Promedio bruto", val:stats.promBruto, icon:"⛳", color:D.text },
+            { label:"Promedio neto",  val:stats.promNeto,  icon:"🎯", color:D.text },
+            { label:"Mejor ronda",   val:stats.mejorBruto, icon:"🏆", color:"#4CAF50" },
+            { label:"Peor ronda",    val:stats.peorBruto,  icon:"😓", color:D.danger },
+          ].map(({ label, val, icon, color }) => (
+            <div key={label} style={{ background:D.surface, border:`1px solid ${D.border}`, borderRadius:12, padding:"14px 12px", textAlign:"center" }}>
+              <div style={{ fontSize:20 }}>{icon}</div>
+              <div style={{ fontSize:26, fontWeight:900, color, marginTop:4 }}>{val ?? "—"}</div>
+              <div style={{ fontSize:10, color:D.textSub, marginTop:2 }}>{label}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* HC y WHS */}
+        <div style={{ background:`linear-gradient(135deg,#0D1A0D,#152015)`, border:`1px solid #4CAF5033`, borderRadius:12, padding:"14px 16px" }}>
+          <div style={{ fontSize:12, color:"#4CAF50", fontWeight:700, marginBottom:10 }}>🎯 Handicap</div>
+          <div style={{ display:"flex", gap:10 }}>
+            <div style={{ flex:1, background:"rgba(255,255,255,0.05)", borderRadius:10, padding:"12px", textAlign:"center" }}>
+              <div style={{ fontSize:10, color:D.textSub, marginBottom:4 }}>HC actual</div>
+              <div style={{ fontSize:30, fontWeight:900, color:D.text }}>{stats.hcActual ?? jugador.hc ?? "—"}</div>
+            </div>
+            <div style={{ flex:1, background:"rgba(76,175,80,0.12)", border:`1px solid #4CAF5044`, borderRadius:10, padding:"12px", textAlign:"center" }}>
+              <div style={{ fontSize:10, color:"#4CAF50", marginBottom:4 }}>HI WHS</div>
+              <div style={{ fontSize:30, fontWeight:900, color:"#4CAF50" }}>{whsHI != null ? whsHI.toFixed(1) : "—"}</div>
+              <div style={{ fontSize:9, color:D.textSub, marginTop:2 }}>World Handicap</div>
+            </div>
+          </div>
+          {whsHI != null && stats.hcActual != null && Math.abs(whsHI - stats.hcActual) > 0.5 && (
+            <div style={{ marginTop:10, padding:"8px 12px", background:"rgba(255,255,255,0.05)", borderRadius:8, fontSize:12, color:D.textSub }}>
+              {whsHI < stats.hcActual
+                ? `⬇️ WHS sugiere bajar HC de ${stats.hcActual} a ${Math.round(whsHI)}`
+                : `⬆️ WHS sugiere subir HC de ${stats.hcActual} a ${Math.round(whsHI)}`}
+            </div>
+          )}
+          {whsHI == null && (
+            <div style={{ marginTop:8, fontSize:11, color:D.textSub }}>
+              HI WHS no establecido — se necesitan 54 hoyos válidos
+            </div>
+          )}
+        </div>
+
+        {/* Promedio por campo */}
+        {Object.keys(stats.porCampo).length > 0 && (
+          <div style={{ background:D.surface, border:`1px solid ${D.border}`, borderRadius:12, padding:"14px 16px" }}>
+            <div style={{ fontSize:12, fontWeight:700, color:D.gold, marginBottom:10 }}>⛳ Por campo</div>
+            {Object.entries(stats.porCampo).map(([campo, brutos]) => {
+              const prom = Math.round(brutos.reduce((a,b)=>a+b,0)/brutos.length*10)/10;
+              const mejor = Math.min(...brutos);
+              return (
+                <div key={campo} style={{ paddingBottom:10, marginBottom:10, borderBottom:`1px solid ${D.border}44` }}>
+                  <div style={{ display:"flex", justifyContent:"space-between", marginBottom:2 }}>
+                    <div style={{ fontSize:13, fontWeight:700 }}>{CAMPOS[campo]?.nombre||campo}</div>
+                    <div style={{ fontSize:14, fontWeight:900 }}>{prom} prom</div>
+                  </div>
+                  <div style={{ fontSize:11, color:D.textSub }}>Mejor: {mejor} · {brutos.length} ronda{brutos.length!==1?"s":""}</div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Gráfica de evolución */}
+        {stats.evolucion.length >= 2 && (() => {
+          const datos = stats.evolucion.filter(r => r.bruto != null);
+          if (datos.length < 2) return null;
+          const W=320, H=160, padL=36, padR=12, padT=16, padB=32;
+          const minV = Math.min(...datos.map(r=>r.bruto))-2;
+          const maxV = Math.max(...datos.map(r=>r.bruto))+2;
+          const xStep = (W-padL-padR)/(datos.length-1);
+          const yScale = (H-padT-padB)/(maxV-minV);
+          const px = i => padL+i*xStep;
+          const py = v => H-padB-(v-minV)*yScale;
+          const prom = stats.promBruto;
+          const poly = datos.map((r,i)=>px(i)+","+py(r.bruto)).join(" ");
+          return (
+            <div style={{ background:D.surface, border:`1px solid ${D.border}`, borderRadius:12, padding:"14px 16px" }}>
+              <div style={{ display:"flex", justifyContent:"space-between", marginBottom:8 }}>
+                <div style={{ fontSize:12, fontWeight:700, color:D.gold }}>📈 Evolución de scores</div>
+                <div style={{ fontSize:11, color:D.textSub }}>Prom: {prom}</div>
+              </div>
+              <div style={{ overflowX:"auto" }}>
+                <svg width={W} height={H} style={{ display:"block" }}>
+                  {[0,1,2,3].map(i => {
+                    const v = Math.round(minV+(maxV-minV)*i/3);
+                    return (
+                      <g key={i}>
+                        <line x1={padL} y1={py(v)} x2={W-padR} y2={py(v)} stroke={D.border} strokeWidth="1"/>
+                        <text x={padL-4} y={py(v)+4} textAnchor="end" fontSize="9" fill={D.textSub}>{v}</text>
+                      </g>
+                    );
+                  })}
+                  <line x1={padL} y1={py(prom)} x2={W-padR} y2={py(prom)} stroke={D.gold} strokeWidth="1" strokeDasharray="4,3" opacity="0.6"/>
+                  <polyline points={poly} fill="none" stroke="#4CAF50" strokeWidth="2" strokeLinejoin="round"/>
+                  {datos.map((r,i) => (
+                    <g key={i}>
+                      <circle cx={px(i)} cy={py(r.bruto)} r="4" fill="#4CAF50" stroke={D.surface} strokeWidth="2"/>
+                      <text x={px(i)} y={H-padB+14} textAnchor="middle" fontSize="8" fill={D.textSub}>{r.fecha ? r.fecha.split("/").slice(0,2).join("/") : i+1}</text>
+                      <text x={px(i)} y={py(r.bruto)-8} textAnchor="middle" fontSize="9" fontWeight="700" fill={D.text}>{r.bruto}</text>
+                    </g>
+                  ))}
+                </svg>
+              </div>
+              <div style={{ display:"flex", gap:12, marginTop:4, fontSize:10, color:D.textSub }}>
+                <span>── Scores</span>
+                <span style={{ color:`${D.gold}99` }}>- - Promedio ({prom})</span>
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* Historial de rondas */}
+        <div style={{ background:D.surface, border:`1px solid ${D.border}`, borderRadius:12, padding:"14px 16px" }}>
+          <div style={{ fontSize:12, fontWeight:700, color:D.gold, marginBottom:10 }}>📋 Historial de rondas ({stats.nRondasConScore})</div>
+          {stats.evolucion.slice().reverse().map((r, i) => (
+            <div key={i} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"8px 0", borderBottom:`1px solid ${D.border}44` }}>
+              <div>
+                <div style={{ fontSize:12, fontWeight:600 }}>{r.fecha||"Sin fecha"}</div>
+                <div style={{ fontSize:10, color:D.textSub }}>HC {r.hc} · {r.nHoles||9} hoyos{r.campo?` · ${CAMPOS[r.campo]?.nombre||r.campo}`:""}</div>
+              </div>
+              <div style={{ textAlign:"right" }}>
+                <div style={{ fontSize:18, fontWeight:900, color:D.gold }}>{r.bruto}</div>
+                <div style={{ fontSize:10, color:D.textSub }}>golpes</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </>) : (
+        <div style={{ textAlign:"center", color:D.textSub, padding:24, fontSize:13 }}>
+          No hay rondas con score registrado en este filtro.
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── JUGADOR HOME SCREEN ──────────────────────────────────────────────────────
 function JugadorHomeScreen({ jugador: jugadorInicial, appStyle, onExit, onCrearTorneo, onIniciarRonda, onSalidaGrupal }) {
   const [jugador, setJugador]   = React.useState(jugadorInicial);
@@ -5254,10 +5544,21 @@ function JugadorHomeScreen({ jugador: jugadorInicial, appStyle, onExit, onCrearT
       if (!snap.exists()) { setLoading(false); return; }
       const todas = Object.values(snap.val());
       setTodasRondas(todas);
+      const idNum = parseInt(String(jugador.id).replace(/\D/g,""), 10);
       const misRondas = todas
         .filter(r => {
-          if (r.playerIds) return r.playerIds.some(id => String(id) === String(jugador.id));
-          return r.playerNames && r.playerNames.includes(jugador.name);
+          if (r.playerIds) {
+            if (r.playerIds.some(id => {
+              const n = parseInt(String(id).replace(/\D/g,""), 10);
+              return String(id) === String(jugador.id) || n === idNum;
+            })) return true;
+          }
+          if (r.playerNames && r.playerNames.includes(jugador.name)) return true;
+          if (r.jugadores) {
+            const arr = Array.isArray(r.jugadores) ? r.jugadores : Object.values(r.jugadores);
+            if (arr.some(j => j.nombre === jugador.name || j.name === jugador.name)) return true;
+          }
+          return false;
         })
         .sort((a,b) => (b.fechaTs||0) - (a.fechaTs||0));
       setHistorial(misRondas);
@@ -5315,7 +5616,7 @@ function JugadorHomeScreen({ jugador: jugadorInicial, appStyle, onExit, onCrearT
 
   const TABS = [
     ["resumen","📊","Resumen"],
-    ["rondas","⛳","Rondas"],
+    ["estadisticas","📈","Estadísticas"],
     ["perfil","👤","Perfil"],
     ["grupos","🤝","Grupos"],
     ["notifs","🔔","Notifs"],
@@ -5439,41 +5740,8 @@ function JugadorHomeScreen({ jugador: jugadorInicial, appStyle, onExit, onCrearT
         )}
 
         {/* RONDAS */}
-        {tab === "rondas" && (
-          loading ? <div style={{ textAlign:"center", color:D.textSub, padding:32 }}>Cargando…</div> : (
-          <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
-            {historial.length === 0 ? (
-              <div style={{ textAlign:"center", color:D.textSub, padding:24, fontSize:13 }}>Sin rondas registradas aún.</div>
-            ) : historial.map((r, i) => {
-              const idx = _playerIndex(r, jugador.id, jugador.name);
-              // Obtener score bruto con cascada de fuentes (igual que WHS)
-              let score = null;
-              if (idx >= 0) {
-                const jugsArr = Array.isArray(r.jugadores) ? r.jugadores : Object.values(r.jugadores||{});
-                const brutoDeJug = jugsArr[idx]?.bruto ?? null;
-                const brutoDeHoyo = r.scoresPorHoyo?.[idx]
-                  ? r.scoresPorHoyo[idx].reduce((a,b) => a + (b||0), 0) || null
-                  : null;
-                const brutoDeTotal = r.totalScores?.[idx] ?? null;
-                score = brutoDeJug ?? brutoDeHoyo ?? brutoDeTotal;
-              }
-              const fecha = r.fechaTs ? new Date(r.fechaTs).toLocaleDateString("es-MX",{day:"2-digit",month:"short",year:"numeric"}) : r.fecha || "—";
-              const nHoles = r.nHoles || (r.scoresPorHoyo?.[idx]?.length) || 9;
-              return (
-                <div key={i} style={{ background:D.surface, border:`1px solid ${D.border}`, borderRadius:12, padding:"12px 14px", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-                  <div>
-                    <div style={{ fontSize:13, fontWeight:600 }}>{r.nombre || r.campo || "Ronda"}</div>
-                    <div style={{ fontSize:11, color:D.textSub }}>{fecha} · {nHoles} hoyos</div>
-                  </div>
-                  <div style={{ textAlign:"right" }}>
-                    <div style={{ fontSize:18, fontWeight:800, color:score ? D.gold : D.textSub }}>{score ?? "—"}</div>
-                    <div style={{ fontSize:10, color:D.textSub }}>golpes</div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-          )
+        {tab === "estadisticas" && (
+          <EstadisticasJugadorPanel jugador={jugador} todasRondas={todasRondas} loading={loading} />
         )}
 
         {/* PERFIL */}
