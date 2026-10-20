@@ -3588,7 +3588,17 @@ function H19() {
 
   if (mode === "jugador-home" && activeJugador) {
     return <JugadorHomeScreen jugador={activeJugador} appStyle={appStyle}
-      onExit={() => { setMode("home"); setActiveJugador(null); }} />;
+      onExit={() => { setMode("home"); setActiveJugador(null); }}
+      onCrearTorneo={() => setMode("jugador-torneo-crear")} />;
+  }
+
+  if (mode === "jugador-torneo-crear" && activeJugador) {
+    return <TorneoCrear appStyle={appStyle}
+      onExit={() => setMode("jugador-home")}
+      onIniciarGrupo={(torneoData) => {
+        // El jugador entra al grupo como anotador usando el flujo de código
+        setMode("jugador-home");
+      }} />;
   }
 
   return null;
@@ -4902,7 +4912,7 @@ function JugadorRondaScreen({ jugador, appStyle, onTerminada, onCancelar }) {
 }
 
 // ─── JUGADOR HOME SCREEN ──────────────────────────────────────────────────────
-function JugadorHomeScreen({ jugador: jugadorInicial, appStyle, onExit }) {
+function JugadorHomeScreen({ jugador: jugadorInicial, appStyle, onExit, onCrearTorneo }) {
   const [jugador, setJugador]   = React.useState(jugadorInicial);
   const [historial, setHistorial] = React.useState([]);
   const [todasRondas, setTodasRondas] = React.useState([]);
@@ -5068,11 +5078,17 @@ function JugadorHomeScreen({ jugador: jugadorInicial, appStyle, onExit }) {
               </div>
             )}
             {totalRondas === 0 && <div style={{ textAlign:"center", color:D.textSub, padding:"16px 0 8px", fontSize:13 }}>Aún no hay rondas registradas.</div>}
-            {/* Acceso rápido a nueva ronda desde el Resumen */}
-            <button onClick={() => setJugandoRonda(true)}
-              style={{ marginTop:8, padding:"13px", border:`1px dashed ${D.gold}99`, borderRadius:12, background:`${D.gold}11`, color:D.gold, fontSize:14, fontWeight:700, cursor:"pointer", textAlign:"center", display:"flex", alignItems:"center", justifyContent:"center", gap:8, width:"100%", boxSizing:"border-box" }}>
-              ⛳ Nueva ronda individual
-            </button>
+            {/* Acceso rápido desde Resumen */}
+            <div style={{ display:"flex", flexDirection:"column", gap:8, marginTop:8 }}>
+              <button onClick={() => setJugandoRonda(true)}
+                style={{ padding:"13px", border:`1px dashed ${D.gold}99`, borderRadius:12, background:`${D.gold}11`, color:D.gold, fontSize:14, fontWeight:700, cursor:"pointer", textAlign:"center", display:"flex", alignItems:"center", justifyContent:"center", gap:8, width:"100%", boxSizing:"border-box" }}>
+                ⛳ Nueva ronda individual
+              </button>
+              <button onClick={onCrearTorneo}
+                style={{ padding:"13px", border:`1px solid #4CAF5044`, borderRadius:12, background:"#0D1F0D", color:"#4CAF50", fontSize:14, fontWeight:700, cursor:"pointer", textAlign:"center", display:"flex", alignItems:"center", justifyContent:"center", gap:8, width:"100%", boxSizing:"border-box" }}>
+                🏆 Crear torneo (salida múltiple)
+              </button>
+            </div>
           </div>
           )
         )}
@@ -5152,7 +5168,20 @@ function JugadorHomeScreen({ jugador: jugadorInicial, appStyle, onExit }) {
         )}
 
         {/* GRUPOS */}
-        {tab === "grupos" && <GruposPanel jugador={jugador} />}
+        {tab === "grupos" && (
+          <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+            {/* Botón crear torneo */}
+            <button onClick={onCrearTorneo}
+              style={{ padding:"14px 16px", border:`1px solid ${D.gold}55`, borderRadius:14, background:`linear-gradient(135deg,#1A3A1A,#2E5C2E)`, color:D.gold, fontSize:15, fontWeight:800, cursor:"pointer", display:"flex", alignItems:"center", gap:10, width:"100%", boxSizing:"border-box" }}>
+              <span style={{ fontSize:22 }}>🏆</span>
+              <div style={{ textAlign:"left" }}>
+                <div>Crear torneo (salida múltiple)</div>
+                <div style={{ fontSize:11, color:D.textSub, fontWeight:400, marginTop:2 }}>Organiza grupos, define apuestas y comparte códigos</div>
+              </div>
+            </button>
+            <GruposPanel jugador={jugador} />
+          </div>
+        )}
 
         {/* NOTIFICACIONES */}
         {tab === "notifs" && (
