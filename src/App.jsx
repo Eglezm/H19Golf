@@ -1349,14 +1349,19 @@ function TorneoCrear({ onExit, onIniciarGrupo, appStyle, jugadorOrganizador }) {
     const grupoActualPlayers = grupos[grupoActivo]?.players || [];
     const totalJugadoresAsignados = [...new Set(grupos.flatMap(g => g.players.map(p=>p.id)))].length;
     // Si viene de pantalla jugador, filtrar directorio por el grupo seleccionado
+    // Flexible ID match: group keys may be "3" while directorio ids are "H19-000003"
     const dirFiltrado = jugadorOrganizador && grupoFiltroSel
       ? (() => {
-          const ids = new Set(
+          const memberNums = new Set(
             Object.entries(grupoFiltroSel.miembros || {})
-              .filter(([,m]) => m.estado === "activo")
-              .map(([id]) => id)
+              .filter(([,m]) => m.estado === "activo" || m.estado == null)
+              .map(([id]) => parseInt(String(id).replace(/\D/g,""), 10))
+              .filter(n => !isNaN(n))
           );
-          return dir.filter(p => ids.has(String(p.id)));
+          return dir.filter(p => {
+            const pNum = parseInt(String(p.id||"").replace(/\D/g,""), 10);
+            return !isNaN(pNum) && memberNums.has(pNum);
+          });
         })()
       : dir;
     return (
@@ -1366,8 +1371,8 @@ function TorneoCrear({ onExit, onIniciarGrupo, appStyle, jugadorOrganizador }) {
           <button onClick={() => setPaso(1)} style={{ fontSize:12, color:D.textSub, background:"none", border:`1px solid ${D.border}`, borderRadius:8, padding:"5px 10px", cursor:"pointer" }}>Atrás</button>
         </div>
         <div style={{ padding:"12px" }}>
-          {/* Selector de grupo del club (solo cuando viene de pantalla jugador con múltiples grupos) */}
-          {jugadorOrganizador && gruposClub.length > 1 && (
+          {/* Selector de grupo del club (cuando viene de pantalla jugador) */}
+          {jugadorOrganizador && gruposClub.length >= 1 && (
             <Card>
               <SLabel>¿Jugadores de qué grupo?</SLabel>
               <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
@@ -5104,9 +5109,11 @@ function JugadorRondaScreen({ jugador, appStyle, onTerminada, onCancelar }) {
 function JugadorSalidaGrupalScreen({ jugador, appStyle, onVolver, onIniciarSalida }) {
   const [grupos, setGrupos] = React.useState([]);
   const [grupoSel, setGrupoSel] = React.useState(null);
-  const [paso, setPaso] = React.useState(1); // 1=grupo, 2=config, 3=confirmar
+  const [paso, setPaso] = React.useState(1); // 1=grupo, 2=jugadores, 3=config
   const [loading, setLoading] = React.useState(true);
-  // Configuración de la ronda (paso 2)
+  // Jugadores seleccionados para jugar (paso 2)
+  const [jugadoresSel, setJugadoresSel] = React.useState(new Set());
+  // Configuración de la ronda (paso 3)
   const [campo, setCampo] = React.useState("huerta");
   const [nHoles, setNHoles] = React.useState(9);
   const [hoyoSalida, setHoyoSalida] = React.useState(1);
@@ -5132,43 +5139,49 @@ function JugadorSalidaGrupalScreen({ jugador, appStyle, onVolver, onIniciarSalid
     }).catch(() => setLoading(false));
     // Cargar directorio para obtener HCs actualizados
     get(clubRef("directorio")).then(snap => {
-      if (snap.exists()) setDirJugadores(Object.values(snap.val()));
+      if (snap.exists()) setDirJugadores(snap.val().players || []);
     }).catch(() => {});
   }, [jugador.id]);
 
-  // Construir lista de jugadores con HC actual desde directorio
-  const buildPlayers = (grupo) => {
+  // Obtener lista completa de miembros del grupo con HC actualizado
+  const getMiembros = (grupo) => {
     if (!grupo?.miembros) return [];
     return Object.entries(grupo.miembros)
       .filter(([, m]) => m.estado === "activo" || m.estado == null)
       .map(([id, m]) => {
-        // Buscar HC actualizado en el directorio
         const idNum = parseInt(String(id).replace(/\D/g,""), 10);
         const dirEntry = dirJugadores.find(d =>
-          String(d.id) === String(id) || parseInt(String(d.id||"").replace(/\D/g,""), 10) === idNum || d.nombre === m.nombre
+          String(d.id) === String(id) ||
+          parseInt(String(d.id||"").replace(/\D/g,""), 10) === idNum ||
+          d.nombre === m.nombre || d.name === m.nombre
         );
         const hc = dirEntry?.hc ?? dirEntry?.handicap ?? m.hc ?? 0;
         return { id, name: m.nombre || id, hc: Number(hc), opts: { score:true, marcas:true, tarjetas:true } };
-      });
+      })
+      .sort((a, b) => a.name.localeCompare(b.name));
+  };
+
+  // Cuando se selecciona grupo, preseleccionar todos sus miembros
+  const seleccionarGrupo = (g) => {
+    setGrupoSel(g);
+    const miembros = getMiembros(g);
+    setJugadoresSel(new Set(miembros.map(m => m.id)));
   };
 
   const handleIniciar = () => {
     if (!grupoSel) return;
-    const players = buildPlayers(grupoSel);
+    const todosM = getMiembros(grupoSel);
+    const players = todosM.filter(m => jugadoresSel.has(m.id));
     if (players.length < 1) return;
-    // Construir torneoConfig similar al que usa AdminApp con playersPreasignados
     const cfg = {
       nombre: grupoSel.nombre,
       grupoNombre: grupoSel.nombre,
       grupoId: grupoSel._key || grupoSel.id,
-      campo,
-      nHoles,
-      hoyoSalida,
+      campo, nHoles, hoyoSalida,
       apuesta: conApuestas ? DEFAULT_APUESTA : 0,
       marcaVal: conApuestas ? DEFAULT_MARCA_VAL : 0,
       tarjetaVal: conApuestas ? DEFAULT_TARJETA_VAL : 0,
       playersPreasignados: players,
-      // Sin torneoId: es una salida grupal simple, no un torneo
     };
     onIniciarSalida(cfg);
   };
@@ -5185,12 +5198,12 @@ function JugadorSalidaGrupalScreen({ jugador, appStyle, onVolver, onIniciarSalid
   // ── Paso 1: Seleccionar grupo ──
   const renderPaso1 = () => (
     <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
-      <div style={{ fontSize:12, color:D.textSub, fontWeight:700, textTransform:"uppercase", letterSpacing:1 }}>Selecciona tu grupo</div>
+      <div style={{ fontSize:12, color:D.textSub, fontWeight:700, textTransform:"uppercase", letterSpacing:1 }}>¿Con qué grupo juegas hoy?</div>
       {grupos.length === 0 ? (
         <div style={{ background:D.surface, border:`1px solid ${D.border}`, borderRadius:12, padding:20, textAlign:"center" }}>
           <div style={{ fontSize:32, marginBottom:8 }}>🤝</div>
           <div style={{ fontSize:14, color:D.text, fontWeight:700, marginBottom:6 }}>No perteneces a ningún grupo</div>
-          <div style={{ fontSize:12, color:D.textSub }}>Pide al administrador que te agregue a un grupo, o crea uno nuevo desde el panel de Grupos.</div>
+          <div style={{ fontSize:12, color:D.textSub }}>Pide al administrador que te agregue a un grupo, o crea uno desde la pestaña de Grupos.</div>
         </div>
       ) : (
         <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
@@ -5198,14 +5211,13 @@ function JugadorSalidaGrupalScreen({ jugador, appStyle, onVolver, onIniciarSalid
             const sel = grupoSel?._key === g._key;
             const miembros = g.miembros ? Object.values(g.miembros).filter(m => m.estado === "activo" || m.estado == null) : [];
             return (
-              <button key={g._key} onClick={() => setGrupoSel(g)}
+              <button key={g._key} onClick={() => seleccionarGrupo(g)}
                 style={{ display:"flex", alignItems:"center", gap:12, padding:"14px 16px", border:`2px solid ${sel?"#4FC3F7":"#4FC3F733"}`, borderRadius:14, background:sel?"#001A2A":"transparent", cursor:"pointer", textAlign:"left", width:"100%" }}>
                 <div style={{ fontSize:26 }}>🤝</div>
                 <div style={{ flex:1 }}>
                   <div style={{ fontSize:15, fontWeight:700, color:sel?"#4FC3F7":D.text }}>{g.nombre}</div>
                   <div style={{ fontSize:11, color:D.textSub, marginTop:2 }}>
-                    {miembros.map(m => m.nombre).filter(Boolean).slice(0,4).join(", ")}
-                    {miembros.length > 4 ? ` +${miembros.length-4} más` : ""}
+                    {miembros.length} miembros · {miembros.map(m => m.nombre).filter(Boolean).slice(0,3).join(", ")}{miembros.length > 3 ? `…` : ""}
                   </div>
                 </div>
                 {sel && <div style={{ fontSize:18, color:"#4FC3F7" }}>✓</div>}
@@ -5223,92 +5235,144 @@ function JugadorSalidaGrupalScreen({ jugador, appStyle, onVolver, onIniciarSalid
     </div>
   );
 
-  // ── Paso 2: Configurar la ronda ──
-  const renderPaso2 = () => (
-    <div style={{ display:"flex", flexDirection:"column", gap:18 }}>
-      {/* Campo */}
-      <div>
-        <div style={{ fontSize:12, color:D.textSub, fontWeight:700, textTransform:"uppercase", letterSpacing:1, marginBottom:8 }}>⛳ Campo</div>
-        <div style={{ display:"flex", flexWrap:"wrap", gap:8 }}>
-          {camposDisponibles.map(c => (
-            <button key={c} onClick={() => { setCampo(c); setHoyoSalida(1); }}
-              style={{ padding:"10px 14px", border:`2px solid ${campo===c?D.gold:D.border}`, borderRadius:10, background:campo===c?D.goldDim:"transparent", color:campo===c?D.gold:D.text, fontSize:13, fontWeight:campo===c?800:600, cursor:"pointer", textTransform:"capitalize" }}>
-              {CAMPOS[c]?.nombre || c}
-            </button>
-          ))}
+  // ── Paso 2: Seleccionar jugadores ──
+  const renderPaso2 = () => {
+    const miembros = getMiembros(grupoSel);
+    const nSel = jugadoresSel.size;
+    return (
+      <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
+        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+          <div style={{ fontSize:12, color:D.textSub, fontWeight:700, textTransform:"uppercase", letterSpacing:1 }}>¿Quiénes juegan hoy?</div>
+          <div style={{ fontSize:12, color:"#4FC3F7", fontWeight:700 }}>{nSel} seleccionados</div>
         </div>
-      </div>
-
-      {/* Número de hoyos */}
-      <div>
-        <div style={{ fontSize:12, color:D.textSub, fontWeight:700, textTransform:"uppercase", letterSpacing:1, marginBottom:8 }}>🏌️ Hoyos a jugar</div>
+        {/* Botones rápidos */}
         <div style={{ display:"flex", gap:8 }}>
-          {[9, 18].filter(n => n <= maxHoyo).map(n => (
-            <button key={n} onClick={() => setNHoles(n)}
-              style={{ flex:1, padding:"12px", border:`2px solid ${nHoles===n?D.gold:D.border}`, borderRadius:10, background:nHoles===n?D.goldDim:"transparent", color:nHoles===n?D.gold:D.text, fontSize:15, fontWeight:800, cursor:"pointer" }}>
-              {n} hoyos
-            </button>
-          ))}
+          <button onClick={() => setJugadoresSel(new Set(miembros.map(m => m.id)))}
+            style={{ flex:1, padding:"8px", border:`1px solid #4FC3F755`, borderRadius:10, background:"#4FC3F711", color:"#4FC3F7", fontSize:12, fontWeight:700, cursor:"pointer" }}>
+            Todos ({miembros.length})
+          </button>
+          <button onClick={() => setJugadoresSel(new Set())}
+            style={{ flex:1, padding:"8px", border:`1px solid ${D.border}`, borderRadius:10, background:"transparent", color:D.textSub, fontSize:12, cursor:"pointer" }}>
+            Ninguno
+          </button>
         </div>
-      </div>
-
-      {/* Hoyo de salida */}
-      <div>
-        <div style={{ fontSize:12, color:D.textSub, fontWeight:700, textTransform:"uppercase", letterSpacing:1, marginBottom:8 }}>🚀 Hoyo de salida</div>
-        <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
-          {Array.from({ length: maxHoyo }, (_, i) => i + 1).map(h => (
-            <button key={h} onClick={() => setHoyoSalida(h)}
-              style={{ width:40, height:40, border:`2px solid ${hoyoSalida===h?D.gold:D.border}`, borderRadius:10, background:hoyoSalida===h?D.goldDim:"transparent", color:hoyoSalida===h?D.gold:D.text, fontSize:14, fontWeight:hoyoSalida===h?800:500, cursor:"pointer" }}>
-              {h}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Apuestas */}
-      <div>
-        <div style={{ fontSize:12, color:D.textSub, fontWeight:700, textTransform:"uppercase", letterSpacing:1, marginBottom:8 }}>💰 Apuestas</div>
-        <div style={{ display:"flex", gap:10 }}>
-          {[["Sin apuestas",false,D.textSub],["Con apuestas",true,"#f39c12"]].map(([label,val,color]) => (
-            <button key={String(val)} onClick={() => setConApuestas(val)}
-              style={{ flex:1, padding:"12px 8px", border:`2px solid ${conApuestas===val?color:D.border}`, borderRadius:12, background:conApuestas===val?`${color}22`:"transparent", color:conApuestas===val?color:D.textSub, fontSize:13, fontWeight:700, cursor:"pointer" }}>
-              {conApuestas===val?"✓ ":""}{label}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Jugadores del grupo */}
-      {(() => {
-        const players = buildPlayers(grupoSel);
-        return (
-          <div style={{ background:D.surface, border:`1px solid ${D.border}`, borderRadius:12, padding:"12px 14px" }}>
-            <div style={{ fontSize:12, color:D.textSub, fontWeight:700, marginBottom:10 }}>👥 Jugadores ({players.length})</div>
-            <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
-              {players.map(p => (
-                <div key={p.id} style={{ display:"flex", alignItems:"center", gap:6, padding:"6px 10px", background:D.goldDim, border:`1px solid ${D.gold}44`, borderRadius:20 }}>
-                  <Avatar name={p.name} id={p.id} size={20} />
-                  <span style={{ fontSize:12, fontWeight:600, color:D.text }}>{p.name}</span>
-                  <span style={{ fontSize:11, color:D.textSub }}>HC {p.hc}</span>
+        {/* Lista de miembros */}
+        <div style={{ background:D.surface, border:`1px solid ${D.border}`, borderRadius:12, overflow:"hidden" }}>
+          {miembros.map((m, idx) => {
+            const sel = jugadoresSel.has(m.id);
+            return (
+              <div key={m.id} onClick={() => {
+                const s = new Set(jugadoresSel);
+                sel ? s.delete(m.id) : s.add(m.id);
+                setJugadoresSel(s);
+              }} style={{ display:"flex", alignItems:"center", gap:12, padding:"12px 14px", borderBottom: idx < miembros.length-1 ? `1px solid ${D.border}` : "none", cursor:"pointer", background: sel ? "#4FC3F708" : "transparent" }}>
+                <div style={{ width:24, height:24, borderRadius:7, border:`2px solid ${sel?"#4FC3F7":D.border}`, background:sel?"#4FC3F722":"transparent", display:"flex", alignItems:"center", justifyContent:"center", fontSize:13, color:"#4FC3F7", fontWeight:800, flexShrink:0 }}>
+                  {sel ? "✓" : ""}
                 </div>
-              ))}
-            </div>
-          </div>
-        );
-      })()}
-
-      <div style={{ display:"flex", gap:10 }}>
-        <button onClick={() => setPaso(1)}
-          style={{ flex:1, padding:"13px", border:`1px solid ${D.border}`, borderRadius:12, background:"transparent", color:D.textSub, fontSize:13, cursor:"pointer" }}>
-          ← Volver
-        </button>
-        <button onClick={handleIniciar}
-          style={{ flex:2, padding:"15px", border:"none", borderRadius:14, background:`linear-gradient(135deg,#0078A8,#005F87)`, color:"#fff", fontSize:16, fontWeight:800, cursor:"pointer" }}>
-          🏌️ Iniciar ronda
-        </button>
+                <Avatar name={m.name} id={m.id} size={32} />
+                <div style={{ flex:1 }}>
+                  <div style={{ fontSize:14, fontWeight:700, color:sel?"#4FC3F7":D.text }}>{m.name}</div>
+                  <div style={{ fontSize:11, color:D.textSub }}>HC {m.hc}</div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        <div style={{ display:"flex", gap:10 }}>
+          <button onClick={() => setPaso(1)}
+            style={{ flex:1, padding:"13px", border:`1px solid ${D.border}`, borderRadius:12, background:"transparent", color:D.textSub, fontSize:13, cursor:"pointer" }}>
+            ← Volver
+          </button>
+          <button onClick={() => nSel >= 1 && setPaso(3)} disabled={nSel < 1}
+            style={{ flex:2, padding:"14px", border:"none", borderRadius:12, background: nSel >= 1 ? `linear-gradient(135deg,#0078A8,#005F87)` : D.border, color:"#fff", fontSize:14, fontWeight:800, cursor: nSel >= 1 ? "pointer" : "default", opacity: nSel < 1 ? 0.5 : 1 }}>
+            Configurar ronda ({nSel} jugadores) →
+          </button>
+        </div>
       </div>
-    </div>
-  );
+    );
+  };
+
+  // ── Paso 3: Configurar la ronda ──
+  const renderPaso3 = () => {
+    const players = getMiembros(grupoSel).filter(m => jugadoresSel.has(m.id));
+    return (
+      <div style={{ display:"flex", flexDirection:"column", gap:18 }}>
+        {/* Campo */}
+        <div>
+          <div style={{ fontSize:12, color:D.textSub, fontWeight:700, textTransform:"uppercase", letterSpacing:1, marginBottom:8 }}>⛳ Campo</div>
+          <div style={{ display:"flex", flexWrap:"wrap", gap:8 }}>
+            {camposDisponibles.map(c => (
+              <button key={c} onClick={() => { setCampo(c); setHoyoSalida(1); }}
+                style={{ padding:"10px 14px", border:`2px solid ${campo===c?D.gold:D.border}`, borderRadius:10, background:campo===c?D.goldDim:"transparent", color:campo===c?D.gold:D.text, fontSize:13, fontWeight:campo===c?800:600, cursor:"pointer", textTransform:"capitalize" }}>
+                {CAMPOS[c]?.nombre || c}
+              </button>
+            ))}
+          </div>
+        </div>
+        {/* Hoyos */}
+        <div>
+          <div style={{ fontSize:12, color:D.textSub, fontWeight:700, textTransform:"uppercase", letterSpacing:1, marginBottom:8 }}>🏌️ Hoyos a jugar</div>
+          <div style={{ display:"flex", gap:8 }}>
+            {[9, 18].filter(n => n <= maxHoyo).map(n => (
+              <button key={n} onClick={() => setNHoles(n)}
+                style={{ flex:1, padding:"12px", border:`2px solid ${nHoles===n?D.gold:D.border}`, borderRadius:10, background:nHoles===n?D.goldDim:"transparent", color:nHoles===n?D.gold:D.text, fontSize:15, fontWeight:800, cursor:"pointer" }}>
+                {n} hoyos
+              </button>
+            ))}
+          </div>
+        </div>
+        {/* Hoyo de salida */}
+        <div>
+          <div style={{ fontSize:12, color:D.textSub, fontWeight:700, textTransform:"uppercase", letterSpacing:1, marginBottom:8 }}>🚀 Hoyo de salida</div>
+          <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
+            {Array.from({ length: maxHoyo }, (_, i) => i + 1).map(h => (
+              <button key={h} onClick={() => setHoyoSalida(h)}
+                style={{ width:40, height:40, border:`2px solid ${hoyoSalida===h?D.gold:D.border}`, borderRadius:10, background:hoyoSalida===h?D.goldDim:"transparent", color:hoyoSalida===h?D.gold:D.text, fontSize:14, fontWeight:hoyoSalida===h?800:500, cursor:"pointer" }}>
+                {h}
+              </button>
+            ))}
+          </div>
+        </div>
+        {/* Apuestas */}
+        <div>
+          <div style={{ fontSize:12, color:D.textSub, fontWeight:700, textTransform:"uppercase", letterSpacing:1, marginBottom:8 }}>💰 Apuestas</div>
+          <div style={{ display:"flex", gap:10 }}>
+            {[["Sin apuestas",false,D.textSub],["Con apuestas 💵",true,"#f39c12"]].map(([label,val,color]) => (
+              <button key={String(val)} onClick={() => setConApuestas(val)}
+                style={{ flex:1, padding:"12px 8px", border:`2px solid ${conApuestas===val?color:D.border}`, borderRadius:12, background:conApuestas===val?`${color}22`:"transparent", color:conApuestas===val?color:D.textSub, fontSize:13, fontWeight:700, cursor:"pointer" }}>
+                {conApuestas===val?"✓ ":""}{label}
+              </button>
+            ))}
+          </div>
+        </div>
+        {/* Resumen jugadores */}
+        <div style={{ background:D.surface, border:`1px solid ${D.border}`, borderRadius:12, padding:"12px 14px" }}>
+          <div style={{ fontSize:12, color:D.textSub, fontWeight:700, marginBottom:8 }}>👥 {players.length} jugadores en esta ronda</div>
+          <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
+            {players.map(p => (
+              <div key={p.id} style={{ display:"flex", alignItems:"center", gap:5, padding:"5px 10px", background:D.goldDim, border:`1px solid ${D.gold}44`, borderRadius:20 }}>
+                <Avatar name={p.name} id={p.id} size={18} />
+                <span style={{ fontSize:11, fontWeight:600, color:D.text }}>{p.name}</span>
+                <span style={{ fontSize:10, color:D.textSub }}>HC {p.hc}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div style={{ display:"flex", gap:10 }}>
+          <button onClick={() => setPaso(2)}
+            style={{ flex:1, padding:"13px", border:`1px solid ${D.border}`, borderRadius:12, background:"transparent", color:D.textSub, fontSize:13, cursor:"pointer" }}>
+            ← Volver
+          </button>
+          <button onClick={handleIniciar}
+            style={{ flex:2, padding:"15px", border:"none", borderRadius:14, background:`linear-gradient(135deg,#0078A8,#005F87)`, color:"#fff", fontSize:16, fontWeight:800, cursor:"pointer" }}>
+            🏌️ Iniciar ronda
+          </button>
+        </div>
+      </div>
+    );
+  };
+
+  const pasoLabels = ["","Selecciona grupo","Elige jugadores","Configura ronda"];
 
   return (
     <div style={{ ...appStyle, display:"flex", flexDirection:"column", minHeight:"100vh" }}>
@@ -5320,18 +5384,17 @@ function JugadorSalidaGrupalScreen({ jugador, appStyle, onVolver, onIniciarSalid
           <div style={{ fontSize:26 }}>🤝</div>
           <div>
             <div style={{ fontSize:18, fontWeight:800, color:"#4FC3F7" }}>Única Salida Grupal</div>
-            <div style={{ fontSize:12, color:D.textSub }}>Paso {paso} de 2 · {paso===1?"Selecciona grupo":"Configura la ronda"}</div>
+            <div style={{ fontSize:12, color:D.textSub }}>Paso {paso} de 3 · {pasoLabels[paso]}</div>
           </div>
         </div>
-        {/* Barra de progreso */}
         <div style={{ marginTop:10, height:3, background:"#4FC3F722", borderRadius:2 }}>
-          <div style={{ height:"100%", width:`${paso*50}%`, background:"#4FC3F7", borderRadius:2, transition:"width 0.3s" }} />
+          <div style={{ height:"100%", width:`${(paso/3)*100}%`, background:"#4FC3F7", borderRadius:2, transition:"width 0.3s" }} />
         </div>
       </div>
-
       <div style={{ flex:1, padding:"20px 16px 40px", overflowY:"auto" }}>
         {paso === 1 && renderPaso1()}
         {paso === 2 && renderPaso2()}
+        {paso === 3 && renderPaso3()}
       </div>
     </div>
   );
