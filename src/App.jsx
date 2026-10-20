@@ -4559,7 +4559,7 @@ function JugadorRondaScreen({ jugador, appStyle, onTerminada, onCancelar }) {
   const [jugActivo, setJugActivo] = React.useState(0);
 
   // scores[jugadorIdx][hoyoIdx]
-  const [scores, setScores] = React.useState([]);
+  const [scores, setScores] = React.useState(() => [[...Array(9).fill(null)]]);
   const [hoyoActual, setHoyoActual] = React.useState(0);
 
   // Cargar grupos del jugador
@@ -4580,15 +4580,12 @@ function JugadorRondaScreen({ jugador, appStyle, onTerminada, onCancelar }) {
     }).catch(() => setLoadingGrupos(false));
   }, [modoRonda, jugador.id]);
 
-  // Cuando se selecciona un grupo, armar la lista de jugadores
+  // Cuando se selecciona un grupo (modo grupo), armar la lista de jugadores
   React.useEffect(() => {
-    if (modoRonda === "individual") {
-      setJugadoresRonda([{ id: jugador.id, name: jugador.name, hc: jugador.hc }]);
-    } else if (grupoSel) {
+    if (modoRonda === "grupo" && grupoSel) {
       const miembros = Object.entries(grupoSel.miembros || {})
         .filter(([, m]) => m.estado === "activo")
         .map(([id, m]) => ({ id, name: m.nombre || id, hc: m.hc || 0 }));
-      // Asegurar que el jugador propio esté primero
       const propio = miembros.find(m => String(m.id) === String(jugador.id));
       const resto  = miembros.filter(m => String(m.id) !== String(jugador.id));
       const orden  = propio ? [propio, ...resto] : [{ id: jugador.id, name: jugador.name, hc: jugador.hc }, ...miembros];
@@ -4608,13 +4605,13 @@ function JugadorRondaScreen({ jugador, appStyle, onTerminada, onCancelar }) {
 
   const hoyoReal = (hoyoIdx) => ((saleHoyo - 1 + hoyoIdx) % 9) + 1;
 
-  // Inicializar scores cuando cambian jugadores o hoyos
+  // Re-inicializar scores cuando cambia la configuración de campo/hoyos
   React.useEffect(() => {
     const nJ = jugadoresRonda.length || 1;
     setScores(Array.from({ length: nJ }, () => Array(nHoles).fill(null)));
     setHoyoActual(0);
     setJugActivo(0);
-  }, [nHoles, campo, saleHoyo, jugadoresRonda.length]);
+  }, [nHoles, campo, saleHoyo]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Score del jugador activo en el hoyo actual
   const scoreActual = (scores[jugActivo]?.[hoyoActual]) ?? parsOrden[hoyoActual] ?? 4;
