@@ -2020,7 +2020,7 @@ class ErrorBoundary extends React.Component {
   }
 }
 
-function TorneoSpectator({ torneoId, appStyle, isAdmin = false }) {
+function TorneoSpectator({ torneoId, appStyle, isAdmin = false, onExit }) {
   const [torneo, setTorneo] = useState(null);
   const [loading, setLoading] = useState(true);
   const [showSplash, setShowSplash] = useState(true);
@@ -2233,7 +2233,8 @@ function TorneoSpectator({ torneoId, appStyle, isAdmin = false }) {
 
   return (
     <div style={appStyle}>
-      <div style={{ background:D.surface, borderBottom:`1px solid ${D.border}`, padding:"16px 16px 12px", textAlign:"center" }}>
+      <div style={{ background:D.surface, borderBottom:`1px solid ${D.border}`, padding:"16px 16px 12px", textAlign:"center", position:"relative" }}>
+        {onExit && <button onClick={onExit} style={{ position:"absolute", top:16, left:16, fontSize:12, color:D.textSub, background:"none", border:`1px solid ${D.border}`, borderRadius:8, padding:"5px 10px", cursor:"pointer" }}>← Salir</button>}
         <div style={{ fontSize:24, fontWeight:900, color:D.gold }}>H19 - Torneo</div>
         <div style={{ fontSize:13, color:D.textSub, marginTop:2 }}>{torneo.nombre}</div>
         <div style={{ fontSize:11, color:D.textSub, marginTop:2 }}>{CAMPOS[torneo.campo]?.nombre} · {nHolesSafe} hoyos · {grupos.length} grupos · {allPlayers.length} jugadores</div>
@@ -3850,10 +3851,9 @@ function H19() {
   }
 
   if (mode === "jugador-ver-torneo" && activeJugador) {
-    // Cargar torneo del jugador desde localStorage y mostrar como spectator
     const td = (() => { try { return JSON.parse(localStorage.getItem("h19-jugador-torneo")||"null"); } catch(e) { return null; } })();
     if (!td) { setMode("jugador-home"); return null; }
-    return <SpectatorView rondaId={td.torneoId} onExit={() => setMode("jugador-home")} />;
+    return <TorneoSpectator torneoId={td.torneoId} appStyle={appStyle} isAdmin={false} onExit={() => setMode("jugador-home")} />;
   }
 
   if (mode === "jugador-ver-codigos" && activeJugador) {
