@@ -1158,7 +1158,7 @@ function SpectatorView({ rondaId }) {
 }
 
 // ─── TORNEO: CREAR ────────────────────────────────
-function TorneoCrear({ onExit, onIniciarGrupo, appStyle }) {
+function TorneoCrear({ onExit, onIniciarGrupo, appStyle, jugadorOrganizador }) {
   const [paso, setPaso] = useState(1); // 1=config, 2=grupos+jugadores, 3=compartir
   const [campo, setCampo] = useState("huerta");
   const [nHoles, setNHoles] = useState(9);
@@ -1170,6 +1170,8 @@ function TorneoCrear({ onExit, onIniciarGrupo, appStyle }) {
   const [torneoId, setTorneoId] = useState(null);
   const [creando, setCreando] = useState(false);
   const [dir, setDir] = useState([]);
+  const [gruposClub, setGruposClub] = useState([]); // grupos del club para filtrar por grupo
+  const [grupoFiltroSel, setGrupoFiltroSel] = useState(null); // grupo seleccionado para filtrar jugadores
   const [grupoActivo, setGrupoActivo] = useState(0);
   // Grupos aleatorios
   const [modoGrupos, setModoGrupos] = useState("manual"); // "manual" | "aleatorio"
@@ -1224,6 +1226,22 @@ function TorneoCrear({ onExit, onIniciarGrupo, appStyle }) {
       if (snap.exists()) setDir(snap.val().players || []);
     }, { onlyOnce: true });
   }, []);
+
+  // Si viene de pantalla jugador, cargar grupos donde ese jugador es miembro
+  useEffect(() => {
+    if (!jugadorOrganizador) return;
+    get(clubRef("grupos")).then(snap => {
+      if (!snap.exists()) return;
+      const todos = Object.entries(snap.val()).map(([k,v]) => ({ ...v, _key:k }));
+      const misGrupos = todos.filter(g =>
+        g.miembros && Object.entries(g.miembros).some(([id, m]) =>
+          String(id) === String(jugadorOrganizador.id) && m.estado === "activo"
+        )
+      );
+      setGruposClub(misGrupos);
+      if (misGrupos.length === 1) setGrupoFiltroSel(misGrupos[0]);
+    }).catch(() => {});
+  }, [jugadorOrganizador]);
 
   // Guardar torneoId en localStorage cuando lleguemos al paso 3
   useEffect(() => {
@@ -1326,6 +1344,17 @@ function TorneoCrear({ onExit, onIniciarGrupo, appStyle }) {
   if (paso === 2) {
     const grupoActualPlayers = grupos[grupoActivo]?.players || [];
     const totalJugadoresAsignados = [...new Set(grupos.flatMap(g => g.players.map(p=>p.id)))].length;
+    // Si viene de pantalla jugador, filtrar directorio por el grupo seleccionado
+    const dirFiltrado = jugadorOrganizador && grupoFiltroSel
+      ? (() => {
+          const ids = new Set(
+            Object.entries(grupoFiltroSel.miembros || {})
+              .filter(([,m]) => m.estado === "activo")
+              .map(([id]) => id)
+          );
+          return dir.filter(p => ids.has(String(p.id)));
+        })()
+      : dir;
     return (
       <div style={appStyle}>
         <div style={{ background:D.surface, borderBottom:`1px solid ${D.border}`, padding:"14px 16px 12px", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
@@ -1333,6 +1362,27 @@ function TorneoCrear({ onExit, onIniciarGrupo, appStyle }) {
           <button onClick={() => setPaso(1)} style={{ fontSize:12, color:D.textSub, background:"none", border:`1px solid ${D.border}`, borderRadius:8, padding:"5px 10px", cursor:"pointer" }}>Atrás</button>
         </div>
         <div style={{ padding:"12px" }}>
+          {/* Selector de grupo del club (solo cuando viene de pantalla jugador con múltiples grupos) */}
+          {jugadorOrganizador && gruposClub.length > 1 && (
+            <Card>
+              <SLabel>¿Jugadores de qué grupo?</SLabel>
+              <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
+                {gruposClub.map(g => (
+                  <button key={g._key} onClick={() => setGrupoFiltroSel(g)}
+                    style={{ padding:"10px 14px", border:`1px solid ${grupoFiltroSel?._key===g._key?D.gold:D.border}`, borderRadius:10, background:grupoFiltroSel?._key===g._key?`${D.gold}22`:"transparent", color:grupoFiltroSel?._key===g._key?D.gold:D.text, fontSize:13, fontWeight:700, cursor:"pointer", textAlign:"left" }}>
+                    {g.nombre}
+                    <span style={{ fontSize:11, color:D.textSub, fontWeight:400, marginLeft:8 }}>
+                      ({Object.values(g.miembros||{}).filter(m=>m.estado==="activo").length} miembros activos)
+                    </span>
+                  </button>
+                ))}
+                <button onClick={() => setGrupoFiltroSel(null)}
+                  style={{ padding:"8px 14px", border:`1px solid ${!grupoFiltroSel?D.gold:D.border}`, borderRadius:10, background:!grupoFiltroSel?`${D.gold}22`:"transparent", color:!grupoFiltroSel?D.gold:D.textSub, fontSize:12, cursor:"pointer", textAlign:"left" }}>
+                  Todos los jugadores del club
+                </button>
+              </div>
+            </Card>
+          )}
 
           {/* Selector de modo */}
           <Card>
@@ -1352,10 +1402,10 @@ function TorneoCrear({ onExit, onIniciarGrupo, appStyle }) {
             <Card>
               <SLabel>Seleccionar jugadores participantes</SLabel>
               <div style={{ fontSize:11, color:D.textSub, marginBottom:8 }}>
-                {"Seleccionados: " + selAleatorio.size + " de " + dir.length}
+                {"Seleccionados: " + selAleatorio.size + " de " + dirFiltrado.length}
               </div>
               <div style={{ display:"flex", gap:6, marginBottom:8 }}>
-                <button onClick={() => setSelAleatorio(new Set(dir.map(p=>p.id)))}
+                <button onClick={() => setSelAleatorio(new Set(dirFiltrado.map(p=>p.id)))}
                   style={{ fontSize:11, padding:"5px 10px", border:`1px solid ${D.gold}`, borderRadius:8, background:D.goldDim, color:D.gold, cursor:"pointer" }}>
                   Todos
                 </button>
@@ -1365,7 +1415,7 @@ function TorneoCrear({ onExit, onIniciarGrupo, appStyle }) {
                 </button>
               </div>
               <div style={{ maxHeight:240, overflowY:"auto" }}>
-                {dir.slice().sort((a,b)=>a.name.localeCompare(b.name)).map(p => {
+                {dirFiltrado.slice().sort((a,b)=>a.name.localeCompare(b.name)).map(p => {
                   const sel = selAleatorio.has(p.id);
                   return (
                     <div key={p.id} onClick={() => {
@@ -1491,14 +1541,17 @@ function TorneoCrear({ onExit, onIniciarGrupo, appStyle }) {
           {/* Asignar jugadores */}
           <Card>
             <SLabel>Jugadores del grupo {grupoActivo+1} ({grupoActualPlayers.length} seleccionados)</SLabel>
-            {dir.length === 0 && <div style={{ textAlign:"center", color:D.textSub, padding:12, fontSize:13 }}>No hay jugadores en el directorio</div>}
-            {dir.slice().sort((a,b)=>a.name.localeCompare(b.name)).map((p, idx) => {
+            {jugadorOrganizador && !grupoFiltroSel && gruposClub.length > 0 && (
+              <div style={{ fontSize:12, color:D.gold, marginBottom:8 }}>⬆ Selecciona un grupo para filtrar jugadores</div>
+            )}
+            {dirFiltrado.length === 0 && <div style={{ textAlign:"center", color:D.textSub, padding:12, fontSize:13 }}>No hay jugadores en el directorio</div>}
+            {dirFiltrado.slice().sort((a,b)=>a.name.localeCompare(b.name)).map((p, idx) => {
               const enEsteGrupo = grupoActualPlayers.find(pl=>pl.id===p.id);
               const enOtroGrupoIdx = playerEnGrupo(p);
               const enOtroGrupo = enOtroGrupoIdx !== -1 && enOtroGrupoIdx !== grupoActivo;
               return (
                 <div key={p.id} onClick={() => !enOtroGrupo && togglePlayerInGrupo(grupoActivo, p)}
-                  style={{ display:"flex", alignItems:"center", gap:10, padding:"9px 0", borderBottom:idx<dir.length-1?`1px solid ${D.border}`:"none", cursor:enOtroGrupo?"default":"pointer", opacity:enOtroGrupo?0.4:1 }}>
+                  style={{ display:"flex", alignItems:"center", gap:10, padding:"9px 0", borderBottom:idx<dirFiltrado.length-1?`1px solid ${D.border}`:"none", cursor:enOtroGrupo?"default":"pointer", opacity:enOtroGrupo?0.4:1 }}>
                   <div style={{ width:22, height:22, borderRadius:6, border:`2px solid ${enEsteGrupo?D.gold:D.border}`, background:enEsteGrupo?D.goldDim:"transparent", display:"flex", alignItems:"center", justifyContent:"center", fontSize:13, color:D.gold, flexShrink:0 }}>
                     {enEsteGrupo?"✓":""}
                   </div>
@@ -3594,11 +3647,9 @@ function H19() {
 
   if (mode === "jugador-torneo-crear" && activeJugador) {
     return <TorneoCrear appStyle={appStyle}
+      jugadorOrganizador={activeJugador}
       onExit={() => setMode("jugador-home")}
-      onIniciarGrupo={(torneoData) => {
-        // El jugador entra al grupo como anotador usando el flujo de código
-        setMode("jugador-home");
-      }} />;
+      onIniciarGrupo={() => setMode("jugador-home")} />;
   }
 
   return null;
@@ -4503,7 +4554,7 @@ function JugadorRondaScreen({ jugador, appStyle, onTerminada, onCancelar }) {
   const [loadingGrupos, setLoadingGrupos] = React.useState(false);
   const [grupoSel, setGrupoSel]   = React.useState(null); // grupo seleccionado
   // jugadoresRonda: array de { id, name, hc } — jugador propio + miembros del grupo
-  const [jugadoresRonda, setJugadoresRonda] = React.useState([]);
+  const [jugadoresRonda, setJugadoresRonda] = React.useState([{ id: jugador.id, name: jugador.name, hc: jugador.hc }]);
   // jugActivo: en modo grupo, qué fila (jugador) tiene foco para +/- con botones grandes
   const [jugActivo, setJugActivo] = React.useState(0);
 
