@@ -3639,10 +3639,20 @@ function H19() {
       onSuccess={(jugador) => { setMode("jugador-home"); setActiveJugador(jugador); }} />;
   }
 
+  if (mode === "jugador-ronda" && activeJugador) {
+    return <JugadorRondaScreen
+      jugador={activeJugador}
+      appStyle={appStyle}
+      onTerminada={() => setMode("jugador-home")}
+      onCancelar={() => setMode("jugador-home")}
+    />;
+  }
+
   if (mode === "jugador-home" && activeJugador) {
     return <JugadorHomeScreen jugador={activeJugador} appStyle={appStyle}
       onExit={() => { setMode("home"); setActiveJugador(null); }}
-      onCrearTorneo={() => setMode("jugador-torneo-crear")} />;
+      onCrearTorneo={() => setMode("jugador-torneo-crear")}
+      onIniciarRonda={() => setMode("jugador-ronda")} />;
   }
 
   if (mode === "jugador-torneo-crear" && activeJugador) {
@@ -4960,7 +4970,7 @@ function JugadorRondaScreen({ jugador, appStyle, onTerminada, onCancelar }) {
 }
 
 // ─── JUGADOR HOME SCREEN ──────────────────────────────────────────────────────
-function JugadorHomeScreen({ jugador: jugadorInicial, appStyle, onExit, onCrearTorneo }) {
+function JugadorHomeScreen({ jugador: jugadorInicial, appStyle, onExit, onCrearTorneo, onIniciarRonda }) {
   const [jugador, setJugador]   = React.useState(jugadorInicial);
   const [historial, setHistorial] = React.useState([]);
   const [todasRondas, setTodasRondas] = React.useState([]);
@@ -4968,7 +4978,6 @@ function JugadorHomeScreen({ jugador: jugadorInicial, appStyle, onExit, onCrearT
   const [tab, setTab]           = React.useState("resumen");
   const [editandoPerfil, setEditandoPerfil] = React.useState(false);
   const [notifBadge, setNotifBadge] = React.useState(0);
-  const [jugandoRonda, setJugandoRonda] = React.useState(false);
 
   const cargarHistorial = React.useCallback(() => {
     setLoading(true);
@@ -4989,17 +4998,7 @@ function JugadorHomeScreen({ jugador: jugadorInicial, appStyle, onExit, onCrearT
 
   React.useEffect(() => { cargarHistorial(); }, [cargarHistorial]);
 
-  // Si el jugador está en medio de una ronda, mostrar pantalla de juego
-  if (jugandoRonda) {
-    return (
-      <JugadorRondaScreen
-        jugador={jugador}
-        appStyle={appStyle}
-        onTerminada={() => { setJugandoRonda(false); cargarHistorial(); setTab("rondas"); }}
-        onCancelar={() => setJugandoRonda(false)}
-      />
-    );
-  }
+  // onIniciarRonda navega a jugador-ronda (pantalla independiente)
 
   // Cargar badge de notificaciones pendientes al montar
   React.useEffect(() => {
@@ -5128,7 +5127,7 @@ function JugadorHomeScreen({ jugador: jugadorInicial, appStyle, onExit, onCrearT
             {totalRondas === 0 && <div style={{ textAlign:"center", color:D.textSub, padding:"16px 0 8px", fontSize:13 }}>Aún no hay rondas registradas.</div>}
             {/* Acceso rápido desde Resumen */}
             <div style={{ display:"flex", flexDirection:"column", gap:8, marginTop:8 }}>
-              <button onClick={() => setJugandoRonda(true)}
+              <button onClick={() => onIniciarRonda?.()}
                 style={{ padding:"13px", border:`1px dashed ${D.gold}99`, borderRadius:12, background:`${D.gold}11`, color:D.gold, fontSize:14, fontWeight:700, cursor:"pointer", textAlign:"center", display:"flex", alignItems:"center", justifyContent:"center", gap:8, width:"100%", boxSizing:"border-box" }}>
                 ⛳ Nueva ronda individual
               </button>
@@ -5146,7 +5145,7 @@ function JugadorHomeScreen({ jugador: jugadorInicial, appStyle, onExit, onCrearT
           loading ? <div style={{ textAlign:"center", color:D.textSub, padding:32 }}>Cargando…</div> : (
           <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
             {/* Botón iniciar ronda individual */}
-            <button onClick={() => setJugandoRonda(true)}
+            <button onClick={() => onIniciarRonda?.()}
               style={{ padding:"13px", border:`1px dashed ${D.gold}99`, borderRadius:12, background:`${D.gold}11`, color:D.gold, fontSize:14, fontWeight:700, cursor:"pointer", textAlign:"center", display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}>
               ⛳ Nueva ronda individual
             </button>
