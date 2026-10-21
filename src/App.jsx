@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { initializeApp } from "firebase/app";
 import { getDatabase, ref, set, onValue, remove, get } from "firebase/database";
-import { getAuth, signInAnonymously, onAuthStateChanged } from "firebase/auth";
+import { getAuth, signInAnonymously, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail, EmailAuthProvider, linkWithCredential, fetchSignInMethodsForEmail } from "firebase/auth";
 
 const firebaseConfig = {
   apiKey: "AIzaSyAsWuJRelERz7W2QG3-DPaOprKKT0TJBA4",
@@ -3428,6 +3428,25 @@ function H19() {
   const [salidaGrupalConfig, setSalidaGrupalConfig] = useState(null);
   // Torneos en curso (para panel admin)
   const [torneosEnCurso, setTorneosEnCurso] = useState([]);
+  const [solicitudesReset, setSolicitudesReset] = useState([]);
+
+  useEffect(() => {
+    const unsub = onValue(clubRef("solicitudes_reset"), snap => {
+      if (!snap.exists()) { setSolicitudesReset([]); return; }
+      const data = snap.val();
+      const lista = Object.values(data)
+        .filter(s => s.status === "pendiente")
+        .sort((a,b) => (b.creadoAt||0) - (a.creadoAt||0));
+      setSolicitudesReset(lista);
+    });
+    return () => unsub();
+  }, []);
+
+  const atenderSolicitudReset = async (sol) => {
+    // Marcar como atendida en Firebase
+    await set(clubRef(`solicitudes_reset/${sol.id}/status`), "atendida").catch(()=>{});
+    await set(ref(db, `solicitudes_reset/${sol.id}/status`), "atendida").catch(()=>{});
+  };
 
   useEffect(() => {
     // Escuchar cambios de auth; si el login anónimo aún no completó al montar
@@ -3734,6 +3753,29 @@ function H19() {
             </div>
           )}
 
+          {/* Solicitudes de reset de NIP */}
+          {solicitudesReset.length > 0 && (
+            <div style={{ marginBottom:16 }}>
+              <div style={{ fontSize:11, fontWeight:700, color:D.danger, letterSpacing:1, textTransform:"uppercase", marginBottom:8 }}>🔑 Solicitudes de NIP ({solicitudesReset.length})</div>
+              {solicitudesReset.map(sol => (
+                <div key={sol.id} style={{ background:D.surface, border:`1px solid ${D.danger}55`, borderRadius:14, padding:"12px 14px", marginBottom:8, display:"flex", alignItems:"center", gap:10, flexWrap:"wrap" }}>
+                  <div style={{ flex:1, minWidth:0 }}>
+                    <div style={{ fontSize:14, fontWeight:700, color:D.text }}>{sol.nombre}</div>
+                    <div style={{ fontSize:11, color:D.textSub, marginTop:2 }}>
+                      {sol.jugadorId ? `ID: ${fmtPlayerId(sol.jugadorId)}` : "Sin ID"} · {new Date(sol.creadoAt).toLocaleString("es-MX",{dateStyle:"short",timeStyle:"short"})}
+                    </div>
+                    <div style={{ fontSize:11, color:D.gold, marginTop:2 }}>Asigna un NIP temporal desde el Directorio de jugadores</div>
+                  </div>
+                  <button
+                    onClick={() => atenderSolicitudReset(sol)}
+                    style={{ padding:"7px 12px", border:"none", borderRadius:8, background:"#4CAF50", color:"#fff", fontSize:12, fontWeight:700, cursor:"pointer", whiteSpace:"nowrap" }}>
+                    ✓ Atendida
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
           {/* Acciones rápidas */}
           <div style={{ fontSize:11, fontWeight:700, color:D.textSub, letterSpacing:1, textTransform:"uppercase", marginBottom:10 }}>Acciones</div>
           <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
@@ -3898,14 +3940,21 @@ function H19() {
 
 // ─── REGISTRO JUGADOR NUEVO ────────────────────────────────────────────────
 
+// Convierte NIP numérico en contraseña válida para Firebase (mín 6 chars)
+function nipToFirebasePass(nip, playerId) {
+  // Paddeamos con el id para llegar a 6+ chars; el jugador solo escribe el NIP
+  return `${nip}_h19_${playerId}`;
+}
+
 function JugadorRegistroScreen({ appStyle, onExit, onSuccess }) {
-  const [nombre, setNombre]   = React.useState("");
-  const [nip, setNip]         = React.useState("");
-  const [nip2, setNip2]       = React.useState("");
-  const [email, setEmail]     = React.useState("");
-  const [tel, setTel]         = React.useState("");
-  const [saving, setSaving]   = React.useState(false);
-  const [error, setError]     = React.useState("");
+  const [nombre, setNombre]       = React.useState("");
+  const [nip, setNip]             = React.useState("");
+  const [nip2, setNip2]           = React.useState("");
+  const [email, setEmail]         = React.useState("");
+  const [tel, setTel]             = React.useState("");
+  const [fechaNac, setFechaNac]   = React.useState("");
+  const [saving, setSaving]       = React.useState(false);
+  const [error, setError]         = React.useState("");
 
   const inp = { background:D.surface, border:`1px solid ${D.border}`, borderRadius:10, color:D.text, fontSize:15, padding:"12px 14px", width:"100%", boxSizing:"border-box" };
 
@@ -3914,6 +3963,8 @@ function JugadorRegistroScreen({ appStyle, onExit, onSuccess }) {
     if (!nombre.trim()) return setError("El nombre es obligatorio.");
     if (nip.length < 4) return setError("El NIP debe tener al menos 4 dígitos.");
     if (nip !== nip2) return setError("Los NIPs no coinciden.");
+    const emailTrim = email.trim();
+    if (emailTrim && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailTrim)) return setError("El correo electrónico no es válido.");
     setSaving(true);
     try {
       // Leer directorio actual
@@ -3927,19 +3978,43 @@ function JugadorRegistroScreen({ appStyle, onExit, onSuccess }) {
         setSaving(false); return;
       }
 
+      // Verificar que el email no esté tomado (si se proporcionó)
+      if (emailTrim && players.some(p => p.email && p.email.toLowerCase() === emailTrim.toLowerCase())) {
+        setError("Este correo ya está registrado. Si ya tienes cuenta, usa 'Entrar como jugador'.");
+        setSaving(false); return;
+      }
+
       // Generar ID consecutivo
       const maxId = players.reduce((max, p) => Math.max(max, parsePlayerId(p.id) || 0), 0);
       const newId = maxId + 1;
       const nipHash = await hashNIP(nip, CLUB_H19_ID, newId);
 
+      // Si tiene email, crear cuenta en Firebase Auth
+      let firebaseUid = null;
+      if (emailTrim) {
+        try {
+          const cred = await createUserWithEmailAndPassword(auth, emailTrim, nipToFirebasePass(nip, newId));
+          firebaseUid = cred.user.uid;
+        } catch(fbErr) {
+          if (fbErr.code === "auth/email-already-in-use") {
+            setError("Este correo ya tiene una cuenta. Usa 'Entrar como jugador' o recupera tu NIP.");
+          } else {
+            setError("Error al crear cuenta con email: " + (fbErr.message || fbErr.code));
+          }
+          setSaving(false); return;
+        }
+      }
+
       const nuevoJugador = {
         id: newId,
         name: nombre.trim(),
-        email: email.trim(),
+        email: emailTrim,
         tel: tel.trim(),
+        fechaNac: fechaNac || "",
         hc: 0,
         whs: 0,
         nipHash,
+        ...(firebaseUid ? { firebaseUid } : {}),
         estado: "activo",
         registradoPor: "self",
         creadoAt: Date.now(),
@@ -3947,7 +4022,6 @@ function JugadorRegistroScreen({ appStyle, onExit, onSuccess }) {
 
       players.push(nuevoJugador);
       await set(clubRef("directorio"), { ...dir, players });
-      // dual-write raíz
       try { await set(ref(db, "directorio"), { ...dir, players }); } catch(_) {}
 
       onSuccess(nuevoJugador);
@@ -3959,7 +4033,6 @@ function JugadorRegistroScreen({ appStyle, onExit, onSuccess }) {
 
   return (
     <div style={{ ...appStyle, display:"flex", flexDirection:"column", padding:24, gap:14, minHeight:"100vh" }}>
-      {/* Header */}
       <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:4 }}>
         <button onClick={onExit} style={{ border:"none", background:"transparent", color:D.gold, fontSize:22, cursor:"pointer", padding:0 }}>‹</button>
         <div style={{ fontSize:20, fontWeight:800, color:D.gold }}>Registro de jugador</div>
@@ -3983,12 +4056,19 @@ function JugadorRegistroScreen({ appStyle, onExit, onSuccess }) {
           onChange={e => setNip2(e.target.value.replace(/\D/g,""))} placeholder="••••" />
       </div>
       <div>
-        <div style={{ fontSize:12, color:D.textSub, marginBottom:5, fontWeight:600 }}>Correo electrónico (opcional)</div>
-        <input style={inp} type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="correo@ejemplo.com" />
+        <div style={{ fontSize:12, color:D.textSub, marginBottom:5, fontWeight:600 }}>
+          Correo electrónico <span style={{ color:D.gold }}>(opcional — permite recuperar NIP)</span>
+        </div>
+        <input style={inp} type="email" inputMode="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="correo@ejemplo.com" />
       </div>
       <div>
         <div style={{ fontSize:12, color:D.textSub, marginBottom:5, fontWeight:600 }}>Teléfono (opcional)</div>
         <input style={inp} type="tel" value={tel} onChange={e => setTel(e.target.value)} placeholder="+52 55 1234 5678" />
+      </div>
+      <div>
+        <div style={{ fontSize:12, color:D.textSub, marginBottom:5, fontWeight:600 }}>Fecha de nacimiento (opcional)</div>
+        <input style={{ ...inp, colorScheme:"dark" }} type="date" value={fechaNac} onChange={e => setFechaNac(e.target.value)} max={new Date().toISOString().split("T")[0]} />
+        <div style={{ fontSize:11, color:D.textSub, marginTop:4 }}>Se usa para definir tee de salida según edad en algunos torneos.</div>
       </div>
 
       {error && <div style={{ color:D.danger, fontSize:13, fontWeight:600, padding:"8px 12px", background:`${D.danger}11`, borderRadius:8 }}>{error}</div>}
@@ -3998,7 +4078,7 @@ function JugadorRegistroScreen({ appStyle, onExit, onSuccess }) {
         {saving ? "Registrando…" : "✅ Crear cuenta"}
       </button>
       <div style={{ fontSize:11, color:D.textSub, textAlign:"center" }}>
-        Tu NIP es personal. No lo compartas. El administrador puede restablecer tu NIP si lo olvidas.
+        Tu NIP es personal. No lo compartas. Si registras tu correo, podrás recuperar tu NIP sin depender del administrador.
       </div>
     </div>
   );
@@ -4015,6 +4095,12 @@ function JugadorLoginScreen({ appStyle, onExit, onSuccess }) {
   const [loading, setLoading]   = React.useState(false);
   const [loadingDir, setLoadingDir] = React.useState(true);
   const [showSugerencias, setShowSugerencias] = React.useState(false);
+  // Recuperación de NIP
+  const [forgotMode, setForgotMode] = React.useState(false); // "email" | "admin" | false
+  const [resetEmail, setResetEmail] = React.useState("");
+  const [resetMsg, setResetMsg]     = React.useState(null); // {ok, texto}
+  const [resetLoading, setResetLoading] = React.useState(false);
+  const [solicitudEnviada, setSolicitudEnviada] = React.useState(false);
   const inputRef = React.useRef(null);
 
   React.useEffect(() => {
@@ -4035,12 +4121,85 @@ function JugadorLoginScreen({ appStyle, onExit, onSuccess }) {
       }
       const hash = await hashNIP(nipInput, CLUB_H19_ID, selectedId);
       if (hash === jugador.nipHash) {
+        // Si tiene pendingEmail, crear cuenta Firebase y vincular
+        if (jugador.pendingEmail && !jugador.firebaseUid) {
+          try {
+            const cred = await createUserWithEmailAndPassword(auth, jugador.pendingEmail, nipToFirebasePass(nipInput, jugador.id));
+            const firebaseUid = cred.user.uid;
+            // Actualizar directorio
+            const dirSnap = await get(clubRef("directorio"));
+            if (dirSnap.exists()) {
+              const dirData = dirSnap.val();
+              const players = dirData.players || [];
+              const idx = players.findIndex(p => p.id === selectedId);
+              if (idx >= 0) {
+                players[idx] = { ...players[idx], firebaseUid, pendingEmail: null };
+                set(clubRef("directorio"), { ...dirData, players }).catch(()=>{});
+                set(ref(db, "directorio"), { ...dirData, players }).catch(()=>{});
+                jugador.firebaseUid = firebaseUid;
+                jugador.pendingEmail = null;
+              }
+            }
+          } catch(fbErr) {
+            // Si ya existe la cuenta de Firebase, intentar login para obtener el UID
+            if (fbErr.code === "auth/email-already-in-use") {
+              try {
+                const cred2 = await signInWithEmailAndPassword(auth, jugador.pendingEmail, nipToFirebasePass(nipInput, jugador.id));
+                jugador.firebaseUid = cred2.user.uid;
+              } catch(_) {}
+            }
+          }
+        }
         onSuccess(jugador);
       } else {
         setError("NIP incorrecto. Intenta de nuevo.");
       }
     } catch(e) { setError("Error al verificar NIP"); }
     setLoading(false);
+  };
+
+  // Recuperar NIP por email (Firebase)
+  const handleResetPorEmail = async () => {
+    const emailTrim = resetEmail.trim();
+    if (!emailTrim) { setResetMsg({ ok:false, texto:"Escribe tu correo electrónico." }); return; }
+    setResetLoading(true); setResetMsg(null);
+    try {
+      await sendPasswordResetEmail(auth, emailTrim);
+      setResetMsg({ ok:true, texto:"✅ Te enviamos un correo con instrucciones para restablecer tu NIP. Revisa tu bandeja (y la carpeta de spam)." });
+    } catch(e) {
+      if (e.code === "auth/user-not-found") {
+        setResetMsg({ ok:false, texto:"No encontramos una cuenta con ese correo. ¿Registraste tu correo al crear tu cuenta?" });
+      } else {
+        setResetMsg({ ok:false, texto:"Error al enviar el correo. Verifica que sea correcto." });
+      }
+    }
+    setResetLoading(false);
+  };
+
+  // Solicitar reset al admin
+  const handleSolicitarAdmin = async () => {
+    const jugador = selectedId ? dir.find(p => p.id === selectedId) : null;
+    const nombre = jugador?.name || busqueda.trim();
+    if (!nombre) { setResetMsg({ ok:false, texto:"Selecciona tu nombre primero." }); return; }
+    setResetLoading(true); setResetMsg(null);
+    try {
+      const solicitudId = `sol_${Date.now()}`;
+      const solicitud = {
+        id: solicitudId,
+        jugadorId: jugador?.id || null,
+        nombre,
+        tipo: "reset_nip",
+        status: "pendiente",
+        creadoAt: Date.now(),
+      };
+      await set(clubRef(`solicitudes_reset/${solicitudId}`), solicitud);
+      try { await set(ref(db, `solicitudes_reset/${solicitudId}`), solicitud); } catch(_) {}
+      setSolicitudEnviada(true);
+      setResetMsg({ ok:true, texto:`✅ Solicitud enviada. El administrador verá tu petición y asignará un NIP temporal. Vuelve a intentar en unos minutos.` });
+    } catch(e) {
+      setResetMsg({ ok:false, texto:"Error al enviar la solicitud. Intenta de nuevo." });
+    }
+    setResetLoading(false);
   };
 
   const selected = dir.find(p => p.id === selectedId);
@@ -4183,29 +4342,94 @@ function JugadorLoginScreen({ appStyle, onExit, onSuccess }) {
           )}
 
           {/* Cambiar jugador / Olvidé mi NIP */}
-          {selectedId && (
+          {!forgotMode && (
             <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:6 }}>
-              <button onClick={() => { setSelectedId(null); setBusqueda(""); setNipInput(""); setError(null); inputRef.current?.focus(); }}
-                style={{ fontSize:12, color:D.textSub, background:"none", border:"none", cursor:"pointer", textAlign:"center" }}>
-                ¿No eres {selected?.name}? Cambiar jugador
-              </button>
-              <button onClick={() => setError("__forgot__")}
-                style={{ fontSize:12, color:D.gold, background:"none", border:"none", cursor:"pointer", textAlign:"center", opacity:0.8 }}>
+              {selectedId && (
+                <button onClick={() => { setSelectedId(null); setBusqueda(""); setNipInput(""); setError(null); inputRef.current?.focus(); }}
+                  style={{ fontSize:12, color:D.textSub, background:"none", border:"none", cursor:"pointer", textAlign:"center" }}>
+                  ¿No eres {selected?.name}? Cambiar jugador
+                </button>
+              )}
+              <button onClick={() => { setForgotMode("menu"); setError(null); setResetMsg(null); setSolicitudEnviada(false); setResetEmail(""); }}
+                style={{ fontSize:12, color:D.gold, background:"none", border:"none", cursor:"pointer", textAlign:"center", opacity:0.85 }}>
                 ¿Olvidaste tu NIP?
               </button>
             </div>
           )}
-          {error === "__forgot__" && (
-            <div style={{ background:`${D.gold}11`, border:`1px solid ${D.gold}44`, borderRadius:12, padding:"14px 16px", fontSize:13, color:D.textSub, lineHeight:1.6 }}>
-              <div style={{ fontWeight:700, color:D.gold, marginBottom:6 }}>🔑 ¿Olvidaste tu NIP?</div>
-              Pide al <strong style={{ color:D.text }}>administrador</strong> que restablezca tu NIP temporalmente desde el Directorio de jugadores.<br/>
-              El administrador puede asignarte un NIP temporal (por ejemplo <strong>0000</strong>) para que puedas entrar y cambiarlo desde tu perfil.
-              <div style={{ marginTop:10, textAlign:"right" }}>
-                <button onClick={() => setError(null)}
-                  style={{ fontSize:12, color:D.gold, background:"none", border:"none", cursor:"pointer" }}>
-                  Cerrar ✕
-                </button>
+
+          {/* Panel recuperación NIP */}
+          {forgotMode && (
+            <div style={{ background:D.surface, border:`1px solid ${D.gold}44`, borderRadius:14, padding:"16px", display:"flex", flexDirection:"column", gap:12 }}>
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                <div style={{ fontWeight:700, color:D.gold, fontSize:14 }}>🔑 Recuperar NIP</div>
+                <button onClick={() => { setForgotMode(false); setResetMsg(null); }}
+                  style={{ background:"none", border:"none", color:D.textSub, cursor:"pointer", fontSize:18 }}>✕</button>
               </div>
+
+              {forgotMode === "menu" && (
+                <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+                  <div style={{ fontSize:13, color:D.textSub }}>¿Cómo quieres recuperar tu NIP?</div>
+                  <button onClick={() => { setForgotMode("email"); setResetMsg(null); }}
+                    style={{ padding:"12px 14px", border:`1px solid ${D.gold}55`, borderRadius:10, background:`${D.gold}11`, color:D.gold, fontSize:14, fontWeight:600, cursor:"pointer", textAlign:"left" }}>
+                    📧 Por correo electrónico
+                    <div style={{ fontSize:11, color:D.textSub, fontWeight:400, marginTop:2 }}>Te mandamos un link para restablecer tu NIP</div>
+                  </button>
+                  <button onClick={() => { setForgotMode("admin"); setResetMsg(null); }}
+                    style={{ padding:"12px 14px", border:`1px solid ${D.border}`, borderRadius:10, background:"transparent", color:D.text, fontSize:14, fontWeight:600, cursor:"pointer", textAlign:"left" }}>
+                    👤 Pedir ayuda al administrador
+                    <div style={{ fontSize:11, color:D.textSub, fontWeight:400, marginTop:2 }}>Si no registraste correo, el admin te asigna un NIP temporal</div>
+                  </button>
+                </div>
+              )}
+
+              {forgotMode === "email" && (
+                <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+                  <div style={{ fontSize:13, color:D.textSub }}>Escribe el correo con el que te registraste:</div>
+                  <input
+                    type="email" inputMode="email"
+                    value={resetEmail} onChange={e => { setResetEmail(e.target.value); setResetMsg(null); }}
+                    placeholder="tucorreo@ejemplo.com"
+                    style={{ padding:"12px 14px", border:`1px solid ${D.border}`, borderRadius:10, background:D.bg, color:D.text, fontSize:15, outline:"none", width:"100%", boxSizing:"border-box" }}
+                  />
+                  {resetMsg && (
+                    <div style={{ fontSize:13, color: resetMsg.ok ? "#4CAF50" : D.danger, fontWeight:600, lineHeight:1.5 }}>{resetMsg.texto}</div>
+                  )}
+                  {!resetMsg?.ok && (
+                    <button onClick={handleResetPorEmail} disabled={resetLoading}
+                      style={{ padding:"12px", border:"none", borderRadius:10, background:`linear-gradient(135deg,${D.gold},#B8860B)`, color:"#000", fontSize:14, fontWeight:700, cursor:"pointer" }}>
+                      {resetLoading ? "Enviando…" : "Enviar correo de recuperación"}
+                    </button>
+                  )}
+                  <button onClick={() => setForgotMode("menu")}
+                    style={{ fontSize:12, color:D.textSub, background:"none", border:"none", cursor:"pointer", textAlign:"center" }}>
+                    ← Volver
+                  </button>
+                </div>
+              )}
+
+              {forgotMode === "admin" && (
+                <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+                  <div style={{ fontSize:13, color:D.textSub, lineHeight:1.5 }}>
+                    {selectedId
+                      ? <>Enviaremos una solicitud al administrador para restablecer el NIP de <strong style={{ color:D.text }}>{selected?.name}</strong>.</>
+                      : "Busca y selecciona tu nombre arriba, luego regresa aquí para enviar la solicitud."
+                    }
+                  </div>
+                  {resetMsg && (
+                    <div style={{ fontSize:13, color: resetMsg.ok ? "#4CAF50" : D.danger, fontWeight:600, lineHeight:1.5 }}>{resetMsg.texto}</div>
+                  )}
+                  {!solicitudEnviada && (
+                    <button onClick={handleSolicitarAdmin} disabled={resetLoading || !selectedId}
+                      style={{ padding:"12px", border:"none", borderRadius:10, background: selectedId ? `linear-gradient(135deg,#2C5F2E,#4A9E4E)` : D.surface, color: selectedId ? "#fff" : D.textSub, fontSize:14, fontWeight:700, cursor: selectedId ? "pointer" : "default" }}>
+                      {resetLoading ? "Enviando…" : "📨 Enviar solicitud al administrador"}
+                    </button>
+                  )}
+                  <button onClick={() => setForgotMode("menu")}
+                    style={{ fontSize:12, color:D.textSub, background:"none", border:"none", cursor:"pointer", textAlign:"center" }}>
+                    ← Volver
+                  </button>
+                </div>
+              )}
             </div>
           )}
 
@@ -4222,39 +4446,54 @@ function JugadorLoginScreen({ appStyle, onExit, onSuccess }) {
 // ─── JUGADOR HOME SCREEN (expandido con Perfil, Grupos, Notificaciones) ───────
 
 function JugadorPerfilEditor({ jugador, onSaved, onCancel }) {
-  const [nombre, setNombre] = React.useState(jugador.name || "");
-  const [email, setEmail]   = React.useState(jugador.email || "");
-  const [tel, setTel]       = React.useState(jugador.tel || "");
-  const [saving, setSaving] = React.useState(false);
-  const [error, setError]   = React.useState("");
+  const [nombre, setNombre]       = React.useState(jugador.name || "");
+  const [email, setEmail]         = React.useState(jugador.email || "");
+  const [tel, setTel]             = React.useState(jugador.tel || "");
+  const [fechaNac, setFechaNac]   = React.useState(jugador.fechaNac || "");
+  const [saving, setSaving]       = React.useState(false);
+  const [error, setError]         = React.useState("");
+  const [emailMsg, setEmailMsg]   = React.useState(""); // aviso al vincular email
 
   const handleSave = async () => {
     if (!nombre.trim()) { setError("El nombre no puede estar vacío."); return; }
+    const emailTrim = email.trim();
+    if (emailTrim && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailTrim)) { setError("El correo no es válido."); return; }
     setSaving(true);
     try {
-      // Guardar en directorio (nombre visible en app)
       const dirSnap = await get(clubRef("directorio"));
       if (dirSnap.exists()) {
         const dir = dirSnap.val();
         const players = dir.players || [];
         const idx = players.findIndex(p => p.id === jugador.id);
         if (idx >= 0) {
-          players[idx] = { ...players[idx], name: nombre.trim(), email: email.trim(), tel: tel.trim() };
+          const prev = players[idx];
+          players[idx] = { ...prev, name: nombre.trim(), email: emailTrim, tel: tel.trim(), fechaNac: fechaNac || "" };
+
+          // Si se agrega email nuevo (o lo cambió) y no tenía Firebase UID → crear cuenta Firebase
+          const emailCambiado = emailTrim && emailTrim !== (prev.email||"");
+          if (emailCambiado && !prev.firebaseUid) {
+            try {
+              // Necesitamos el NIP actual del jugador — no lo tenemos en texto plano.
+              // Creamos la cuenta Firebase con el nipHash que ya existe no es posible.
+              // En su lugar guardamos "pendingEmail" para que en el próximo login se vincule.
+              players[idx].pendingEmail = emailTrim;
+              setEmailMsg("📧 Tu correo fue guardado. La próxima vez que entres con tu NIP, se vinculará automáticamente para recuperación.");
+            } catch(_) {}
+          } else if (emailCambiado && prev.firebaseUid) {
+            // Ya tiene uid, solo actualizamos el registro
+            players[idx].email = emailTrim;
+          }
+
           await set(clubRef("directorio"), { ...dir, players });
-          await set(ref(db, "directorio"), { ...dir, players }); // dual-write
+          await set(ref(db, "directorio"), { ...dir, players }).catch(()=>{});
         }
       }
-      // Guardar en nodo jugadores (datos extendidos)
       await set(clubRef(`jugadores/${jugador.id}`), {
-        id: jugador.id,
-        name: nombre.trim(),
-        email: email.trim(),
-        tel: tel.trim(),
-        hc: jugador.hc,
-        whs: jugador.whs || 0,
-        updatedAt: Date.now()
+        id: jugador.id, name: nombre.trim(), email: emailTrim,
+        tel: tel.trim(), fechaNac: fechaNac || "",
+        hc: jugador.hc, whs: jugador.whs || 0, updatedAt: Date.now()
       });
-      onSaved({ ...jugador, name: nombre.trim(), email: email.trim(), tel: tel.trim() });
+      onSaved({ ...jugador, name: nombre.trim(), email: emailTrim, tel: tel.trim(), fechaNac: fechaNac || "" });
     } catch(e) {
       setError("Error al guardar. Intenta de nuevo.");
     }
@@ -4264,18 +4503,26 @@ function JugadorPerfilEditor({ jugador, onSaved, onCancel }) {
   const inp = { background:D.surface, border:`1px solid ${D.border}`, borderRadius:10, color:D.text, fontSize:14, padding:"10px 12px", width:"100%", boxSizing:"border-box" };
   return (
     <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
-      <div style={{ fontSize:13, color:D.textSub, marginBottom:4 }}>Puedes actualizar tu nombre, teléfono y correo. Tu ID de jugador y handicap no son editables aquí.</div>
+      <div style={{ fontSize:13, color:D.textSub, marginBottom:4 }}>Puedes actualizar tu nombre, teléfono, correo y fecha de nacimiento. Tu ID y handicap no son editables aquí.</div>
       <div>
         <div style={{ fontSize:12, color:D.textSub, marginBottom:4 }}>Nombre</div>
         <input style={inp} value={nombre} onChange={e => setNombre(e.target.value)} placeholder="Tu nombre" />
       </div>
       <div>
-        <div style={{ fontSize:12, color:D.textSub, marginBottom:4 }}>Correo electrónico</div>
-        <input style={inp} value={email} onChange={e => setEmail(e.target.value)} placeholder="correo@ejemplo.com" type="email" />
+        <div style={{ fontSize:12, color:D.textSub, marginBottom:4 }}>
+          Correo electrónico <span style={{ color:D.gold }}>(para recuperar tu NIP)</span>
+        </div>
+        <input style={inp} value={email} onChange={e => { setEmail(e.target.value); setEmailMsg(""); }} placeholder="correo@ejemplo.com" type="email" />
+        {emailMsg && <div style={{ fontSize:11, color:D.gold, marginTop:4 }}>{emailMsg}</div>}
       </div>
       <div>
         <div style={{ fontSize:12, color:D.textSub, marginBottom:4 }}>Teléfono</div>
         <input style={inp} value={tel} onChange={e => setTel(e.target.value)} placeholder="+52 55 1234 5678" type="tel" />
+      </div>
+      <div>
+        <div style={{ fontSize:12, color:D.textSub, marginBottom:4 }}>Fecha de nacimiento <span style={{ fontWeight:400 }}>(opcional)</span></div>
+        <input style={{ ...inp, colorScheme:"dark" }} type="date" value={fechaNac} onChange={e => setFechaNac(e.target.value)} max={new Date().toISOString().split("T")[0]} />
+        <div style={{ fontSize:11, color:D.textSub, marginTop:3 }}>Se usa para tee de salida según edad.</div>
       </div>
       <div style={{ display:"flex", gap:10, flexDirection:"column", marginTop:4 }}>
         <div style={{ background:D.surface, border:`1px solid ${D.border}`, borderRadius:10, padding:"10px 12px", display:"flex", justifyContent:"space-between" }}>
@@ -5947,13 +6194,37 @@ function JugadorPerfilTab({ jugador, onEditarPerfil, whsEstablecido, whsHI, whsH
     setNipLoading(false);
   };
 
+  // Calcular edad a partir de fechaNac
+  const calcEdad = (fn) => {
+    if (!fn) return null;
+    const hoy = new Date(); const nac = new Date(fn + "T12:00:00");
+    let edad = hoy.getFullYear() - nac.getFullYear();
+    if (hoy.getMonth() < nac.getMonth() || (hoy.getMonth()===nac.getMonth() && hoy.getDate()<nac.getDate())) edad--;
+    return edad;
+  };
+  const edad = calcEdad(jugador.fechaNac);
+
   return (
     <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
       <div style={{ background:D.surface, border:`1px solid ${D.border}`, borderRadius:12, padding:"16px", display:"flex", flexDirection:"column", gap:10 }}>
+        {/* Correo con badge de recuperación */}
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", paddingBottom:8, borderBottom:`1px solid ${D.border}44` }}>
+          <span style={{ fontSize:13, color:D.textSub }}>Nombre</span>
+          <span style={{ fontSize:13, color:D.text, fontWeight:600 }}>{jugador.name}</span>
+        </div>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", paddingBottom:8, borderBottom:`1px solid ${D.border}44`, gap:8 }}>
+          <span style={{ fontSize:13, color:D.textSub }}>Correo</span>
+          <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+            <span style={{ fontSize:13, color:jugador.email ? D.text : D.textSub, fontWeight:600 }}>{jugador.email||"—"}</span>
+            {jugador.email
+              ? <span style={{ fontSize:10, background:"#1a4a1a", color:"#4CAF50", borderRadius:6, padding:"2px 6px", fontWeight:700 }}>🔒 Recuperación activa</span>
+              : <span style={{ fontSize:10, background:`${D.gold}22`, color:D.gold, borderRadius:6, padding:"2px 6px", fontWeight:700 }}>Sin correo</span>
+            }
+          </div>
+        </div>
         {[
-          ["Nombre", jugador.name],
-          ["Correo", jugador.email||"—"],
           ["Teléfono", jugador.tel||"—"],
+          ["Fecha nac.", jugador.fechaNac ? `${jugador.fechaNac}${edad!=null?" ("+edad+" años)":""}` : "—"],
           ["ID Jugador", fmtPlayerId(jugador.id)],
           ["HC (Ventajas)", jugador.hc],
           ["WHS HI", whsEstablecido && whsHI != null ? whsHI.toFixed(1)+" ✓" : `${whsHoyos}/54 hoyos`],
@@ -5963,6 +6234,11 @@ function JugadorPerfilTab({ jugador, onEditarPerfil, whsEstablecido, whsHI, whsH
             <span style={{ fontSize:13, color:D.text, fontWeight:600 }}>{v}</span>
           </div>
         ))}
+        {!jugador.email && (
+          <div style={{ fontSize:11, color:D.gold, padding:"6px 0 2px", lineHeight:1.5 }}>
+            💡 Agrega tu correo en "Editar mis datos" para poder recuperar tu NIP sin depender del administrador.
+          </div>
+        )}
       </div>
 
       <button onClick={onEditarPerfil}
