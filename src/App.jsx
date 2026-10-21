@@ -4182,12 +4182,31 @@ function JugadorLoginScreen({ appStyle, onExit, onSuccess }) {
             </div>
           )}
 
-          {/* Cambiar jugador */}
+          {/* Cambiar jugador / Olvidé mi NIP */}
           {selectedId && (
-            <button onClick={() => { setSelectedId(null); setBusqueda(""); setNipInput(""); setError(null); inputRef.current?.focus(); }}
-              style={{ fontSize:12, color:D.textSub, background:"none", border:"none", cursor:"pointer", textAlign:"center" }}>
-              ¿No eres {selected?.name}? Cambiar jugador
-            </button>
+            <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:6 }}>
+              <button onClick={() => { setSelectedId(null); setBusqueda(""); setNipInput(""); setError(null); inputRef.current?.focus(); }}
+                style={{ fontSize:12, color:D.textSub, background:"none", border:"none", cursor:"pointer", textAlign:"center" }}>
+                ¿No eres {selected?.name}? Cambiar jugador
+              </button>
+              <button onClick={() => setError("__forgot__")}
+                style={{ fontSize:12, color:D.gold, background:"none", border:"none", cursor:"pointer", textAlign:"center", opacity:0.8 }}>
+                ¿Olvidaste tu NIP?
+              </button>
+            </div>
+          )}
+          {error === "__forgot__" && (
+            <div style={{ background:`${D.gold}11`, border:`1px solid ${D.gold}44`, borderRadius:12, padding:"14px 16px", fontSize:13, color:D.textSub, lineHeight:1.6 }}>
+              <div style={{ fontWeight:700, color:D.gold, marginBottom:6 }}>🔑 ¿Olvidaste tu NIP?</div>
+              Pide al <strong style={{ color:D.text }}>administrador</strong> que restablezca tu NIP temporalmente desde el Directorio de jugadores.<br/>
+              El administrador puede asignarte un NIP temporal (por ejemplo <strong>0000</strong>) para que puedas entrar y cambiarlo desde tu perfil.
+              <div style={{ marginTop:10, textAlign:"right" }}>
+                <button onClick={() => setError(null)}
+                  style={{ fontSize:12, color:D.gold, background:"none", border:"none", cursor:"pointer" }}>
+                  Cerrar ✕
+                </button>
+              </div>
+            </div>
           )}
 
         </>)}
@@ -5886,6 +5905,120 @@ function EstadisticasJugadorPanel({ jugador, todasRondas, loading }) {
   );
 }
 
+// ─── JUGADOR PERFIL TAB (con cambio de NIP) ───────────────────────────────────
+function JugadorPerfilTab({ jugador, onEditarPerfil, whsEstablecido, whsHI, whsHoyos, onJugadorActualizado }) {
+  const [showCambiarNip, setShowCambiarNip] = React.useState(false);
+  const [nipActual, setNipActual]   = React.useState("");
+  const [nipNuevo, setNipNuevo]     = React.useState("");
+  const [nipConfirm, setNipConfirm] = React.useState("");
+  const [nipMsg, setNipMsg]         = React.useState(null); // {ok, texto}
+  const [nipLoading, setNipLoading] = React.useState(false);
+
+  const handleCambiarNip = async () => {
+    setNipMsg(null);
+    if (nipNuevo.length < 4) { setNipMsg({ ok:false, texto:"El nuevo NIP debe tener al menos 4 dígitos." }); return; }
+    if (nipNuevo !== nipConfirm) { setNipMsg({ ok:false, texto:"Los NIPs nuevos no coinciden." }); return; }
+    setNipLoading(true);
+    try {
+      // Verificar NIP actual
+      const hashActual = await hashNIP(nipActual, CLUB_H19_ID, jugador.id);
+      if (hashActual !== jugador.nipHash) {
+        setNipMsg({ ok:false, texto:"NIP actual incorrecto." });
+        setNipLoading(false); return;
+      }
+      // Guardar nuevo NIP
+      const hashNuevo = await hashNIP(nipNuevo, CLUB_H19_ID, jugador.id);
+      const dirSnap = await get(clubRef("directorio"));
+      if (dirSnap.exists()) {
+        const dir = dirSnap.val();
+        const players = dir.players || [];
+        const idx = players.findIndex(p => p.id === jugador.id);
+        if (idx >= 0) {
+          players[idx] = { ...players[idx], nipHash: hashNuevo };
+          await set(clubRef("directorio"), { ...dir, players });
+          await set(ref(db, "directorio"), { ...dir, players }).catch(()=>{});
+          if (onJugadorActualizado) onJugadorActualizado({ ...jugador, nipHash: hashNuevo });
+        }
+      }
+      setNipMsg({ ok:true, texto:"✅ NIP actualizado correctamente." });
+      setNipActual(""); setNipNuevo(""); setNipConfirm("");
+      setTimeout(() => { setShowCambiarNip(false); setNipMsg(null); }, 2000);
+    } catch(e) { setNipMsg({ ok:false, texto:"Error al actualizar NIP." }); }
+    setNipLoading(false);
+  };
+
+  return (
+    <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+      <div style={{ background:D.surface, border:`1px solid ${D.border}`, borderRadius:12, padding:"16px", display:"flex", flexDirection:"column", gap:10 }}>
+        {[
+          ["Nombre", jugador.name],
+          ["Correo", jugador.email||"—"],
+          ["Teléfono", jugador.tel||"—"],
+          ["ID Jugador", fmtPlayerId(jugador.id)],
+          ["HC (Ventajas)", jugador.hc],
+          ["WHS HI", whsEstablecido && whsHI != null ? whsHI.toFixed(1)+" ✓" : `${whsHoyos}/54 hoyos`],
+        ].map(([k,v]) => (
+          <div key={k} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", paddingBottom:8, borderBottom:`1px solid ${D.border}44` }}>
+            <span style={{ fontSize:13, color:D.textSub }}>{k}</span>
+            <span style={{ fontSize:13, color:D.text, fontWeight:600 }}>{v}</span>
+          </div>
+        ))}
+      </div>
+
+      <button onClick={onEditarPerfil}
+        style={{ padding:"12px", border:`1px solid ${D.gold}55`, borderRadius:12, background:`${D.gold}11`, color:D.gold, fontSize:14, fontWeight:600, cursor:"pointer" }}>
+        ✏️ Editar mis datos
+      </button>
+
+      {/* Cambiar NIP */}
+      <button onClick={() => { setShowCambiarNip(!showCambiarNip); setNipMsg(null); setNipActual(""); setNipNuevo(""); setNipConfirm(""); }}
+        style={{ padding:"12px", border:`1px solid ${D.border}`, borderRadius:12, background:"transparent", color:D.textSub, fontSize:14, fontWeight:600, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}>
+        🔑 {showCambiarNip ? "Cancelar cambio de NIP" : "Cambiar NIP"}
+      </button>
+
+      {showCambiarNip && (
+        <div style={{ background:D.surface, border:`1px solid ${D.border}`, borderRadius:12, padding:"16px", display:"flex", flexDirection:"column", gap:12 }}>
+          <div style={{ fontSize:12, color:D.textSub, fontWeight:700, textTransform:"uppercase", letterSpacing:1 }}>Cambiar contraseña (NIP)</div>
+
+          {[
+            ["NIP actual", nipActual, setNipActual, "nip-actual"],
+            ["NIP nuevo (mín. 4 dígitos)", nipNuevo, setNipNuevo, "nip-nuevo"],
+            ["Confirmar NIP nuevo", nipConfirm, setNipConfirm, "nip-confirm"],
+          ].map(([label, val, setter, id]) => (
+            <div key={id}>
+              <div style={{ fontSize:11, color:D.textSub, marginBottom:4 }}>{label}</div>
+              <input
+                id={id} type="password" inputMode="numeric" maxLength={6}
+                value={val}
+                onChange={e => { setter(e.target.value.replace(/\D/g,"")); setNipMsg(null); }}
+                placeholder="••••"
+                style={{ width:"100%", padding:"12px 14px", fontSize:24, textAlign:"center", letterSpacing:8, fontWeight:900, border:`1px solid ${D.border}`, borderRadius:10, background:`${D.bg}`, color:D.text, boxSizing:"border-box", outline:"none" }}
+              />
+            </div>
+          ))}
+
+          {nipMsg && (
+            <div style={{ fontSize:13, color: nipMsg.ok ? D.success||"#4CAF50" : D.danger, fontWeight:600, textAlign:"center" }}>
+              {nipMsg.texto}
+            </div>
+          )}
+
+          <button
+            onClick={handleCambiarNip}
+            disabled={nipLoading || !nipActual || nipNuevo.length < 4 || nipNuevo !== nipConfirm}
+            style={{
+              padding:"13px", border:"none", borderRadius:12, fontSize:14, fontWeight:700, cursor:"pointer",
+              background: (!nipActual || nipNuevo.length < 4 || nipNuevo !== nipConfirm) ? D.surface : `linear-gradient(135deg,${D.gold},#B8860B)`,
+              color: (!nipActual || nipNuevo.length < 4 || nipNuevo !== nipConfirm) ? D.textSub : "#000",
+            }}>
+            {nipLoading ? "Guardando…" : "Guardar nuevo NIP"}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── JUGADOR HOME SCREEN ──────────────────────────────────────────────────────
 function JugadorHomeScreen({ jugador: jugadorInicial, appStyle, onExit, onCrearTorneo, onIniciarRonda, onSalidaGrupal, onEntrarCodigo, onVerTorneo, onVerCodigos }) {
   const [jugador, setJugador]   = React.useState(jugadorInicial);
@@ -6146,27 +6279,7 @@ function JugadorHomeScreen({ jugador: jugadorInicial, appStyle, onExit, onCrearT
               onSaved={(jActualizado) => { setJugador(jActualizado); setEditandoPerfil(false); }}
               onCancel={() => setEditandoPerfil(false)} />
           ) : (
-            <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
-              <div style={{ background:D.surface, border:`1px solid ${D.border}`, borderRadius:12, padding:"16px", display:"flex", flexDirection:"column", gap:10 }}>
-                {[
-                  ["Nombre",jugador.name],
-                  ["Correo",jugador.email||"—"],
-                  ["Teléfono",jugador.tel||"—"],
-                  ["ID Jugador", fmtPlayerId(jugador.id)],
-                  ["HC (Ventajas)",jugador.hc],
-                  ["WHS HI", whsEstablecido && whsHI != null ? whsHI.toFixed(1)+" ✓" : `${whsHoyos}/54 hoyos`],
-                ].map(([k,v]) => (
-                  <div key={k} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", paddingBottom:8, borderBottom:`1px solid ${D.border}44` }}>
-                    <span style={{ fontSize:13, color:D.textSub }}>{k}</span>
-                    <span style={{ fontSize:13, color:D.text, fontWeight:600 }}>{v}</span>
-                  </div>
-                ))}
-              </div>
-              <button onClick={() => setEditandoPerfil(true)}
-                style={{ padding:"12px", border:`1px solid ${D.gold}55`, borderRadius:12, background:`${D.gold}11`, color:D.gold, fontSize:14, fontWeight:600, cursor:"pointer" }}>
-                ✏️ Editar mis datos
-              </button>
-            </div>
+            <JugadorPerfilTab jugador={jugador} onEditarPerfil={() => setEditandoPerfil(true)} whsEstablecido={whsEstablecido} whsHI={whsHI} whsHoyos={whsHoyos} onJugadorActualizado={j => setJugador(j)} />
           )
         )}
 
