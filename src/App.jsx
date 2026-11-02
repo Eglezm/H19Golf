@@ -172,10 +172,10 @@ const TARJETAS = [
   { key: "ob",        label: "🚫 Out of Bound", auto: false },
   { key: "water",     label: "💧 Water",         auto: false },
   { key: "sand",      label: "⛱️ Sand",          auto: false },
-  { key: "sapo",      label: "🐸 Sapo",          auto: false },
+  { key: "sapo",      label: "🌊 Aquaman",        auto: false }, // 2+ waters consecutivos mismo hoyo → paga al grupo
   { key: "arbol",     label: "🌳 Árbol",         auto: false },
   { key: "threeput",  label: "🐍 Culebra",       auto: false }, // antes "Three putt"
-  { key: "anaconda",  label: "🦎 Anaconda",      auto: false }, // 4+ putts en un hoyo → paga a todo el torneo
+  { key: "anaconda",  label: "🐊 Anaconda",      auto: false }, // 4+ putts en un hoyo → paga a todo el torneo
   { key: "doblepar",  label: "🔻 MP del Hoyo",   auto: true  },
   { key: "peorscore", label: "🪣 MP General",     auto: true  },
 ];
@@ -207,7 +207,7 @@ const emptyMarca = (n) => ({
   multi: Array(n).fill(null).map(() => ({ holeinone:false, eagle:false, birdie:false, holeout:false, sandy:false })),
   oyes: null, regulation: null,
 });
-const emptyTarjetas = () => { const t = {}; TARJETAS.forEach(tj => { t[tj.key] = null; }); t["threeput_hole"] = null; t["anaconda_hole"] = null; t["doblepar_hole"] = null; return t; };
+const emptyTarjetas = () => { const t = {}; TARJETAS.forEach(tj => { t[tj.key] = null; }); t["threeput_hole"] = null; t["anaconda_hole"] = null; t["doblepar_hole"] = null; t["water_counts"] = {}; return t; };
 
 // Firebase convierte arrays a objetos — normalizar al leer
 // Helper: Firebase puede devolver arrays como objetos {0:x,1:y} — siempre convertir
@@ -228,6 +228,10 @@ const normalizeTarjetas = (t) => {
   // anaconda puede ser array (empate) serializado como objeto desde Firebase
   if (result.anaconda !== null && result.anaconda !== undefined && !Array.isArray(result.anaconda) && typeof result.anaconda === 'object') {
     result.anaconda = Object.values(result.anaconda);
+  }
+  // water_counts: asegurar que sea objeto plano { "hoyo": { "pi": count } }
+  if (!result.water_counts || typeof result.water_counts !== 'object' || Array.isArray(result.water_counts)) {
+    result.water_counts = {};
   }
   return result;
 };
@@ -2325,7 +2329,7 @@ function TorneoSpectator({ torneoId, appStyle, isAdmin = false, canClose = false
           const totalConTarjetas = allPlayers.filter(p => p.opts?.tarjetas !== false).length;
           return (
             <Card style={{ border:`1px solid #8A3A0A44` }}>
-              <SLabel>🦎 Anaconda global {anacondaPagadores.length > 1 ? `(empate — ${anacondaPagadores.length} jugadores)` : ""}</SLabel>
+              <SLabel>🐊 Anaconda global {anacondaPagadores.length > 1 ? `(empate — ${anacondaPagadores.length} jugadores)` : ""}</SLabel>
               {anacondaPagadores.map((p, i) => (
                 <div key={`${p.grupoId}-${p.id}`} style={{ display:"flex", alignItems:"center", gap:10, padding:"8px 0", borderBottom:i<anacondaPagadores.length-1?`1px solid ${D.border}`:"none" }}>
                   <Avatar name={String(p.name||'?')} id={p.id||0} size={32} />
@@ -8426,6 +8430,50 @@ function AdminApp({ onExit, torneoConfig = null }) {
     setTarjetas(newTarjetas); updateGame({ ...getState(), tarjetas:newTarjetas, marcas:newMarcas });
   };
 
+  // Registrar agua en el hoyo actual para un jugador (para WATER y detección automática de AQUAMAN)
+  const registrarAgua = (pi) => {
+    const wc = tarjetas.water_counts && typeof tarjetas.water_counts === 'object' ? { ...tarjetas.water_counts } : {};
+    const hKey = String(hole);
+    const hoyoCounts = wc[hKey] ? { ...wc[hKey] } : {};
+    const prev = hoyoCounts[pi] || 0;
+    const next = prev + 1;
+    hoyoCounts[pi] = next;
+    wc[hKey] = hoyoCounts;
+    // WATER: siempre al último en caer al agua (este jugador en este momento)
+    const newTarjetas = { ...tarjetas, water: pi, water_counts: wc };
+    // AQUAMAN automático: 2+ aguas en el mismo hoyo
+    if (next >= 2) { newTarjetas["sapo"] = pi; }
+    setTarjetas(newTarjetas); updateGame({ ...getState(), tarjetas:newTarjetas });
+  };
+
+  const quitarAgua = (pi) => {
+    const wc = tarjetas.water_counts && typeof tarjetas.water_counts === 'object' ? { ...tarjetas.water_counts } : {};
+    const hKey = String(hole);
+    const hoyoCounts = wc[hKey] ? { ...wc[hKey] } : {};
+    const prev = hoyoCounts[pi] || 0;
+    if (prev > 0) { hoyoCounts[pi] = prev - 1; } else { hoyoCounts[pi] = 0; }
+    wc[hKey] = hoyoCounts;
+    // Recalcular dueño de WATER: el que cayó al agua más recientemente (buscamos en todos los hoyos)
+    // Si el jugador actual tiene water y su contador en este hoyo baja a 0, buscar otro candidato
+    let newWater = tarjetas.water;
+    if (tarjetas.water === pi) {
+      // Buscar el último hoyo donde alguien tiene agua (excluyendo pi si su count bajó a 0 en este hoyo)
+      let lastHole = -1; let lastPi = null;
+      Object.entries(wc).forEach(([h, counts]) => {
+        const hNum = parseInt(h);
+        Object.entries(counts).forEach(([p, c]) => {
+          const pNum = parseInt(p);
+          if (c > 0 && hNum >= lastHole) { lastHole = hNum; lastPi = pNum; }
+        });
+      });
+      newWater = lastPi;
+    }
+    const newTarjetas = { ...tarjetas, water: newWater, water_counts: wc };
+    // Si el count de AQUAMAN baja a <2, quitar AQUAMAN de este jugador (solo si lo tenía por este hoyo)
+    if ((hoyoCounts[pi] || 0) < 2 && tarjetas["sapo"] === pi) { newTarjetas["sapo"] = null; }
+    setTarjetas(newTarjetas); updateGame({ ...getState(), tarjetas:newTarjetas });
+  };
+
   const nextHole = () => {
     const sc = commitHole(scores, hole); setScores(sc);
     // Con hoyo de salida: el último hoyo es (hoyoSalida-1 + nHoles-1) % totalHoyos
@@ -8620,12 +8668,13 @@ function AdminApp({ onExit, torneoConfig = null }) {
   };
 
   const shareRonda = () => {
-    const url = torneoConfig
+    const esTorneo = torneoConfig && torneoConfig.torneoId;
+    const url = esTorneo
       ? `${window.location.origin}${window.location.pathname}?torneo=${torneoConfig.torneoId}`
       : `${window.location.origin}${window.location.pathname}?ronda=${rondaId}`;
-    const label = torneoConfig ? "¡Link del torneo copiado!" : "¡Link copiado!";
+    const label = esTorneo ? "¡Link del torneo copiado!" : "¡Link copiado!";
     if (navigator.clipboard) { navigator.clipboard.writeText(url); setShareMsg(label); setTimeout(()=>setShareMsg(""),2500); }
-    else { setShareMsg(torneoConfig ? `Código torneo: ${torneoConfig.torneoId}` : `Código: ${rondaId}`); setTimeout(()=>setShareMsg(""),4000); }
+    else { setShareMsg(esTorneo ? `Código torneo: ${torneoConfig.torneoId}` : `Código: ${rondaId}`); setTimeout(()=>setShareMsg(""),4000); }
   };
 
   const getDisplay = (pi, h) => scores[pi]?.[h]===null ? pars[h] : scores[pi]?.[h];
@@ -9700,6 +9749,56 @@ function AdminApp({ onExit, torneoConfig = null }) {
                   ) : (
                     <div>
                       {tj.key === "anaconda" && <div style={{ fontSize:11, color:"#8A3A0A", fontStyle:"italic", marginBottom:6 }}>🌐 Paga castigo a TODOS los participantes del torneo · 4+ putts en el hoyo</div>}
+                      {tj.key === "sapo" && <div style={{ fontSize:11, color:"#0A4A8A", fontStyle:"italic", marginBottom:6 }}>⚡ Se asigna automáticamente cuando un jugador cae 2 o más veces al agua en el mismo hoyo · Paga a todos en el grupo</div>}
+                      {tj.key === "water" ? (
+                        <div>
+                          <div style={{ fontSize:11, color:D.textSub, fontStyle:"italic", marginBottom:8 }}>
+                            Toca <strong>+💧</strong> cada vez que un jugador cae al agua. El último en caer se queda con la tarjeta. Si cae 2 veces en el mismo hoyo → 🌊 AQUAMAN automático.
+                          </div>
+                          <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
+                            {players.filter(pl=>pl.opts?.tarjetas!==false).map((pl) => {
+                              const pi = players.indexOf(pl);
+                              const wc = tarjetas.water_counts && typeof tarjetas.water_counts === 'object' ? tarjetas.water_counts : {};
+                              const hoyoCount = (wc[String(hole)] && wc[String(hole)][pi]) || 0;
+                              const tieneWater = tarjetas.water === pi;
+                              const tieneAquaman = tarjetas["sapo"] === pi;
+                              return (
+                                <div key={pl.id} style={{ display:"flex", alignItems:"center", gap:8, padding:"6px 10px", border:`1px solid ${tieneWater?D.danger:D.border}`, borderRadius:12, background:tieneWater?D.redBg:"transparent" }}>
+                                  <Avatar name={pl.name} id={pl.id} size={22} />
+                                  <div style={{ flex:1, fontSize:12, fontWeight:600, color:tieneWater?D.danger:D.text }}>
+                                    {pl.name}
+                                    {tieneWater && <span style={{ marginLeft:6 }}>💧</span>}
+                                    {tieneAquaman && <span style={{ marginLeft:4 }}>🌊</span>}
+                                    {hoyoCount > 0 && <span style={{ marginLeft:6, fontSize:10, background:D.redBg, color:D.danger, padding:"1px 6px", borderRadius:8, fontWeight:700 }}>{hoyoCount}💧 hoyo {hole+1}</span>}
+                                  </div>
+                                  <button onClick={() => registrarAgua(pi)} style={{ padding:"5px 10px", border:`1px solid ${D.danger}`, borderRadius:8, background:D.redBg, color:D.danger, fontSize:13, fontWeight:700, cursor:"pointer" }}>+💧</button>
+                                  {hoyoCount > 0 && <button onClick={() => quitarAgua(pi)} style={{ padding:"5px 8px", border:`1px solid ${D.border}`, borderRadius:8, background:"transparent", color:D.textSub, fontSize:11, cursor:"pointer" }}>−</button>}
+                                </div>
+                              );
+                            })}
+                          </div>
+                          {owner !== null && (
+                            <div style={{ marginTop:8, fontSize:11, color:D.textSub }}>
+                              Para quitar WATER manualmente: <span onClick={() => { const nt={...tarjetas,water:null}; setTarjetas(nt); updateGame({...getState(),tarjetas:nt}); }} style={{ color:D.danger, cursor:"pointer", fontWeight:700 }}>✕ Quitar WATER</span>
+                            </div>
+                          )}
+                        </div>
+                      ) : tj.key === "sapo" ? (
+                        <div>
+                          {owner !== null ? (
+                            <div style={{ display:"flex", alignItems:"center", gap:8, padding:"8px 12px", background:D.redBg, border:`1px solid ${D.danger}`, borderRadius:10 }}>
+                              <span style={{ fontSize:18 }}>🌊</span>
+                              <div style={{ flex:1 }}>
+                                <div style={{ fontSize:13, fontWeight:700, color:D.danger }}>{players[owner]?.name}</div>
+                                <div style={{ fontSize:11, color:D.textSub }}>Cayó 2+ veces al agua en el mismo hoyo</div>
+                              </div>
+                              <button onClick={() => { const nt={...tarjetas,sapo:null}; setTarjetas(nt); updateGame({...getState(),tarjetas:nt}); }} style={{ padding:"4px 8px", border:`1px solid ${D.border}`, borderRadius:6, background:"transparent", color:D.textSub, fontSize:11, cursor:"pointer" }}>✕</button>
+                            </div>
+                          ) : (
+                            <div style={{ fontSize:11, color:D.textDim, fontStyle:"italic" }}>Sin dueño · Se asigna automáticamente al registrar 2+ aguas en el mismo hoyo</div>
+                          )}
+                        </div>
+                      ) : (
                       <div style={{ display:"flex", flexWrap:"wrap", gap:8 }}>
                         {players.filter(pl=>pl.opts?.tarjetas!==false).map((pl) => { const pi = players.indexOf(pl); return (
                           <div key={pl.id} onClick={() => assignTarjeta(tj.key,pi)} style={{ display:"flex", alignItems:"center", gap:6, padding:"6px 12px", border:`1px solid ${owner===pi?D.danger:D.border}`, borderRadius:20, background:owner===pi?D.redBg:"transparent", color:owner===pi?D.danger:D.textSub, fontSize:12, fontWeight:600, cursor:"pointer", userSelect:"none" }}>
@@ -9708,6 +9807,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
                         ); })}
                         {owner!==null && <Pill danger onClick={() => assignTarjeta(tj.key,null)}>✕ Quitar</Pill>}
                       </div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -9909,10 +10009,10 @@ function AdminApp({ onExit, torneoConfig = null }) {
               <div style={{ fontSize:11, color:"#fff", opacity:0.8 }}>Torneo · {torneoConfig.nombre}</div>
               <div style={{ fontSize:13, fontWeight:700, color:"#fff" }}>Grupo finalizado: {grupoNombre || torneoConfig.grupoNombre}</div>
             </div>
-            <button onClick={() => window.open(`${window.location.origin}${window.location.pathname}?torneo=${torneoConfig.torneoId}`, "_blank")}
+            {torneoConfig.torneoId && <button onClick={() => window.open(`${window.location.origin}${window.location.pathname}?torneo=${torneoConfig.torneoId}`, "_blank")}
               style={{ padding:"8px 12px", border:"1px solid #fff", borderRadius:10, background:"transparent", color:"#fff", fontSize:12, fontWeight:700, cursor:"pointer" }}>
               🏆 Ver torneo global
-            </button>
+            </button>}
           </div>
         )}
         <div style={{ background:`linear-gradient(135deg,#FDF8EE,#F5EDD0)`, borderBottom:`1px solid ${D.gold}44`, padding:"28px 16px", textAlign:"center", marginBottom:16 }}>
@@ -10322,10 +10422,10 @@ function AdminApp({ onExit, torneoConfig = null }) {
           )}
           {torneoConfig ? (
             <div style={{ display:"flex", flexDirection:"column", gap:8, marginTop:8 }}>
-              <button onClick={() => window.open(`${window.location.origin}${window.location.pathname}?torneo=${torneoConfig.torneoId}`, "_blank")}
+              {torneoConfig.torneoId && <button onClick={() => window.open(`${window.location.origin}${window.location.pathname}?torneo=${torneoConfig.torneoId}`, "_blank")}
                 style={{ width:"100%", padding:"12px", border:"none", borderRadius:12, background:`linear-gradient(135deg,#1A5C24,#2E7D32)`, color:"#fff", fontSize:14, fontWeight:700, cursor:"pointer" }}>
                 🏆 Ver torneo global
-              </button>
+              </button>}
               <button onClick={() => onExit()}
                 style={{ width:"100%", padding:"10px", border:`1px solid ${D.border}`, borderRadius:12, background:"transparent", color:D.textSub, fontSize:13, cursor:"pointer" }}>
                 Salir al inicio
