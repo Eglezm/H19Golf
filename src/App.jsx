@@ -7632,6 +7632,7 @@ function EstadisticasScreen({ onExit, appStyle }) {
   const [nRondas, setNRondas] = useState(10);
   const [campoFiltro, setCampoFiltro] = useState("todos");
   const [whsHI, setWhsHI] = useState(null);
+  const [rondaExpandida, setRondaExpandida] = useState(null); // índice de la ronda expandida en historial
   // ── Marcas por Grupo ──
   const [tabEst, setTabEst] = useState("jugador"); // "jugador" | "grupo"
   const [grupos, setGrupos] = useState([]);
@@ -7674,12 +7675,27 @@ function EstadisticasScreen({ onExit, appStyle }) {
       const bruto = r.jugadores?.[pi]?.bruto ?? (r.scoresPorHoyo?.[pi]?.reduce((a,b)=>a+b,0)||null);
       const hc = r.jugadores?.[pi]?.hc ?? 0;
       const neto = bruto !== null ? bruto - hc : null;
+      // Recopilar marcas de este jugador por hoyo
+      const marcasArr = Array.isArray(r.marcas) ? r.marcas : Object.values(r.marcas||{});
+      const marcasJugador = {}; // hoyo index → {holeinone,eagle,birdie,oyes,regulation,holeout,sandy}
+      marcasArr.forEach((h, hi) => {
+        if (!h) return;
+        const multi = Array.isArray(h.multi) ? h.multi : Object.values(h.multi||{});
+        const hData = {};
+        MARCAS_MULTI.forEach(mk => { if (multi[pi]?.[mk.key]) hData[mk.key] = true; });
+        if (h.oyes === pi) hData["oyes"] = true;
+        if (h.regulation === pi) hData["regulation"] = true;
+        if (Object.keys(hData).length > 0) marcasJugador[hi] = hData;
+      });
       jugadoresIdx[name].push({
         fecha: r.fecha, fechaTs: r.fechaTs||0,
         campo: r.campo, nHoles: r.nHoles||18,
         bruto, hc, neto, pid,
         pars: r.pars,
         scores: r.scoresPorHoyo?.[pi],
+        marcasJugador,
+        playerOptsArr: r.playerOptsArr,
+        piIdx: pi,
       });
     });
   });
@@ -7706,8 +7722,23 @@ function EstadisticasScreen({ onExit, appStyle }) {
     }).sort((a,b)=>a-b);
     const nBest = Math.max(1, Math.floor(diffs.length * 0.4)); // 40% mejores
     const hcSugerido = diffs.length > 0 ? Math.round(diffs.slice(0,nBest).reduce((a,b)=>a+b,0)/nBest) : null;
+    // Marcas del jugador (en las rondas filtradas)
+    const marcaConteos = {};
+    MARCAS_MULTI.forEach(mk => { marcaConteos[mk.key] = 0; });
+    marcaConteos["oyes"] = 0; marcaConteos["regulation"] = 0;
+    let marcaPtsTotales = 0;
+    rds.forEach(r => {
+      const opts = r.playerOptsArr?.[r.piIdx];
+      if (opts?.marcas === false) return;
+      Object.values(r.marcasJugador||{}).forEach(hData => {
+        [...MARCAS_MULTI, {key:"oyes",pts:1},{key:"regulation",pts:1}].forEach(mk => {
+          if (hData[mk.key]) { marcaConteos[mk.key]++; marcaPtsTotales += mk.pts; }
+        });
+      });
+    });
+    const avgMarcaPts = rds.length > 0 ? Math.round(marcaPtsTotales / rds.length * 10) / 10 : 0;
     // Evolucion HC
-    const evolucion = rds.map(r => ({ fecha:r.fecha, hc:r.hc, bruto:r.bruto })).reverse();
+    const evolucion = rds.map(r => ({ fecha:r.fecha, hc:r.hc, bruto:r.bruto, scores:r.scores, pars:r.pars, nHoles:r.nHoles, campo:r.campo, marcasJugador:r.marcasJugador||{} })).reverse();
     // Por campo
     const porCampo = {};
     (jugadoresIdx[nombre]||[]).forEach(r => {
@@ -7715,7 +7746,7 @@ function EstadisticasScreen({ onExit, appStyle }) {
       if (!porCampo[r.campo]) porCampo[r.campo] = [];
       if (r.bruto !== null) porCampo[r.campo].push(r.bruto);
     });
-    return { promBruto, promNeto, mejorBruto, peorBruto, hcSugerido, evolucion, porCampo, nRondas:conBruto.length, hcActual: rds[0]?.hc };
+    return { promBruto, promNeto, mejorBruto, peorBruto, hcSugerido, evolucion, porCampo, nRondas:conBruto.length, hcActual: rds[0]?.hc, marcaConteos, marcaPtsTotales, avgMarcaPts };
   };
 
   const stats = jugadorSel ? calcStats(jugadorSel) : null;
@@ -7990,6 +8021,31 @@ function EstadisticasScreen({ onExit, appStyle }) {
                       )}
                     </Card>
 
+                    {/* Marcas del jugador */}
+                    {stats.marcaPtsTotales > 0 && (
+                      <Card>
+                        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
+                          <SLabel style={{ margin:0 }}>⭐ Marcas ({nRondas} rondas)</SLabel>
+                          <div style={{ textAlign:"right" }}>
+                            <span style={{ fontSize:20, fontWeight:900, color:D.gold }}>{stats.marcaPtsTotales}</span>
+                            <span style={{ fontSize:11, color:D.textSub }}> pts · <span style={{ color:D.gold, fontWeight:700 }}>{stats.avgMarcaPts}</span> avg</span>
+                          </div>
+                        </div>
+                        <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
+                          {[...MARCAS_MULTI, {key:"oyes",label:"⛳ O'Yes",pts:1},{key:"regulation",label:"✅ Regulation",pts:1}]
+                            .filter(mk => stats.marcaConteos[mk.key] > 0)
+                            .map(mk => (
+                              <div key={mk.key} style={{ padding:"5px 10px", background:D.surface, border:`1px solid ${D.border}`, borderRadius:10, fontSize:11 }}>
+                                <span style={{ color:D.textSub }}>{mk.label}</span>
+                                <span style={{ fontWeight:800, color:D.gold, marginLeft:4 }}>×{stats.marcaConteos[mk.key]}</span>
+                                <span style={{ color:D.textDim, fontSize:10, marginLeft:3 }}>({stats.marcaConteos[mk.key] * mk.pts}pt{stats.marcaConteos[mk.key] * mk.pts !== 1?"s":""})</span>
+                              </div>
+                            ))
+                          }
+                        </div>
+                      </Card>
+                    )}
+
                     {/* Promedio por campo */}
                     {Object.keys(stats.porCampo).length > 0 && (
                       <Card>
@@ -8074,21 +8130,135 @@ function EstadisticasScreen({ onExit, appStyle }) {
                       );
                     })()}
 
-                    {/* Historial de rondas */}
+                    {/* Historial de rondas — interactivo */}
                     <Card>
                       <SLabel>📋 Últimas rondas</SLabel>
-                      {stats.evolucion.slice().reverse().map((r, i) => (
-                        <div key={i} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"8px 0", borderBottom:"1px solid "+D.border }}>
-                          <div>
-                            <div style={{ fontSize:12, fontWeight:600 }}>{r.fecha||"Sin fecha"}</div>
-                            <div style={{ fontSize:10, color:D.textSub }}>{"HC "+r.hc}</div>
+                      {stats.evolucion.slice().reverse().map((r, i) => {
+                        const expanded = rondaExpandida === i;
+                        const scores = r.scores || [];
+                        const pars = r.pars || [];
+                        const nH = r.nHoles || scores.length || 9;
+                        const hoyos = Array.from({length: nH}, (_,h) => h);
+                        // Calcular totales mitades
+                        const front = scores.slice(0,9).reduce((a,b)=>a+(b||0),0);
+                        const back = nH > 9 ? scores.slice(9).reduce((a,b)=>a+(b||0),0) : null;
+                        const parFront = pars.slice(0,9).reduce((a,b)=>a+(b||0),0);
+                        const parBack = nH > 9 ? pars.slice(9).reduce((a,b)=>a+(b||0),0) : null;
+                        const hasMarcas = Object.keys(r.marcasJugador||{}).length > 0;
+                        return (
+                          <div key={i} style={{ borderBottom:`1px solid ${D.border}`, marginBottom:0 }}>
+                            {/* Fila principal — toca para expandir */}
+                            <div onClick={() => setRondaExpandida(expanded ? null : i)}
+                              style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"10px 4px", cursor:"pointer" }}>
+                              <div>
+                                <div style={{ fontSize:12, fontWeight:700, color:D.text }}>{r.fecha||"Sin fecha"}{r.campo ? ` · ${CAMPOS[r.campo]?.nombre||r.campo}` : ""}</div>
+                                <div style={{ display:"flex", gap:8, marginTop:2 }}>
+                                  <span style={{ fontSize:10, color:D.textSub }}>HC {r.hc}</span>
+                                  {hasMarcas && <span style={{ fontSize:10, color:D.gold }}>⭐ marcas</span>}
+                                </div>
+                              </div>
+                              <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+                                <div style={{ textAlign:"right" }}>
+                                  <div style={{ fontSize:17, fontWeight:900, color:D.text }}>{r.bruto ?? "--"}</div>
+                                  <div style={{ fontSize:10, color:D.textSub }}>tiros</div>
+                                </div>
+                                <div style={{ fontSize:14, color:D.textSub, transition:"transform 0.2s", transform:expanded?"rotate(90deg)":"rotate(0deg)" }}>▶</div>
+                              </div>
+                            </div>
+                            {/* Scorecard desplegable */}
+                            {expanded && (
+                              <div style={{ paddingBottom:12, paddingTop:4 }}>
+                                {scores.length > 0 ? (
+                                  <div style={{ overflowX:"auto" }}>
+                                    <table style={{ borderCollapse:"collapse", fontSize:11, width:"100%", minWidth: nH > 9 ? 480 : 260 }}>
+                                      <thead>
+                                        <tr>
+                                          <td style={{ padding:"4px 6px", color:D.textSub, fontWeight:700, background:D.surface, borderRadius:"6px 0 0 0" }}>Hoyo</td>
+                                          {hoyos.slice(0,Math.min(9,nH)).map(h => (
+                                            <td key={h} style={{ padding:"4px 5px", textAlign:"center", color:D.textSub, background:D.surface, fontWeight:600 }}>{h+1}</td>
+                                          ))}
+                                          {nH > 9 && <td style={{ padding:"4px 5px", textAlign:"center", color:D.gold, background:D.surface, fontWeight:800 }}>OUT</td>}
+                                          {nH > 9 && hoyos.slice(9).map(h => (
+                                            <td key={h} style={{ padding:"4px 5px", textAlign:"center", color:D.textSub, background:D.surface, fontWeight:600 }}>{h+1}</td>
+                                          ))}
+                                          {nH > 9 && <td style={{ padding:"4px 5px", textAlign:"center", color:D.gold, background:D.surface, fontWeight:800 }}>IN</td>}
+                                          <td style={{ padding:"4px 5px", textAlign:"center", color:D.gold, background:D.surface, fontWeight:800, borderRadius:"0 6px 0 0" }}>TOT</td>
+                                        </tr>
+                                      </thead>
+                                      <tbody>
+                                        {/* Pars */}
+                                        {pars.length > 0 && (
+                                          <tr>
+                                            <td style={{ padding:"4px 6px", color:D.textSub, fontSize:10 }}>Par</td>
+                                            {hoyos.slice(0,Math.min(9,nH)).map(h => (
+                                              <td key={h} style={{ padding:"4px 5px", textAlign:"center", color:D.textSub }}>{pars[h]||"-"}</td>
+                                            ))}
+                                            {nH > 9 && <td style={{ padding:"4px 5px", textAlign:"center", color:D.gold, fontWeight:700 }}>{parFront}</td>}
+                                            {nH > 9 && hoyos.slice(9).map(h => (
+                                              <td key={h} style={{ padding:"4px 5px", textAlign:"center", color:D.textSub }}>{pars[h]||"-"}</td>
+                                            ))}
+                                            {nH > 9 && <td style={{ padding:"4px 5px", textAlign:"center", color:D.gold, fontWeight:700 }}>{parBack}</td>}
+                                            <td style={{ padding:"4px 5px", textAlign:"center", color:D.gold, fontWeight:700 }}>{pars.reduce((a,b)=>a+(b||0),0)}</td>
+                                          </tr>
+                                        )}
+                                        {/* Scores */}
+                                        <tr>
+                                          <td style={{ padding:"4px 6px", color:D.text, fontWeight:700 }}>Score</td>
+                                          {hoyos.slice(0,Math.min(9,nH)).map(h => {
+                                            const s = scores[h]; const p = pars[h];
+                                            const diff = p ? s - p : null;
+                                            const bg = diff === null ? "transparent" : diff <= -2 ? "#FFD70033" : diff === -1 ? "#4CAF5033" : diff === 0 ? "transparent" : diff === 1 ? "#FF980033" : "#F4433633";
+                                            const col = diff === null ? D.text : diff <= -2 ? D.gold : diff === -1 ? D.success : diff === 0 ? D.text : diff === 1 ? "#FF9800" : D.danger;
+                                            return <td key={h} style={{ padding:"3px 5px", textAlign:"center", fontWeight:800, color:col, background:bg, borderRadius:4 }}>{s??"-"}</td>;
+                                          })}
+                                          {nH > 9 && <td style={{ padding:"4px 5px", textAlign:"center", color:D.text, fontWeight:800 }}>{front||"-"}</td>}
+                                          {nH > 9 && hoyos.slice(9).map(h => {
+                                            const s = scores[h]; const p = pars[h];
+                                            const diff = p ? s - p : null;
+                                            const bg = diff === null ? "transparent" : diff <= -2 ? "#FFD70033" : diff === -1 ? "#4CAF5033" : diff === 0 ? "transparent" : diff === 1 ? "#FF980033" : "#F4433633";
+                                            const col = diff === null ? D.text : diff <= -2 ? D.gold : diff === -1 ? D.success : diff === 0 ? D.text : diff === 1 ? "#FF9800" : D.danger;
+                                            return <td key={h} style={{ padding:"3px 5px", textAlign:"center", fontWeight:800, color:col, background:bg, borderRadius:4 }}>{s??"-"}</td>;
+                                          })}
+                                          {nH > 9 && <td style={{ padding:"4px 5px", textAlign:"center", color:D.text, fontWeight:800 }}>{back||"-"}</td>}
+                                          <td style={{ padding:"4px 5px", textAlign:"center", fontWeight:900, color:D.text, fontSize:13 }}>{r.bruto??"-"}</td>
+                                        </tr>
+                                        {/* Marcas por hoyo */}
+                                        {hasMarcas && (
+                                          <tr>
+                                            <td style={{ padding:"4px 6px", color:D.gold, fontSize:10, fontWeight:700 }}>⭐</td>
+                                            {hoyos.slice(0,Math.min(9,nH)).map(h => {
+                                              const hd = r.marcasJugador[h];
+                                              const labels = hd ? [...MARCAS_MULTI,{key:"oyes",label:"O"},{key:"regulation",label:"R"}].filter(mk=>hd[mk.key]).map(mk=>mk.key==="holeinone"?"HIO":mk.key==="eagle"?"Egl":mk.key==="birdie"?"Bir":mk.key==="holeout"?"HO":mk.key==="sandy"?"Sdy":mk.key==="oyes"?"O'Y":mk.key==="regulation"?"Reg":"?") : [];
+                                              return <td key={h} style={{ padding:"2px 3px", textAlign:"center", fontSize:9, color:D.gold, fontWeight:700 }}>{labels.join(" ")}</td>;
+                                            })}
+                                            {nH > 9 && <td></td>}
+                                            {nH > 9 && hoyos.slice(9).map(h => {
+                                              const hd = r.marcasJugador[h];
+                                              const labels = hd ? [...MARCAS_MULTI,{key:"oyes",label:"O"},{key:"regulation",label:"R"}].filter(mk=>hd[mk.key]).map(mk=>mk.key==="holeinone"?"HIO":mk.key==="eagle"?"Egl":mk.key==="birdie"?"Bir":mk.key==="holeout"?"HO":mk.key==="sandy"?"Sdy":mk.key==="oyes"?"O'Y":mk.key==="regulation"?"Reg":"?") : [];
+                                              return <td key={h} style={{ padding:"2px 3px", textAlign:"center", fontSize:9, color:D.gold, fontWeight:700 }}>{labels.join(" ")}</td>;
+                                            })}
+                                            {nH > 9 && <td></td>}
+                                            <td></td>
+                                          </tr>
+                                        )}
+                                      </tbody>
+                                    </table>
+                                    {/* Leyenda colores */}
+                                    <div style={{ display:"flex", gap:8, marginTop:8, fontSize:10, color:D.textSub, flexWrap:"wrap" }}>
+                                      <span style={{ color:D.gold }}>🟡 Eagle-</span>
+                                      <span style={{ color:D.success }}>🟢 Birdie</span>
+                                      <span style={{ color:"#FF9800" }}>🟠 Bogey</span>
+                                      <span style={{ color:D.danger }}>🔴 Doble+</span>
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <div style={{ fontSize:11, color:D.textSub, fontStyle:"italic", padding:"4px 0" }}>Scorecard no disponible para esta ronda</div>
+                                )}
+                              </div>
+                            )}
                           </div>
-                          <div style={{ textAlign:"right" }}>
-                            <div style={{ fontSize:16, fontWeight:900 }}>{r.bruto ?? "--"}</div>
-                            <div style={{ fontSize:10, color:D.textSub }}>tiros</div>
-                          </div>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </Card>
                   </>
                 )}
