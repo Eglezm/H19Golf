@@ -8091,7 +8091,7 @@ function EstadisticasScreen({ onExit, appStyle }) {
               <div style={{ display:"flex", flexDirection:"column", gap:0 }}>
                 {todosJugadores.map((n, idx) => {
                   const pid = jugadorPidMap[n];
-                  const pidNum = pid ? String(pid).replace(/\D/g,"").slice(-4) : null;
+                  const pidNum = pid ? String(pid).replace(/\D/g,"").padStart(6,"0") : null;
                   const sel = jugadorSel === n;
                   return (
                     <button key={n} onClick={() => {
@@ -8111,11 +8111,9 @@ function EstadisticasScreen({ onExit, appStyle }) {
                         {idx+1}
                       </div>
                       {/* ID badge */}
-                      {pidNum && (
-                        <div style={{ fontSize:10, fontWeight:700, color:sel?D.gold:D.textSub, background:sel?"transparent":D.surface, border:`1px solid ${sel?D.gold:D.border}`, borderRadius:6, padding:"2px 6px", flexShrink:0, fontFamily:"monospace" }}>
-                          #{pidNum}
-                        </div>
-                      )}
+                      <div style={{ fontSize:10, fontWeight:700, color:sel?D.gold:pidNum?D.textSub:D.border, background:sel?"transparent":D.surface, border:`1px solid ${sel?D.gold:D.border}`, borderRadius:6, padding:"2px 6px", flexShrink:0, fontFamily:"monospace", minWidth:60, textAlign:"center" }}>
+                        {pidNum ? pidNum : "—"}
+                      </div>
                       {/* Nombre */}
                       <div style={{ fontSize:13, fontWeight:sel?800:500, color:sel?D.gold:D.text, flex:1 }}>{n}</div>
                       {sel && <div style={{ fontSize:11, color:D.gold }}>▼</div>}
