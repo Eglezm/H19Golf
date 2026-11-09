@@ -7721,29 +7721,30 @@ function EstadisticasScreen({ onExit, appStyle }) {
   const stats = jugadorSel ? calcStats(jugadorSel) : null;
 
   // ── Calcular ranking de marcas para el grupo seleccionado ──
+  // Cada jugador cuenta sus propias últimas N rondas (no las del grupo)
   const rankingMarcasGrupo = React.useMemo(() => {
     if (!grupoSel || rondas.length === 0) return null;
     const miembros = grupoSel.miembros;
-    const nombresMiembros = new Set(miembros.map(m => m.nombre.trim().toLowerCase()));
-    const idsMiembros = new Set(miembros.map(m => m.id));
-    const rondasGrupo = rondas
-      .filter(r => {
+    return miembros.map(m => {
+      const mNombre = m.nombre.trim().toLowerCase();
+      // 1. Todas las rondas donde participó este jugador (ya vienen ordenadas desc por fechaTs)
+      const rondasDelJugador = rondas.filter(r => {
         const names = (r.playerNames||[]).map(n => n.trim().toLowerCase());
         const ids = r.playerIds||[];
-        return names.some(n => nombresMiembros.has(n)) || ids.some(id => idsMiembros.has(id));
-      })
-      .slice(0, nRondasGrupo);
-    return miembros.map(m => {
+        return ids.includes(m.id) || names.includes(mNombre);
+      });
+      // 2. Tomar las últimas N de este jugador
+      const rondasN = rondasDelJugador.slice(0, nRondasGrupo);
       let ptsTotales = 0, rondasJugadas = 0;
       const conteos = {};
       MARCAS_MULTI.forEach(mk => { conteos[mk.key] = 0; });
       conteos["oyes"] = 0; conteos["regulation"] = 0;
-      rondasGrupo.forEach(r => {
+      rondasN.forEach(r => {
         const names = (r.playerNames||[]).map(n => n.trim().toLowerCase());
         const ids = r.playerIds||[];
         let pi = -1;
         ids.forEach((id, i) => { if (id === m.id && pi === -1) pi = i; });
-        if (pi === -1) names.forEach((n, i) => { if (n === m.nombre.trim().toLowerCase() && pi === -1) pi = i; });
+        if (pi === -1) names.forEach((n, i) => { if (n === mNombre && pi === -1) pi = i; });
         if (pi === -1) return;
         const opts = r.playerOptsArr?.[pi];
         if (opts?.marcas === false) return;
@@ -7757,7 +7758,7 @@ function EstadisticasScreen({ onExit, appStyle }) {
           if (h.regulation === pi) { conteos["regulation"]++; ptsTotales += 1; }
         });
       });
-      return { nombre: m.nombre, id: m.id, ptsTotales, rondasJugadas, conteos };
+      return { nombre: m.nombre, id: m.id, ptsTotales, rondasJugadas, totalRondasHist: rondasDelJugador.length, conteos };
     }).sort((a,b) => b.ptsTotales - a.ptsTotales);
   }, [grupoSel, rondas, nRondasGrupo]);
 
@@ -7822,7 +7823,7 @@ function EstadisticasScreen({ onExit, appStyle }) {
                     <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14 }}>
                       <div>
                         <div style={{ fontSize:15, fontWeight:900, color:D.text }}>{grupoSel.nombre}</div>
-                        <div style={{ fontSize:11, color:D.textSub }}>Ranking de marcas · últimas {nRondasGrupo} rondas</div>
+                        <div style={{ fontSize:11, color:D.textSub }}>Últimas {nRondasGrupo} rondas por jugador</div>
                       </div>
                       <div style={{ fontSize:22 }}>⭐</div>
                     </div>
@@ -7843,7 +7844,7 @@ function EstadisticasScreen({ onExit, appStyle }) {
                           </div>
                           <div style={{ flex:1 }}>
                             <div style={{ fontSize:13, fontWeight:800, color:D.text }}>{j.nombre}</div>
-                            <div style={{ fontSize:10, color:D.textSub }}>{j.rondasJugadas} ronda{j.rondasJugadas!==1?"s":""} jugadas</div>
+                            <div style={{ fontSize:10, color:D.textSub }}>{j.rondasJugadas} de {Math.min(nRondasGrupo, j.totalRondasHist)} rondas · {j.totalRondasHist} en historial</div>
                           </div>
                           <div style={{ textAlign:"right" }}>
                             <div style={{ fontSize:22, fontWeight:900, color:idx===0?D.gold:D.text, lineHeight:1 }}>{j.ptsTotales}</div>
