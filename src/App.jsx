@@ -5874,6 +5874,7 @@ function JugadorSalidaGrupalScreen({ jugador, appStyle, onVolver, onIniciarSalid
 function EstadisticasJugadorPanel({ jugador, todasRondas, loading }) {
   const [nRondas, setNRondas]       = React.useState(10);
   const [campoFiltro, setCampoFiltro] = React.useState("todos");
+  const [rondaExpandida, setRondaExpandida] = React.useState(null);
 
   // Extraer el número numérico del ID del jugador para comparación flexible
   const jugIdNum = parseInt(String(jugador.id).replace(/\D/g,""), 10);
@@ -5949,11 +5950,25 @@ function EstadisticasJugadorPanel({ jugador, todasRondas, loading }) {
 
   // Calcular stats
   const stats = React.useMemo(() => {
-    const conBruto = rondasFiltradas.map(r => ({ bruto: getBruto(r), hc: (() => {
+    const conBruto = rondasFiltradas.map(r => {
       const pi = getIdx(r);
       const arr = Array.isArray(r.jugadores) ? r.jugadores : Object.values(r.jugadores||{});
-      return arr[pi]?.hc ?? jugador.hc ?? 0;
-    })(), fecha: r.fecha || (r.fechaTs ? new Date(r.fechaTs).toLocaleDateString("es-MX",{day:"2-digit",month:"short",year:"2-digit"}) : null), campo: r.campo, nHoles: r.nHoles||9, pars: r.pars })).filter(r => r.bruto != null && r.bruto > 0);
+      const hc = arr[pi]?.hc ?? jugador.hc ?? 0;
+      const fecha = r.fecha || (r.fechaTs ? new Date(r.fechaTs).toLocaleDateString("es-MX",{day:"2-digit",month:"short",year:"2-digit"}) : null);
+      // Marcas de este jugador en esta ronda
+      const marcasArr = Array.isArray(r.marcas) ? r.marcas : Object.values(r.marcas||{});
+      const marcasJugador = {};
+      marcasArr.forEach((h, hi) => {
+        if (!h || pi < 0) return;
+        const multi = Array.isArray(h.multi) ? h.multi : Object.values(h.multi||{});
+        const hData = {};
+        MARCAS_MULTI.forEach(mk => { if (multi[pi]?.[mk.key]) hData[mk.key] = true; });
+        if (h.oyes === pi) hData["oyes"] = true;
+        if (h.regulation === pi) hData["regulation"] = true;
+        if (Object.keys(hData).length > 0) marcasJugador[hi] = hData;
+      });
+      return { bruto: getBruto(r), hc, fecha, campo: r.campo, nHoles: r.nHoles||9, pars: r.pars, scores: r.scoresPorHoyo?.[pi], marcasJugador, playerOptsArr: r.playerOptsArr, piIdx: pi };
+    }).filter(r => r.bruto != null && r.bruto > 0);
     if (conBruto.length === 0) return null;
     const brutos = conBruto.map(r=>r.bruto);
     const promBruto = Math.round(brutos.reduce((a,b)=>a+b,0)/brutos.length*10)/10;
@@ -5973,7 +5988,22 @@ function EstadisticasJugadorPanel({ jugador, todasRondas, loading }) {
       if (!porCampo[r.campo]) porCampo[r.campo] = [];
       porCampo[r.campo].push(r.bruto);
     });
-    return { promBruto, promNeto, mejorBruto, peorBruto, hcSugerido, evolucion, porCampo, nRondasConScore: conBruto.length, hcActual: conBruto[0]?.hc };
+    // Marcas totales
+    const marcaConteos = {};
+    MARCAS_MULTI.forEach(mk => { marcaConteos[mk.key] = 0; });
+    marcaConteos["oyes"] = 0; marcaConteos["regulation"] = 0;
+    let marcaPtsTotales = 0;
+    conBruto.forEach(r => {
+      const opts = r.playerOptsArr?.[r.piIdx];
+      if (opts?.marcas === false) return;
+      Object.values(r.marcasJugador||{}).forEach(hData => {
+        [...MARCAS_MULTI, {key:"oyes",pts:1},{key:"regulation",pts:1}].forEach(mk => {
+          if (hData[mk.key]) { marcaConteos[mk.key]++; marcaPtsTotales += mk.pts; }
+        });
+      });
+    });
+    const avgMarcaPts = conBruto.length > 0 ? Math.round(marcaPtsTotales / conBruto.length * 10) / 10 : 0;
+    return { promBruto, promNeto, mejorBruto, peorBruto, hcSugerido, evolucion, porCampo, nRondasConScore: conBruto.length, hcActual: conBruto[0]?.hc, marcaConteos, marcaPtsTotales, avgMarcaPts };
   }, [rondasFiltradas]);
 
   if (loading) return <div style={{ textAlign:"center", color:D.textSub, padding:40 }}>Cargando estadísticas…</div>;
@@ -6058,6 +6088,31 @@ function EstadisticasJugadorPanel({ jugador, todasRondas, loading }) {
           )}
         </div>
 
+        {/* Marcas */}
+        {stats.marcaPtsTotales > 0 && (
+          <div style={{ background:D.surface, border:`1px solid ${D.border}`, borderRadius:12, padding:"14px 16px" }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
+              <div style={{ fontSize:12, fontWeight:700, color:D.gold }}>⭐ Marcas ({nRondas} rondas)</div>
+              <div>
+                <span style={{ fontSize:20, fontWeight:900, color:D.gold }}>{stats.marcaPtsTotales}</span>
+                <span style={{ fontSize:11, color:D.textSub }}> pts · <span style={{ color:D.gold, fontWeight:700 }}>{stats.avgMarcaPts}</span> avg</span>
+              </div>
+            </div>
+            <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
+              {[...MARCAS_MULTI, {key:"oyes",label:"⛳ O'Yes",pts:1},{key:"regulation",label:"✅ Regulation",pts:1}]
+                .filter(mk => stats.marcaConteos[mk.key] > 0)
+                .map(mk => (
+                  <div key={mk.key} style={{ padding:"5px 10px", background:D.bg, border:`1px solid ${D.border}`, borderRadius:10, fontSize:11 }}>
+                    <span style={{ color:D.textSub }}>{mk.label}</span>
+                    <span style={{ fontWeight:800, color:D.gold, marginLeft:4 }}>×{stats.marcaConteos[mk.key]}</span>
+                    <span style={{ color:D.textDim||D.textSub, fontSize:10, marginLeft:3 }}>({stats.marcaConteos[mk.key]*mk.pts}pt{stats.marcaConteos[mk.key]*mk.pts!==1?"s":""})</span>
+                  </div>
+                ))
+              }
+            </div>
+          </div>
+        )}
+
         {/* Promedio por campo */}
         {Object.keys(stats.porCampo).length > 0 && (
           <div style={{ background:D.surface, border:`1px solid ${D.border}`, borderRadius:12, padding:"14px 16px" }}>
@@ -6127,21 +6182,128 @@ function EstadisticasJugadorPanel({ jugador, todasRondas, loading }) {
           );
         })()}
 
-        {/* Historial de rondas */}
+        {/* Historial de rondas — interactivo */}
         <div style={{ background:D.surface, border:`1px solid ${D.border}`, borderRadius:12, padding:"14px 16px" }}>
           <div style={{ fontSize:12, fontWeight:700, color:D.gold, marginBottom:10 }}>📋 Historial de rondas ({stats.nRondasConScore})</div>
-          {stats.evolucion.slice().reverse().map((r, i) => (
-            <div key={i} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"8px 0", borderBottom:`1px solid ${D.border}44` }}>
-              <div>
-                <div style={{ fontSize:12, fontWeight:600 }}>{r.fecha||"Sin fecha"}</div>
-                <div style={{ fontSize:10, color:D.textSub }}>HC {r.hc} · {r.nHoles||9} hoyos{r.campo?` · ${CAMPOS[r.campo]?.nombre||r.campo}`:""}</div>
+          {stats.evolucion.slice().reverse().map((r, i) => {
+            const expanded = rondaExpandida === i;
+            const scores = r.scores || [];
+            const pars = r.pars || [];
+            const nH = r.nHoles || scores.length || 9;
+            const hoyos = Array.from({length: nH}, (_,h) => h);
+            const front = scores.slice(0,9).reduce((a,b)=>a+(b||0),0);
+            const back = nH > 9 ? scores.slice(9).reduce((a,b)=>a+(b||0),0) : null;
+            const parFront = pars.slice(0,9).reduce((a,b)=>a+(b||0),0);
+            const parBack = nH > 9 ? pars.slice(9).reduce((a,b)=>a+(b||0),0) : null;
+            const hasMarcas = Object.keys(r.marcasJugador||{}).length > 0;
+            return (
+              <div key={i} style={{ borderBottom:`1px solid ${D.border}44` }}>
+                <div onClick={() => setRondaExpandida(expanded ? null : i)}
+                  style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"10px 0", cursor:"pointer" }}>
+                  <div>
+                    <div style={{ fontSize:12, fontWeight:700, color:D.text }}>{r.fecha||"Sin fecha"}{r.campo?` · ${CAMPOS[r.campo]?.nombre||r.campo}`:""}</div>
+                    <div style={{ display:"flex", gap:8, marginTop:2 }}>
+                      <span style={{ fontSize:10, color:D.textSub }}>HC {r.hc} · {nH} hoyos</span>
+                      {hasMarcas && <span style={{ fontSize:10, color:D.gold }}>⭐ marcas</span>}
+                    </div>
+                  </div>
+                  <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+                    <div style={{ textAlign:"right" }}>
+                      <div style={{ fontSize:18, fontWeight:900, color:D.gold }}>{r.bruto}</div>
+                      <div style={{ fontSize:10, color:D.textSub }}>golpes</div>
+                    </div>
+                    <div style={{ fontSize:12, color:D.textSub, transition:"transform 0.2s", transform:expanded?"rotate(90deg)":"rotate(0deg)" }}>▶</div>
+                  </div>
+                </div>
+                {expanded && (
+                  <div style={{ paddingBottom:12 }}>
+                    {scores.length > 0 ? (
+                      <div style={{ overflowX:"auto" }}>
+                        <table style={{ borderCollapse:"collapse", fontSize:11, width:"100%", minWidth: nH > 9 ? 480 : 260 }}>
+                          <thead>
+                            <tr>
+                              <td style={{ padding:"4px 6px", color:D.textSub, fontWeight:700, background:D.bg, borderRadius:"6px 0 0 0" }}>Hoyo</td>
+                              {hoyos.slice(0,Math.min(9,nH)).map(h => (
+                                <td key={h} style={{ padding:"4px 5px", textAlign:"center", color:D.textSub, background:D.bg, fontWeight:600 }}>{h+1}</td>
+                              ))}
+                              {nH > 9 && <td style={{ padding:"4px 5px", textAlign:"center", color:D.gold, background:D.bg, fontWeight:800 }}>OUT</td>}
+                              {nH > 9 && hoyos.slice(9).map(h => (
+                                <td key={h} style={{ padding:"4px 5px", textAlign:"center", color:D.textSub, background:D.bg, fontWeight:600 }}>{h+1}</td>
+                              ))}
+                              {nH > 9 && <td style={{ padding:"4px 5px", textAlign:"center", color:D.gold, background:D.bg, fontWeight:800 }}>IN</td>}
+                              <td style={{ padding:"4px 5px", textAlign:"center", color:D.gold, background:D.bg, fontWeight:800, borderRadius:"0 6px 0 0" }}>TOT</td>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {pars.length > 0 && (
+                              <tr>
+                                <td style={{ padding:"4px 6px", color:D.textSub, fontSize:10 }}>Par</td>
+                                {hoyos.slice(0,Math.min(9,nH)).map(h => (
+                                  <td key={h} style={{ padding:"4px 5px", textAlign:"center", color:D.textSub }}>{pars[h]||"-"}</td>
+                                ))}
+                                {nH > 9 && <td style={{ padding:"4px 5px", textAlign:"center", color:D.gold, fontWeight:700 }}>{parFront}</td>}
+                                {nH > 9 && hoyos.slice(9).map(h => (
+                                  <td key={h} style={{ padding:"4px 5px", textAlign:"center", color:D.textSub }}>{pars[h]||"-"}</td>
+                                ))}
+                                {nH > 9 && <td style={{ padding:"4px 5px", textAlign:"center", color:D.gold, fontWeight:700 }}>{parBack}</td>}
+                                <td style={{ padding:"4px 5px", textAlign:"center", color:D.gold, fontWeight:700 }}>{pars.reduce((a,b)=>a+(b||0),0)}</td>
+                              </tr>
+                            )}
+                            <tr>
+                              <td style={{ padding:"4px 6px", color:D.text, fontWeight:700 }}>Score</td>
+                              {hoyos.slice(0,Math.min(9,nH)).map(h => {
+                                const s = scores[h]; const p = pars[h];
+                                const diff = p ? s - p : null;
+                                const bg = diff===null?"transparent":diff<=-2?"#FFD70033":diff===-1?"#4CAF5033":diff===0?"transparent":diff===1?"#FF980033":"#F4433633";
+                                const col = diff===null?D.text:diff<=-2?D.gold:diff===-1?"#4CAF50":diff===0?D.text:diff===1?"#FF9800":D.danger;
+                                return <td key={h} style={{ padding:"3px 5px", textAlign:"center", fontWeight:800, color:col, background:bg, borderRadius:4 }}>{s??"-"}</td>;
+                              })}
+                              {nH > 9 && <td style={{ padding:"4px 5px", textAlign:"center", color:D.text, fontWeight:800 }}>{front||"-"}</td>}
+                              {nH > 9 && hoyos.slice(9).map(h => {
+                                const s = scores[h]; const p = pars[h];
+                                const diff = p ? s - p : null;
+                                const bg = diff===null?"transparent":diff<=-2?"#FFD70033":diff===-1?"#4CAF5033":diff===0?"transparent":diff===1?"#FF980033":"#F4433633";
+                                const col = diff===null?D.text:diff<=-2?D.gold:diff===-1?"#4CAF50":diff===0?D.text:diff===1?"#FF9800":D.danger;
+                                return <td key={h} style={{ padding:"3px 5px", textAlign:"center", fontWeight:800, color:col, background:bg, borderRadius:4 }}>{s??"-"}</td>;
+                              })}
+                              {nH > 9 && <td style={{ padding:"4px 5px", textAlign:"center", color:D.text, fontWeight:800 }}>{back||"-"}</td>}
+                              <td style={{ padding:"4px 5px", textAlign:"center", fontWeight:900, color:D.text, fontSize:13 }}>{r.bruto??"-"}</td>
+                            </tr>
+                            {hasMarcas && (
+                              <tr>
+                                <td style={{ padding:"4px 6px", color:D.gold, fontSize:10, fontWeight:700 }}>⭐</td>
+                                {hoyos.slice(0,Math.min(9,nH)).map(h => {
+                                  const hd = r.marcasJugador[h];
+                                  const labels = hd ? [...MARCAS_MULTI,{key:"oyes"},{key:"regulation"}].filter(mk=>hd[mk.key]).map(mk=>mk.key==="holeinone"?"HIO":mk.key==="eagle"?"Egl":mk.key==="birdie"?"Bir":mk.key==="holeout"?"HO":mk.key==="sandy"?"Sdy":mk.key==="oyes"?"O'Y":"Reg") : [];
+                                  return <td key={h} style={{ padding:"2px 3px", textAlign:"center", fontSize:9, color:D.gold, fontWeight:700 }}>{labels.join(" ")}</td>;
+                                })}
+                                {nH > 9 && <td></td>}
+                                {nH > 9 && hoyos.slice(9).map(h => {
+                                  const hd = r.marcasJugador[h];
+                                  const labels = hd ? [...MARCAS_MULTI,{key:"oyes"},{key:"regulation"}].filter(mk=>hd[mk.key]).map(mk=>mk.key==="holeinone"?"HIO":mk.key==="eagle"?"Egl":mk.key==="birdie"?"Bir":mk.key==="holeout"?"HO":mk.key==="sandy"?"Sdy":mk.key==="oyes"?"O'Y":"Reg") : [];
+                                  return <td key={h} style={{ padding:"2px 3px", textAlign:"center", fontSize:9, color:D.gold, fontWeight:700 }}>{labels.join(" ")}</td>;
+                                })}
+                                {nH > 9 && <td></td>}
+                                <td></td>
+                              </tr>
+                            )}
+                          </tbody>
+                        </table>
+                        <div style={{ display:"flex", gap:8, marginTop:8, fontSize:10, color:D.textSub, flexWrap:"wrap" }}>
+                          <span style={{ color:D.gold }}>🟡 Eagle-</span>
+                          <span style={{ color:"#4CAF50" }}>🟢 Birdie</span>
+                          <span style={{ color:"#FF9800" }}>🟠 Bogey</span>
+                          <span style={{ color:D.danger }}>🔴 Doble+</span>
+                        </div>
+                      </div>
+                    ) : (
+                      <div style={{ fontSize:11, color:D.textSub, fontStyle:"italic", padding:"4px 0" }}>Scorecard no disponible para esta ronda</div>
+                    )}
+                  </div>
+                )}
               </div>
-              <div style={{ textAlign:"right" }}>
-                <div style={{ fontSize:18, fontWeight:900, color:D.gold }}>{r.bruto}</div>
-                <div style={{ fontSize:10, color:D.textSub }}>golpes</div>
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </>) : (
         <div style={{ textAlign:"center", color:D.textSub, padding:24, fontSize:13 }}>
@@ -7700,8 +7862,16 @@ function EstadisticasScreen({ onExit, appStyle }) {
     });
   });
 
+  // ID canónico por jugador (el primero que aparezca)
+  const jugadorPidMap = {};
+  Object.entries(jugadoresIdx).forEach(([nombre, rds]) => {
+    const conPid = rds.find(r => r.pid);
+    if (conPid) jugadorPidMap[nombre] = conPid.pid;
+  });
+
   const todosJugadores = Object.keys(jugadoresIdx).sort();
   const todosCampos = [...new Set(rondas.map(r=>r.campo).filter(Boolean))].sort();
+  const statsRef = React.useRef(null);
 
   // Stats de un jugador seleccionado
   const calcStats = (nombre) => {
@@ -7915,31 +8085,48 @@ function EstadisticasScreen({ onExit, appStyle }) {
 
         {!loading && tabEst === "jugador" && rondas.length > 0 && (
           <>
-            {/* Selector de jugador — lista alfabética */}
+            {/* Selector de jugador — lista alfabética con ID */}
             <Card>
               <SLabel>Seleccionar jugador</SLabel>
               <div style={{ display:"flex", flexDirection:"column", gap:0 }}>
-                {todosJugadores.map((n, idx) => (
-                  <button key={n} onClick={() => {
-                    const nuevo = jugadorSel===n ? null : n;
-                    setJugadorSel(nuevo);
-                    if (nuevo) {
-                      const res = whs_resumenJugador(nuevo, rondas);
-                      setWhsHI(res?.currentHI ?? null);
-                    } else {
-                      setWhsHI(null);
-                    }
-                  }}
-                    style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 12px", border:"none", borderBottom:`1px solid ${D.border}`, background:jugadorSel===n?D.goldDim:"transparent", cursor:"pointer", textAlign:"left", width:"100%" }}>
-                    <div style={{ width:24, height:24, borderRadius:"50%", background:jugadorSel===n?D.gold:D.border, display:"flex", alignItems:"center", justifyContent:"center", fontSize:11, fontWeight:800, color:jugadorSel===n?"#000":D.textSub, flexShrink:0 }}>
-                      {idx+1}
-                    </div>
-                    <div style={{ fontSize:13, fontWeight:jugadorSel===n?800:500, color:jugadorSel===n?D.gold:D.text, flex:1 }}>{n}</div>
-                    {jugadorSel===n && <div style={{ fontSize:12, color:D.gold }}>▶</div>}
-                  </button>
-                ))}
+                {todosJugadores.map((n, idx) => {
+                  const pid = jugadorPidMap[n];
+                  const pidNum = pid ? String(pid).replace(/\D/g,"").slice(-4) : null;
+                  const sel = jugadorSel === n;
+                  return (
+                    <button key={n} onClick={() => {
+                      const nuevo = sel ? null : n;
+                      setJugadorSel(nuevo);
+                      if (nuevo) {
+                        const res = whs_resumenJugador(nuevo, rondas);
+                        setWhsHI(res?.currentHI ?? null);
+                        setTimeout(() => statsRef.current?.scrollIntoView({ behavior:"smooth", block:"start" }), 80);
+                      } else {
+                        setWhsHI(null);
+                      }
+                    }}
+                      style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 12px", border:"none", borderBottom:`1px solid ${D.border}`, background:sel?D.goldDim:"transparent", cursor:"pointer", textAlign:"left", width:"100%" }}>
+                      {/* Número de posición */}
+                      <div style={{ width:22, height:22, borderRadius:"50%", background:sel?D.gold:D.border, display:"flex", alignItems:"center", justifyContent:"center", fontSize:10, fontWeight:800, color:sel?"#000":D.textSub, flexShrink:0 }}>
+                        {idx+1}
+                      </div>
+                      {/* ID badge */}
+                      {pidNum && (
+                        <div style={{ fontSize:10, fontWeight:700, color:sel?D.gold:D.textSub, background:sel?"transparent":D.surface, border:`1px solid ${sel?D.gold:D.border}`, borderRadius:6, padding:"2px 6px", flexShrink:0, fontFamily:"monospace" }}>
+                          #{pidNum}
+                        </div>
+                      )}
+                      {/* Nombre */}
+                      <div style={{ fontSize:13, fontWeight:sel?800:500, color:sel?D.gold:D.text, flex:1 }}>{n}</div>
+                      {sel && <div style={{ fontSize:11, color:D.gold }}>▼</div>}
+                    </button>
+                  );
+                })}
               </div>
             </Card>
+
+            {/* Ancla para scroll automático */}
+            <div ref={statsRef} style={{ scrollMarginTop: 8 }} />
 
             {jugadorSel && (
               <>
