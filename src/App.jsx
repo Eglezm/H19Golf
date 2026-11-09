@@ -7758,7 +7758,8 @@ function EstadisticasScreen({ onExit, appStyle }) {
           if (h.regulation === pi) { conteos["regulation"]++; ptsTotales += 1; }
         });
       });
-      return { nombre: m.nombre, id: m.id, ptsTotales, rondasJugadas, totalRondasHist: rondasDelJugador.length, conteos };
+      const avgPts = rondasJugadas > 0 ? Math.round(ptsTotales / rondasJugadas * 10) / 10 : 0;
+      return { nombre: m.nombre, id: m.id, ptsTotales, avgPts, rondasJugadas, totalRondasHist: rondasDelJugador.length, conteos };
     }).sort((a,b) => b.ptsTotales - a.ptsTotales);
   }, [grupoSel, rondas, nRondasGrupo]);
 
@@ -7848,7 +7849,7 @@ function EstadisticasScreen({ onExit, appStyle }) {
                           </div>
                           <div style={{ textAlign:"right" }}>
                             <div style={{ fontSize:22, fontWeight:900, color:idx===0?D.gold:D.text, lineHeight:1 }}>{j.ptsTotales}</div>
-                            <div style={{ fontSize:10, color:D.textSub }}>pts</div>
+                            <div style={{ fontSize:10, color:D.textSub }}>pts · <span style={{ color:D.gold, fontWeight:700 }}>{j.avgPts}</span> avg</div>
                           </div>
                         </div>
                         {j.ptsTotales > 0 && (
@@ -7883,11 +7884,11 @@ function EstadisticasScreen({ onExit, appStyle }) {
 
         {!loading && tabEst === "jugador" && rondas.length > 0 && (
           <>
-            {/* Selector de jugador */}
+            {/* Selector de jugador — lista alfabética */}
             <Card>
               <SLabel>Seleccionar jugador</SLabel>
-              <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
-                {todosJugadores.map(n => (
+              <div style={{ display:"flex", flexDirection:"column", gap:0 }}>
+                {todosJugadores.map((n, idx) => (
                   <button key={n} onClick={() => {
                     const nuevo = jugadorSel===n ? null : n;
                     setJugadorSel(nuevo);
@@ -7898,8 +7899,12 @@ function EstadisticasScreen({ onExit, appStyle }) {
                       setWhsHI(null);
                     }
                   }}
-                    style={{ padding:"7px 14px", border:"1px solid "+(jugadorSel===n?D.gold:D.border), borderRadius:20, background:jugadorSel===n?D.goldDim:"transparent", color:jugadorSel===n?D.gold:D.textSub, fontSize:12, fontWeight:jugadorSel===n?700:400, cursor:"pointer" }}>
-                    {n}
+                    style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 12px", border:"none", borderBottom:`1px solid ${D.border}`, background:jugadorSel===n?D.goldDim:"transparent", cursor:"pointer", textAlign:"left", width:"100%" }}>
+                    <div style={{ width:24, height:24, borderRadius:"50%", background:jugadorSel===n?D.gold:D.border, display:"flex", alignItems:"center", justifyContent:"center", fontSize:11, fontWeight:800, color:jugadorSel===n?"#000":D.textSub, flexShrink:0 }}>
+                      {idx+1}
+                    </div>
+                    <div style={{ fontSize:13, fontWeight:jugadorSel===n?800:500, color:jugadorSel===n?D.gold:D.text, flex:1 }}>{n}</div>
+                    {jugadorSel===n && <div style={{ fontSize:12, color:D.gold }}>▶</div>}
                   </button>
                 ))}
               </div>
