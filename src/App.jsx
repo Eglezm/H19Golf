@@ -7631,7 +7631,25 @@ function EstadisticasScreen({ onExit, appStyle }) {
   const [jugadorSel, setJugadorSel] = useState(null);
   const [nRondas, setNRondas] = useState(10);
   const [campoFiltro, setCampoFiltro] = useState("todos");
-  const [whsHI, setWhsHI] = useState(null); // HI WHS del jugador seleccionado
+  const [whsHI, setWhsHI] = useState(null);
+  // ── Marcas por Grupo ──
+  const [tabEst, setTabEst] = useState("jugador"); // "jugador" | "grupo"
+  const [grupos, setGrupos] = useState([]);
+  const [grupoSel, setGrupoSel] = useState(null);
+  const [nRondasGrupo, setNRondasGrupo] = useState(10);
+
+  useEffect(() => {
+    get(clubRef("grupos")).then(snap => {
+      if (!snap.exists()) return;
+      const data = snap.val();
+      const arr = Object.entries(data).map(([k,v]) => ({
+        _key: k,
+        nombre: v.nombre || k,
+        miembros: v.miembros ? Object.entries(v.miembros).map(([id,m]) => ({ id, nombre: m.nombre||m.name||id })) : [],
+      })).filter(g => g.miembros.length > 0).sort((a,b) => a.nombre.localeCompare(b.nombre));
+      setGrupos(arr);
+    }).catch(() => {});
+  }, []);
 
   useEffect(() => {
     get(clubRef("historial")).then(snap => {
@@ -7702,25 +7720,167 @@ function EstadisticasScreen({ onExit, appStyle }) {
 
   const stats = jugadorSel ? calcStats(jugadorSel) : null;
 
+  // ── Calcular ranking de marcas para el grupo seleccionado ──
+  const rankingMarcasGrupo = React.useMemo(() => {
+    if (!grupoSel || rondas.length === 0) return null;
+    const miembros = grupoSel.miembros;
+    const nombresMiembros = new Set(miembros.map(m => m.nombre.trim().toLowerCase()));
+    const idsMiembros = new Set(miembros.map(m => m.id));
+    const rondasGrupo = rondas
+      .filter(r => {
+        const names = (r.playerNames||[]).map(n => n.trim().toLowerCase());
+        const ids = r.playerIds||[];
+        return names.some(n => nombresMiembros.has(n)) || ids.some(id => idsMiembros.has(id));
+      })
+      .slice(0, nRondasGrupo);
+    return miembros.map(m => {
+      let ptsTotales = 0, rondasJugadas = 0;
+      const conteos = {};
+      MARCAS_MULTI.forEach(mk => { conteos[mk.key] = 0; });
+      conteos["oyes"] = 0; conteos["regulation"] = 0;
+      rondasGrupo.forEach(r => {
+        const names = (r.playerNames||[]).map(n => n.trim().toLowerCase());
+        const ids = r.playerIds||[];
+        let pi = -1;
+        ids.forEach((id, i) => { if (id === m.id && pi === -1) pi = i; });
+        if (pi === -1) names.forEach((n, i) => { if (n === m.nombre.trim().toLowerCase() && pi === -1) pi = i; });
+        if (pi === -1) return;
+        const opts = r.playerOptsArr?.[pi];
+        if (opts?.marcas === false) return;
+        rondasJugadas++;
+        const marcasArr = Array.isArray(r.marcas) ? r.marcas : Object.values(r.marcas||{});
+        marcasArr.forEach(h => {
+          if (!h) return;
+          const multi = Array.isArray(h.multi) ? h.multi : Object.values(h.multi||{});
+          MARCAS_MULTI.forEach(mk => { if (multi[pi]?.[mk.key]) { conteos[mk.key]++; ptsTotales += mk.pts; } });
+          if (h.oyes === pi) { conteos["oyes"]++; ptsTotales += 1; }
+          if (h.regulation === pi) { conteos["regulation"]++; ptsTotales += 1; }
+        });
+      });
+      return { nombre: m.nombre, id: m.id, ptsTotales, rondasJugadas, conteos };
+    }).sort((a,b) => b.ptsTotales - a.ptsTotales);
+  }, [grupoSel, rondas, nRondasGrupo]);
+
   return (
     <div style={{ ...appStyle, overflowY:"auto" }}>
       {/* Header */}
       <div style={{ background:`linear-gradient(135deg,#1A2A1A,#2E3D2E)`, padding:"14px 16px", display:"flex", alignItems:"center", gap:10 }}>
         <button onClick={onExit} style={{ background:"none", border:"none", color:D.gold, fontSize:22, cursor:"pointer" }}>{"<"}</button>
-        <div>
+        <div style={{ flex:1 }}>
           <div style={{ fontSize:16, fontWeight:900, color:D.gold }}>📈 Estadísticas</div>
           <div style={{ fontSize:11, color:D.textSub }}>Historial de jugadores</div>
         </div>
       </div>
 
+      {/* Tabs */}
+      <div style={{ display:"flex", borderBottom:`2px solid ${D.border}`, background:D.surface }}>
+        {[["jugador","👤 Por jugador"],["grupo","🏌️ Marcas por grupo"]].map(([k,lbl]) => (
+          <button key={k} onClick={() => setTabEst(k)}
+            style={{ flex:1, padding:"11px 8px", border:"none", background:"transparent", fontSize:12, fontWeight:tabEst===k?800:500, color:tabEst===k?D.gold:D.textSub, borderBottom:tabEst===k?`3px solid ${D.gold}`:"3px solid transparent", cursor:"pointer" }}>
+            {lbl}
+          </button>
+        ))}
+      </div>
+
       <div style={{ padding:"12px 12px 80px" }}>
         {loading && <Card><div style={{ textAlign:"center", color:D.textSub, padding:24 }}>Cargando historial...</div></Card>}
 
-        {!loading && rondas.length === 0 && (
+        {/* ── TAB MARCAS POR GRUPO ── */}
+        {!loading && tabEst === "grupo" && (
+          <>
+            {grupos.length === 0 ? (
+              <Card><div style={{ textAlign:"center", color:D.textSub, padding:24 }}>No hay grupos configurados aún</div></Card>
+            ) : (
+              <>
+                <Card>
+                  <SLabel>Seleccionar grupo</SLabel>
+                  <div style={{ display:"flex", flexWrap:"wrap", gap:6, marginBottom:12 }}>
+                    {grupos.map(g => (
+                      <button key={g._key} onClick={() => setGrupoSel(grupoSel?._key===g._key ? null : g)}
+                        style={{ padding:"7px 14px", border:`1px solid ${grupoSel?._key===g._key?D.gold:D.border}`, borderRadius:20, background:grupoSel?._key===g._key?D.goldDim:"transparent", color:grupoSel?._key===g._key?D.gold:D.textSub, fontSize:12, fontWeight:grupoSel?._key===g._key?700:400, cursor:"pointer" }}>
+                        {g.nombre}
+                      </button>
+                    ))}
+                  </div>
+                  {grupoSel && (
+                    <div>
+                      <div style={{ fontSize:10, color:D.textSub, marginBottom:6, fontWeight:700, textTransform:"uppercase", letterSpacing:1 }}>Últimas N rondas</div>
+                      <div style={{ display:"flex", gap:6 }}>
+                        {[5,10,15,20].map(n => (
+                          <button key={n} onClick={() => setNRondasGrupo(n)}
+                            style={{ padding:"6px 12px", border:`1px solid ${nRondasGrupo===n?D.gold:D.border}`, borderRadius:10, background:nRondasGrupo===n?D.goldDim:"transparent", color:nRondasGrupo===n?D.gold:D.textSub, fontSize:12, fontWeight:700, cursor:"pointer" }}>
+                            {n}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </Card>
+
+                {grupoSel && rankingMarcasGrupo && rankingMarcasGrupo.length > 0 && (
+                  <Card>
+                    <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14 }}>
+                      <div>
+                        <div style={{ fontSize:15, fontWeight:900, color:D.text }}>{grupoSel.nombre}</div>
+                        <div style={{ fontSize:11, color:D.textSub }}>Ranking de marcas · últimas {nRondasGrupo} rondas</div>
+                      </div>
+                      <div style={{ fontSize:22 }}>⭐</div>
+                    </div>
+                    {/* Leyenda de puntos */}
+                    <div style={{ display:"flex", flexWrap:"wrap", gap:5, marginBottom:14, padding:"8px 10px", background:D.bg, borderRadius:10 }}>
+                      {[...MARCAS_MULTI, {key:"oyes",label:"⛳ O'Yes",pts:1},{key:"regulation",label:"✅ Regulation",pts:1}].map(mk => (
+                        <div key={mk.key} style={{ fontSize:10, color:D.textSub, background:D.surface, border:`1px solid ${D.border}`, borderRadius:8, padding:"3px 7px" }}>
+                          {mk.label} <span style={{ color:D.gold, fontWeight:700 }}>+{mk.pts}pt{mk.pts>1?"s":""}</span>
+                        </div>
+                      ))}
+                    </div>
+                    {/* Ranking */}
+                    {rankingMarcasGrupo.map((j, idx) => (
+                      <div key={j.id||j.nombre} style={{ display:"flex", flexDirection:"column", gap:4, padding:"10px 12px", marginBottom:8, background:idx===0?D.goldDim:idx===1?"#F0F4FF":idx===2?"#FFF4F0":D.bg, border:`1px solid ${idx===0?D.gold:D.border}`, borderRadius:12 }}>
+                        <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+                          <div style={{ width:30, height:30, borderRadius:"50%", background:idx===0?"#B8860B":idx===1?"#78909C":idx===2?"#A0522D":"#CCC", display:"flex", alignItems:"center", justifyContent:"center", fontSize:14, fontWeight:900, color:"#fff", flexShrink:0 }}>
+                            {idx===0?"🥇":idx===1?"🥈":idx===2?"🥉":<span style={{fontSize:12}}>{idx+1}</span>}
+                          </div>
+                          <div style={{ flex:1 }}>
+                            <div style={{ fontSize:13, fontWeight:800, color:D.text }}>{j.nombre}</div>
+                            <div style={{ fontSize:10, color:D.textSub }}>{j.rondasJugadas} ronda{j.rondasJugadas!==1?"s":""} jugadas</div>
+                          </div>
+                          <div style={{ textAlign:"right" }}>
+                            <div style={{ fontSize:22, fontWeight:900, color:idx===0?D.gold:D.text, lineHeight:1 }}>{j.ptsTotales}</div>
+                            <div style={{ fontSize:10, color:D.textSub }}>pts</div>
+                          </div>
+                        </div>
+                        {j.ptsTotales > 0 && (
+                          <div style={{ display:"flex", flexWrap:"wrap", gap:5, paddingLeft:40, marginTop:2 }}>
+                            {[...MARCAS_MULTI, {key:"oyes",label:"⛳ O'Yes",pts:1},{key:"regulation",label:"✅ Reg.",pts:1}]
+                              .filter(mk => j.conteos[mk.key] > 0)
+                              .map(mk => (
+                                <div key={mk.key} style={{ fontSize:10, padding:"2px 8px", background:D.surface, border:`1px solid ${D.border}`, borderRadius:8, color:D.textSub }}>
+                                  {mk.label} <span style={{ fontWeight:700, color:D.gold }}>×{j.conteos[mk.key]}</span>
+                                </div>
+                              ))
+                            }
+                          </div>
+                        )}
+                        {j.ptsTotales === 0 && <div style={{ fontSize:11, color:D.textDim, paddingLeft:40, fontStyle:"italic" }}>Sin marcas en este período</div>}
+                      </div>
+                    ))}
+                  </Card>
+                )}
+                {grupoSel && (!rankingMarcasGrupo || rankingMarcasGrupo.length === 0) && (
+                  <Card><div style={{ textAlign:"center", color:D.textSub, padding:24 }}>No se encontraron rondas del grupo {grupoSel.nombre} en el historial</div></Card>
+                )}
+              </>
+            )}
+          </>
+        )}
+
+        {/* ── TAB POR JUGADOR (original) ── */}
+        {!loading && tabEst === "jugador" && rondas.length === 0 && (
           <Card><div style={{ textAlign:"center", color:D.textSub, padding:24 }}>No hay rondas guardadas aún</div></Card>
         )}
 
-        {!loading && rondas.length > 0 && (
+        {!loading && tabEst === "jugador" && rondas.length > 0 && (
           <>
             {/* Selector de jugador */}
             <Card>
