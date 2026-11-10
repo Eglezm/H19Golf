@@ -6230,7 +6230,8 @@ function EstadisticasJugadorPanel({ jugador, todasRondas, loading }) {
         }
       });
     });
-    return { promBruto, promNeto, mejorBruto, peorBruto, hcSugerido, evolucion, porCampo, nRondasConScore: conBruto.length, hcActual: conBruto[0]?.hc, marcaConteos, marcaPtsTotales, avgMarcaPts, tarjetaConteos, tarjetaTotal };
+    const avgTarjetas = conBruto.length > 0 ? Math.round(tarjetaTotal / conBruto.length * 10) / 10 : 0;
+    return { promBruto, promNeto, mejorBruto, peorBruto, hcSugerido, evolucion, porCampo, nRondasConScore: conBruto.length, hcActual: conBruto[0]?.hc, marcaConteos, marcaPtsTotales, avgMarcaPts, tarjetaConteos, tarjetaTotal, avgTarjetas };
   }, [rondasFiltradas]);
 
   if (loading) return <div style={{ textAlign:"center", color:D.textSub, padding:40 }}>Cargando estadísticas…</div>;
@@ -6347,7 +6348,7 @@ function EstadisticasJugadorPanel({ jugador, todasRondas, loading }) {
               <div style={{ fontSize:12, fontWeight:700, color:"#E57373" }}>🃏 Tarjetas ({nRondas} rondas)</div>
               <div>
                 <span style={{ fontSize:20, fontWeight:900, color:"#E57373" }}>{stats.tarjetaTotal}</span>
-                <span style={{ fontSize:11, color:D.textSub }}> total</span>
+                <span style={{ fontSize:11, color:D.textSub }}> total · <span style={{ color:"#E57373", fontWeight:700 }}>{stats.avgTarjetas}</span> avg</span>
               </div>
             </div>
             <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
@@ -8210,7 +8211,8 @@ function EstadisticasScreen({ onExit, appStyle }) {
       if (!porCampo[r.campo]) porCampo[r.campo] = [];
       if (r.bruto !== null) porCampo[r.campo].push(r.bruto);
     });
-    return { promBruto, promNeto, mejorBruto, peorBruto, hcSugerido, evolucion, porCampo, nRondas:conBruto.length, hcActual: rds[0]?.hc, marcaConteos, marcaPtsTotales, avgMarcaPts, tarjetaConteos, tarjetaTotal };
+    const avgTarjetas = rds.length > 0 ? Math.round(tarjetaTotal / rds.length * 10) / 10 : 0;
+    return { promBruto, promNeto, mejorBruto, peorBruto, hcSugerido, evolucion, porCampo, nRondas:conBruto.length, hcActual: rds[0]?.hc, marcaConteos, marcaPtsTotales, avgMarcaPts, tarjetaConteos, tarjetaTotal, avgTarjetas };
   };
 
   const stats = jugadorSel ? calcStats(jugadorSel) : null;
@@ -8653,7 +8655,7 @@ function EstadisticasScreen({ onExit, appStyle }) {
                           <SLabel style={{ margin:0 }}>🃏 Tarjetas ({nRondas} rondas)</SLabel>
                           <div style={{ textAlign:"right" }}>
                             <span style={{ fontSize:20, fontWeight:900, color:"#E57373" }}>{stats.tarjetaTotal}</span>
-                            <span style={{ fontSize:11, color:D.textSub }}> total</span>
+                            <span style={{ fontSize:11, color:D.textSub }}> total · <span style={{ color:"#E57373", fontWeight:700 }}>{stats.avgTarjetas}</span> avg</span>
                           </div>
                         </div>
                         <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
