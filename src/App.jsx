@@ -3818,6 +3818,16 @@ function H19() {
               </div>
               <div style={{ fontSize:18, color:D.textSub, opacity:0.6 }}>›</div>
             </button>
+
+            <button onClick={() => setMode("admin-anuncios")}
+              style={{ display:"flex", alignItems:"center", gap:14, padding:"16px 18px", border:`2px solid #FF980044`, borderRadius:16, background:`linear-gradient(135deg,#FF980018,#FF980008)`, cursor:"pointer", textAlign:"left" }}>
+              <div style={{ fontSize:32, lineHeight:1 }}>📢</div>
+              <div style={{ flex:1 }}>
+                <div style={{ fontSize:16, fontWeight:800, color:"#FF9800" }}>Anuncios</div>
+                <div style={{ fontSize:12, color:D.textSub, marginTop:3 }}>Enviar noticias y avisos a los jugadores</div>
+              </div>
+              <div style={{ fontSize:18, color:"#FF9800", opacity:0.6 }}>›</div>
+            </button>
           </div>
         </div>
       </div>
@@ -3825,6 +3835,13 @@ function H19() {
       </>
     );
   }
+
+  if (mode === "admin-anuncios") return (
+    <>
+      <AdminAnunciosPanel appStyle={appStyle} onExit={() => setMode("admin-panel")} />
+      <BarBtn />
+    </>
+  );
 
   if (mode === "pin") {
     return (
@@ -4821,6 +4838,167 @@ function GrupoDetalle({ grupo, jugador, directorio, onBack }) {
 }
 
 // ─── NOTIFICACIONES ───────────────────────────────────────────────────────────
+// ─── ADMIN ANUNCIOS PANEL ─────────────────────────────────────────────────────
+function AdminAnunciosPanel({ appStyle, onExit }) {
+  const [directorio, setDirectorio] = React.useState([]);
+  const [loading, setLoading]       = React.useState(true);
+  const [titulo, setTitulo]         = React.useState("");
+  const [mensaje, setMensaje]       = React.useState("");
+  const [categoria, setCategoria]   = React.useState("general");
+  const [saving, setSaving]         = React.useState(false);
+  const [msg, setMsg]               = React.useState(null);
+  const [historial, setHistorial]   = React.useState([]);
+
+  React.useEffect(() => {
+    Promise.all([
+      get(clubRef("directorio")),
+      get(clubRef("anuncios")),
+    ]).then(([d, a]) => {
+      const val = d.exists() ? d.val() : {};
+      const players = val.players ? (Array.isArray(val.players) ? val.players : Object.values(val.players)) : [];
+      setDirectorio(players);
+      if (a.exists()) {
+        const arr = Object.entries(a.val())
+          .map(([k,v]) => ({ ...v, _key:k }))
+          .sort((a,b) => (b.creadoAt||0)-(a.creadoAt||0))
+          .slice(0, 20);
+        setHistorial(arr);
+      }
+      setLoading(false);
+    }).catch(() => setLoading(false));
+  }, []);
+
+  const CATEGORIAS = [
+    { key:"general",  label:"📢 General",        color:"#FF9800" },
+    { key:"torneo",   label:"🏆 Torneo",          color:D.gold   },
+    { key:"fecha",    label:"📅 Próxima fecha",   color:"#4CAF50"},
+    { key:"aviso",    label:"⚠️ Aviso",           color:D.danger },
+  ];
+
+  const catInfo = CATEGORIAS.find(c => c.key === categoria) || CATEGORIAS[0];
+
+  const enviar = async () => {
+    if (!titulo.trim() || !mensaje.trim()) {
+      setMsg({ ok:false, text:"Escribe título y mensaje" }); return;
+    }
+    if (directorio.length === 0) {
+      setMsg({ ok:false, text:"No hay jugadores en el directorio" }); return;
+    }
+    setSaving(true);
+    const anuncioId = `anuncio_${Date.now()}`;
+    const anuncio = {
+      tipo: "anuncio",
+      categoria,
+      titulo: titulo.trim(),
+      mensaje: mensaje.trim(),
+      creadoAt: Date.now(),
+      estado: "pendiente",
+      deNombre: "Administrador",
+    };
+    try {
+      // Guardar en historial de anuncios del club
+      await set(clubRef(`anuncios/${anuncioId}`), anuncio);
+      await set(ref(db, `clubes/club_h19/anuncios/${anuncioId}`), anuncio);
+      // Enviar a cada jugador del directorio
+      const writes = directorio.map(p =>
+        set(clubRef(`notificaciones/${p.id}/${anuncioId}`), anuncio)
+      );
+      await Promise.all(writes);
+      setHistorial(prev => [{ ...anuncio, _key:anuncioId }, ...prev].slice(0,20));
+      setTitulo(""); setMensaje(""); setCategoria("general");
+      setMsg({ ok:true, text:`✓ Anuncio enviado a ${directorio.length} jugadores` });
+      setTimeout(() => setMsg(null), 3500);
+    } catch(e) {
+      setMsg({ ok:false, text:"Error al enviar. Intenta de nuevo." });
+    }
+    setSaving(false);
+  };
+
+  return (
+    <div style={{ ...appStyle, overflowY:"auto" }}>
+      {/* Header */}
+      <div style={{ background:`linear-gradient(135deg,#2C1A00,#4A3000)`, padding:"14px 16px", display:"flex", alignItems:"center", gap:10 }}>
+        <button onClick={onExit} style={{ background:"none", border:"none", color:D.gold, fontSize:22, cursor:"pointer" }}>{"<"}</button>
+        <div style={{ flex:1 }}>
+          <div style={{ fontSize:16, fontWeight:900, color:"#FF9800" }}>📢 Enviar Anuncio</div>
+          <div style={{ fontSize:11, color:D.textSub }}>{loading ? "Cargando..." : `${directorio.length} jugadores en el directorio`}</div>
+        </div>
+      </div>
+
+      <div style={{ padding:"12px 12px 80px", display:"flex", flexDirection:"column", gap:12 }}>
+        {/* Redactar */}
+        <div style={{ background:D.surface, border:`1px solid ${D.border}`, borderRadius:14, padding:"16px" }}>
+          <div style={{ fontSize:12, fontWeight:700, color:"#FF9800", marginBottom:12 }}>Nuevo anuncio</div>
+
+          {/* Categoría */}
+          <div style={{ fontSize:10, color:D.textSub, fontWeight:700, textTransform:"uppercase", letterSpacing:1, marginBottom:6 }}>Categoría</div>
+          <div style={{ display:"flex", gap:6, flexWrap:"wrap", marginBottom:14 }}>
+            {CATEGORIAS.map(c => (
+              <button key={c.key} onClick={() => setCategoria(c.key)}
+                style={{ padding:"6px 12px", border:`1px solid ${categoria===c.key?c.color:D.border}`, borderRadius:20, background:categoria===c.key?c.color+"22":"transparent", color:categoria===c.key?c.color:D.textSub, fontSize:12, fontWeight:categoria===c.key?700:400, cursor:"pointer" }}>
+                {c.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Título */}
+          <div style={{ fontSize:10, color:D.textSub, fontWeight:700, textTransform:"uppercase", letterSpacing:1, marginBottom:6 }}>Título</div>
+          <input value={titulo} onChange={e => setTitulo(e.target.value)} placeholder="Ej: Próximo torneo — Sábado 15 Nov"
+            style={{ width:"100%", padding:"10px 12px", border:`1px solid ${D.border}`, borderRadius:10, background:D.bg, color:D.text, fontSize:14, fontWeight:600, marginBottom:12, boxSizing:"border-box" }} />
+
+          {/* Mensaje */}
+          <div style={{ fontSize:10, color:D.textSub, fontWeight:700, textTransform:"uppercase", letterSpacing:1, marginBottom:6 }}>Mensaje</div>
+          <textarea value={mensaje} onChange={e => setMensaje(e.target.value)} placeholder="Escribe aquí el detalle del anuncio…" rows={4}
+            style={{ width:"100%", padding:"10px 12px", border:`1px solid ${D.border}`, borderRadius:10, background:D.bg, color:D.text, fontSize:13, resize:"vertical", marginBottom:14, boxSizing:"border-box", fontFamily:"inherit" }} />
+
+          {/* Preview */}
+          {(titulo || mensaje) && (
+            <div style={{ background:D.bg, border:`1px solid ${catInfo.color}44`, borderRadius:10, padding:"10px 12px", marginBottom:14 }}>
+              <div style={{ fontSize:10, color:D.textSub, marginBottom:6 }}>Vista previa</div>
+              <div style={{ fontSize:11, fontWeight:700, color:catInfo.color, marginBottom:4 }}>{catInfo.label}</div>
+              <div style={{ fontSize:14, fontWeight:700, color:D.text, marginBottom:4 }}>{titulo||"Sin título"}</div>
+              <div style={{ fontSize:12, color:D.textSub, whiteSpace:"pre-wrap" }}>{mensaje||"Sin mensaje"}</div>
+            </div>
+          )}
+
+          {msg && (
+            <div style={{ padding:"10px 12px", borderRadius:10, background:msg.ok?"#4CAF5022":"#f4433622", border:`1px solid ${msg.ok?"#4CAF50":"#f44336"}44`, color:msg.ok?"#4CAF50":D.danger, fontSize:13, fontWeight:600, marginBottom:12 }}>
+              {msg.text}
+            </div>
+          )}
+
+          <button onClick={enviar} disabled={saving || loading}
+            style={{ width:"100%", padding:"13px", border:"none", borderRadius:12, background:saving?"#555":`linear-gradient(135deg,#E65100,#FF9800)`, color:"#fff", fontSize:15, fontWeight:800, cursor:saving?"not-allowed":"pointer", letterSpacing:0.5 }}>
+            {saving ? "Enviando…" : `📢 Enviar a ${directorio.length} jugadores`}
+          </button>
+        </div>
+
+        {/* Historial de anuncios enviados */}
+        {historial.length > 0 && (
+          <div style={{ background:D.surface, border:`1px solid ${D.border}`, borderRadius:14, padding:"14px 16px" }}>
+            <div style={{ fontSize:12, fontWeight:700, color:D.textSub, marginBottom:12 }}>Anuncios anteriores</div>
+            {historial.map(a => {
+              const cat = CATEGORIAS.find(c => c.key === a.categoria) || CATEGORIAS[0];
+              const fecha = a.creadoAt ? new Date(a.creadoAt).toLocaleString("es-MX",{dateStyle:"short",timeStyle:"short"}) : "";
+              return (
+                <div key={a._key} style={{ paddingBottom:12, marginBottom:12, borderBottom:`1px solid ${D.border}44` }}>
+                  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:8 }}>
+                    <div style={{ flex:1 }}>
+                      <div style={{ fontSize:10, color:cat.color, fontWeight:700, marginBottom:3 }}>{cat.label} · {fecha}</div>
+                      <div style={{ fontSize:13, fontWeight:700, color:D.text }}>{a.titulo}</div>
+                      <div style={{ fontSize:11, color:D.textSub, marginTop:3, whiteSpace:"pre-wrap" }}>{a.mensaje}</div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function NotificacionesPanel({ jugador, onBadgeChange }) {
   const [notifs, setNotifs]   = React.useState([]);
   const [loading, setLoading] = React.useState(true);
@@ -4859,6 +5037,14 @@ function NotificacionesPanel({ jugador, onBadgeChange }) {
     setSaving(null);
   };
 
+  const marcarLeido = async (notif) => {
+    await set(clubRef(`notificaciones/${jugador.id}/${notif._key}/estado`), "leido").catch(()=>{});
+    await cargar();
+  };
+
+  const CAT_COLORS = { torneo: D.gold, fecha:"#4CAF50", aviso:D.danger, general:"#FF9800" };
+  const CAT_LABELS = { torneo:"🏆 Torneo", fecha:"📅 Próxima fecha", aviso:"⚠️ Aviso", general:"📢 General" };
+
   if (loading) return <div style={{ textAlign:"center", color:D.textSub, padding:32 }}>Cargando notificaciones…</div>;
 
   return (
@@ -4868,26 +5054,49 @@ function NotificacionesPanel({ jugador, onBadgeChange }) {
           <div style={{ fontSize:32, marginBottom:8 }}>🔔</div>
           Sin notificaciones pendientes.
         </div>
-      ) : notifs.map(n => (
-        <div key={n._key} style={{ background:D.surface, border:`1px solid ${D.gold}44`, borderRadius:12, padding:"14px 16px" }}>
-          <div style={{ fontSize:14, fontWeight:700, color:D.text, marginBottom:4 }}>
-            📩 Invitación a grupo
+      ) : notifs.map(n => {
+        // Anuncio del admin
+        if (n.tipo === "anuncio") {
+          const color = CAT_COLORS[n.categoria] || "#FF9800";
+          const catLabel = CAT_LABELS[n.categoria] || "📢 General";
+          const fecha = n.creadoAt ? new Date(n.creadoAt).toLocaleString("es-MX",{dateStyle:"short",timeStyle:"short"}) : "";
+          return (
+            <div key={n._key} style={{ background:D.surface, border:`1px solid ${color}44`, borderRadius:12, padding:"14px 16px" }}>
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:8 }}>
+                <div style={{ fontSize:11, fontWeight:700, color, background:color+"18", padding:"3px 10px", borderRadius:20 }}>{catLabel}</div>
+                <div style={{ fontSize:10, color:D.textSub }}>{fecha}</div>
+              </div>
+              <div style={{ fontSize:15, fontWeight:800, color:D.text, marginBottom:6 }}>{n.titulo}</div>
+              <div style={{ fontSize:13, color:D.textSub, whiteSpace:"pre-wrap", marginBottom:12 }}>{n.mensaje}</div>
+              <button onClick={() => marcarLeido(n)} disabled={saving===n._key}
+                style={{ width:"100%", padding:"9px", border:`1px solid ${color}44`, borderRadius:8, background:color+"18", color, fontSize:13, fontWeight:700, cursor:"pointer" }}>
+                {saving===n._key ? "…" : "✓ Entendido"}
+              </button>
+            </div>
+          );
+        }
+        // Invitación a grupo (original)
+        return (
+          <div key={n._key} style={{ background:D.surface, border:`1px solid ${D.gold}44`, borderRadius:12, padding:"14px 16px" }}>
+            <div style={{ fontSize:14, fontWeight:700, color:D.text, marginBottom:4 }}>
+              📩 Invitación a grupo
+            </div>
+            <div style={{ fontSize:13, color:D.textSub, marginBottom:10 }}>
+              <b style={{ color:D.text }}>{n.deNombre}</b> te invita al grupo <b style={{ color:D.gold }}>{n.grupoNombre}</b>
+            </div>
+            <div style={{ display:"flex", gap:8 }}>
+              <button onClick={() => responder(n, "rechazada")} disabled={saving===n._key}
+                style={{ flex:1, padding:"9px", border:`1px solid #c0392b44`, borderRadius:8, background:"#c0392b11", color:"#e74c3c", fontSize:13, cursor:"pointer" }}>
+                ✕ Rechazar
+              </button>
+              <button onClick={() => responder(n, "aceptada")} disabled={saving===n._key}
+                style={{ flex:2, padding:"9px", border:"none", borderRadius:8, background:`linear-gradient(135deg,${D.gold},#B8860B)`, color:"#000", fontSize:13, fontWeight:700, cursor:"pointer" }}>
+                {saving===n._key ? "…" : "✓ Aceptar invitación"}
+              </button>
+            </div>
           </div>
-          <div style={{ fontSize:13, color:D.textSub, marginBottom:10 }}>
-            <b style={{ color:D.text }}>{n.deNombre}</b> te invita al grupo <b style={{ color:D.gold }}>{n.grupoNombre}</b>
-          </div>
-          <div style={{ display:"flex", gap:8 }}>
-            <button onClick={() => responder(n, "rechazada")} disabled={saving===n._key}
-              style={{ flex:1, padding:"9px", border:`1px solid #c0392b44`, borderRadius:8, background:"#c0392b11", color:"#e74c3c", fontSize:13, cursor:"pointer" }}>
-              ✕ Rechazar
-            </button>
-            <button onClick={() => responder(n, "aceptada")} disabled={saving===n._key}
-              style={{ flex:2, padding:"9px", border:"none", borderRadius:8, background:`linear-gradient(135deg,${D.gold},#B8860B)`, color:"#000", fontSize:13, fontWeight:700, cursor:"pointer" }}>
-              {saving===n._key ? "…" : "✓ Aceptar invitación"}
-            </button>
-          </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
@@ -7340,6 +7549,7 @@ function HandicapWHSScreen({ onExit, appStyle }) {
   const [whsResult, setWhsResult] = useState(null);
   const [tab, setTab] = useState("perfil"); // "perfil" | "grafica" | "comparativa"
   const [allResults, setAllResults] = useState({}); // nombre -> whsResult para comparativa
+  const whsStatsRef = useRef(null);
 
   useEffect(() => {
     Promise.all([get(clubRef("historial")), get(clubRef("directorio"))]).then(([h, d]) => {
@@ -7409,16 +7619,31 @@ function HandicapWHSScreen({ onExit, appStyle }) {
         {!loading && tab === "perfil" && (
           <Card>
             <SLabel>Jugador</SLabel>
-            <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
-              {jugadores.slice().sort((a,b)=>a.name.localeCompare(b.name)).map(j => (
-                <button key={j.id||j.name} onClick={() => seleccionar(j.name)}
-                  style={{ padding:"7px 14px", border:"1px solid "+(jugadorSel===j.name?D.gold:D.border), borderRadius:20, background:jugadorSel===j.name?D.goldDim:"transparent", color:jugadorSel===j.name?D.gold:D.textSub, fontSize:12, fontWeight:jugadorSel===j.name?700:400, cursor:"pointer" }}>
-                  {j.name}
-                </button>
-              ))}
+            <div style={{ display:"flex", flexDirection:"column", gap:0 }}>
+              {jugadores.slice().sort((a,b)=>a.name.localeCompare(b.name)).map((j, idx) => {
+                const sel = jugadorSel === j.name;
+                const pidNum = j.id ? String(j.id).replace(/\D/g,"").padStart(6,"0") : null;
+                return (
+                  <button key={j.id||j.name} onClick={() => {
+                    seleccionar(j.name);
+                    setTimeout(() => whsStatsRef.current?.scrollIntoView({ behavior:"smooth", block:"start" }), 80);
+                  }}
+                    style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 12px", border:"none", borderBottom:`1px solid ${D.border}`, background:sel?D.goldDim:"transparent", cursor:"pointer", textAlign:"left", width:"100%" }}>
+                    <div style={{ width:22, height:22, borderRadius:"50%", background:sel?D.gold:D.border, display:"flex", alignItems:"center", justifyContent:"center", fontSize:10, fontWeight:800, color:sel?"#000":D.textSub, flexShrink:0 }}>
+                      {idx+1}
+                    </div>
+                    <div style={{ fontSize:10, fontWeight:700, color:sel?D.gold:pidNum?D.textSub:D.border, background:sel?"transparent":D.surface, border:`1px solid ${sel?D.gold:D.border}`, borderRadius:6, padding:"2px 6px", flexShrink:0, fontFamily:"monospace", minWidth:60, textAlign:"center" }}>
+                      {pidNum || "—"}
+                    </div>
+                    <div style={{ fontSize:13, fontWeight:sel?800:500, color:sel?D.gold:D.text, flex:1 }}>{j.name}</div>
+                    {sel && <div style={{ fontSize:11, color:D.gold }}>▼</div>}
+                  </button>
+                );
+              })}
             </div>
           </Card>
         )}
+        <div ref={whsStatsRef} style={{ scrollMarginTop:8 }} />
         {tab === "perfil" && whsResult && jugadorSel && (<>
             <Card style={{ border:"1px solid "+D.gold+"44" }}>
               <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
@@ -7549,13 +7774,24 @@ function HandicapWHSScreen({ onExit, appStyle }) {
               {!jugadorActivo && (
                 <Card>
                   <SLabel>Seleccionar jugador</SLabel>
-                  <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
-                    {jugadores.slice().sort((a,b)=>a.name.localeCompare(b.name)).map(j => (
-                      <button key={j.id||j.name} onClick={() => seleccionar(j.name)}
-                        style={{ padding:"7px 14px", border:"1px solid "+(jugadorSel===j.name?D.gold:D.border), borderRadius:20, background:jugadorSel===j.name?D.goldDim:"transparent", color:jugadorSel===j.name?D.gold:D.textSub, fontSize:12, fontWeight:jugadorSel===j.name?700:400, cursor:"pointer" }}>
-                        {j.name}
-                      </button>
-                    ))}
+                  <div style={{ display:"flex", flexDirection:"column", gap:0 }}>
+                    {jugadores.slice().sort((a,b)=>a.name.localeCompare(b.name)).map((j, idx) => {
+                      const sel = jugadorSel === j.name;
+                      const pidNum = j.id ? String(j.id).replace(/\D/g,"").padStart(6,"0") : null;
+                      return (
+                        <button key={j.id||j.name} onClick={() => seleccionar(j.name)}
+                          style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 12px", border:"none", borderBottom:`1px solid ${D.border}`, background:sel?D.goldDim:"transparent", cursor:"pointer", textAlign:"left", width:"100%" }}>
+                          <div style={{ width:22, height:22, borderRadius:"50%", background:sel?D.gold:D.border, display:"flex", alignItems:"center", justifyContent:"center", fontSize:10, fontWeight:800, color:sel?"#000":D.textSub, flexShrink:0 }}>
+                            {idx+1}
+                          </div>
+                          <div style={{ fontSize:10, fontWeight:700, color:sel?D.gold:pidNum?D.textSub:D.border, background:sel?"transparent":D.surface, border:`1px solid ${sel?D.gold:D.border}`, borderRadius:6, padding:"2px 6px", flexShrink:0, fontFamily:"monospace", minWidth:60, textAlign:"center" }}>
+                            {pidNum || "—"}
+                          </div>
+                          <div style={{ fontSize:13, fontWeight:sel?800:500, color:sel?D.gold:D.text, flex:1 }}>{j.name}</div>
+                          {sel && <div style={{ fontSize:11, color:D.gold }}>▼</div>}
+                        </button>
+                      );
+                    })}
                   </div>
                 </Card>
               )}
