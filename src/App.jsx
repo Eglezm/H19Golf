@@ -8655,7 +8655,7 @@ function EstadisticasScreen({ onExit, appStyle }) {
                           <SLabel style={{ margin:0 }}>🃏 Tarjetas ({nRondas} rondas)</SLabel>
                           <div style={{ textAlign:"right" }}>
                             <span style={{ fontSize:20, fontWeight:900, color:"#E57373" }}>{stats.tarjetaTotal}</span>
-                            <span style={{ fontSize:11, color:D.textSub }}> total · <span style={{ color:"#E57373", fontWeight:700 }}>{stats.avgTarjetas}</span> avg</span>
+                            <span style={{ fontSize:11, color:D.textSub }}> total · <span style={{ color:"#E57373", fontWeight:700 }}>{stats.avgTarjetas ?? (stats.tarjetaTotal > 0 ? Math.round(stats.tarjetaTotal / stats.nRondas * 10) / 10 : 0)}</span> avg</span>
                           </div>
                         </div>
                         <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
