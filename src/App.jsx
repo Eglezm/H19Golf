@@ -6176,7 +6176,7 @@ function EstadisticasJugadorPanel({ jugador, todasRondas, loading }) {
         if (h.regulation === pi) hData["regulation"] = true;
         if (Object.keys(hData).length > 0) marcasJugador[hi] = hData;
       });
-      return { bruto: getBruto(r), hc, fecha, campo: r.campo, nHoles: r.nHoles||9, pars: r.pars, scores: r.scoresPorHoyo?.[pi], marcasJugador, playerOptsArr: r.playerOptsArr, piIdx: pi };
+      return { bruto: getBruto(r), hc, fecha, campo: r.campo, nHoles: r.nHoles||9, pars: r.pars, scores: r.scoresPorHoyo?.[pi], marcasJugador, playerOptsArr: r.playerOptsArr, piIdx: pi, tarjetasRonda: r.tarjetas||null };
     }).filter(r => r.bruto != null && r.bruto > 0);
     if (conBruto.length === 0) return null;
     const brutos = conBruto.map(r=>r.bruto);
@@ -6212,7 +6212,25 @@ function EstadisticasJugadorPanel({ jugador, todasRondas, loading }) {
       });
     });
     const avgMarcaPts = conBruto.length > 0 ? Math.round(marcaPtsTotales / conBruto.length * 10) / 10 : 0;
-    return { promBruto, promNeto, mejorBruto, peorBruto, hcSugerido, evolucion, porCampo, nRondasConScore: conBruto.length, hcActual: conBruto[0]?.hc, marcaConteos, marcaPtsTotales, avgMarcaPts };
+    // Tarjetas totales
+    const tarjetaConteos = {};
+    TARJETAS.forEach(t => { tarjetaConteos[t.key] = 0; });
+    let tarjetaTotal = 0;
+    conBruto.forEach(r => {
+      const opts = r.playerOptsArr?.[r.piIdx];
+      if (opts?.tarjetas === false) return;
+      const pi = r.piIdx;
+      const tObj = r.tarjetasRonda || {};
+      TARJETAS.forEach(t => {
+        const val = tObj[t.key];
+        if (t.key === "peorscore") {
+          if (Array.isArray(val) ? val.includes(pi) : val === pi) { tarjetaConteos[t.key]++; tarjetaTotal++; }
+        } else {
+          if (val === pi) { tarjetaConteos[t.key]++; tarjetaTotal++; }
+        }
+      });
+    });
+    return { promBruto, promNeto, mejorBruto, peorBruto, hcSugerido, evolucion, porCampo, nRondasConScore: conBruto.length, hcActual: conBruto[0]?.hc, marcaConteos, marcaPtsTotales, avgMarcaPts, tarjetaConteos, tarjetaTotal };
   }, [rondasFiltradas]);
 
   if (loading) return <div style={{ textAlign:"center", color:D.textSub, padding:40 }}>Cargando estadísticas…</div>;
@@ -6318,6 +6336,27 @@ function EstadisticasJugadorPanel({ jugador, todasRondas, loading }) {
                   </div>
                 ))
               }
+            </div>
+          </div>
+        )}
+
+        {/* Tarjetas */}
+        {stats.tarjetaTotal > 0 && (
+          <div style={{ background:D.surface, border:`1px solid ${D.border}`, borderRadius:12, padding:"14px 16px" }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
+              <div style={{ fontSize:12, fontWeight:700, color:"#E57373" }}>🃏 Tarjetas ({nRondas} rondas)</div>
+              <div>
+                <span style={{ fontSize:20, fontWeight:900, color:"#E57373" }}>{stats.tarjetaTotal}</span>
+                <span style={{ fontSize:11, color:D.textSub }}> total</span>
+              </div>
+            </div>
+            <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
+              {TARJETAS.filter(t => stats.tarjetaConteos[t.key] > 0).map(t => (
+                <div key={t.key} style={{ padding:"5px 10px", background:D.bg, border:`1px solid ${D.border}`, borderRadius:10, fontSize:11 }}>
+                  <span style={{ color:D.textSub }}>{t.label}</span>
+                  <span style={{ fontWeight:800, color:"#E57373", marginLeft:4 }}>×{stats.tarjetaConteos[t.key]}</span>
+                </div>
+              ))}
             </div>
           </div>
         )}
@@ -7549,7 +7588,7 @@ function HandicapWHSScreen({ onExit, appStyle }) {
   const [whsResult, setWhsResult] = useState(null);
   const [tab, setTab] = useState("perfil"); // "perfil" | "grafica" | "comparativa"
   const [allResults, setAllResults] = useState({}); // nombre -> whsResult para comparativa
-  const whsStatsRef = useRef(null);
+  const whsStatsRef = React.useRef(null);
 
   useEffect(() => {
     Promise.all([get(clubRef("historial")), get(clubRef("directorio"))]).then(([h, d]) => {
@@ -8094,6 +8133,7 @@ function EstadisticasScreen({ onExit, appStyle }) {
         marcasJugador,
         playerOptsArr: r.playerOptsArr,
         piIdx: pi,
+        tarjetasRonda: r.tarjetas||null,
       });
     });
   });
@@ -8143,6 +8183,24 @@ function EstadisticasScreen({ onExit, appStyle }) {
       });
     });
     const avgMarcaPts = rds.length > 0 ? Math.round(marcaPtsTotales / rds.length * 10) / 10 : 0;
+    // Tarjetas del jugador
+    const tarjetaConteos = {};
+    TARJETAS.forEach(t => { tarjetaConteos[t.key] = 0; });
+    let tarjetaTotal = 0;
+    rds.forEach(r => {
+      const opts = r.playerOptsArr?.[r.piIdx];
+      if (opts?.tarjetas === false) return;
+      const pi = r.piIdx;
+      const tObj = r.tarjetasRonda || {};
+      TARJETAS.forEach(t => {
+        const val = tObj[t.key];
+        if (t.key === "peorscore") {
+          if (Array.isArray(val) ? val.includes(pi) : val === pi) { tarjetaConteos[t.key]++; tarjetaTotal++; }
+        } else {
+          if (val === pi) { tarjetaConteos[t.key]++; tarjetaTotal++; }
+        }
+      });
+    });
     // Evolucion HC
     const evolucion = rds.map(r => ({ fecha:r.fecha, hc:r.hc, bruto:r.bruto, scores:r.scores, pars:r.pars, nHoles:r.nHoles, campo:r.campo, marcasJugador:r.marcasJugador||{} })).reverse();
     // Por campo
@@ -8152,7 +8210,7 @@ function EstadisticasScreen({ onExit, appStyle }) {
       if (!porCampo[r.campo]) porCampo[r.campo] = [];
       if (r.bruto !== null) porCampo[r.campo].push(r.bruto);
     });
-    return { promBruto, promNeto, mejorBruto, peorBruto, hcSugerido, evolucion, porCampo, nRondas:conBruto.length, hcActual: rds[0]?.hc, marcaConteos, marcaPtsTotales, avgMarcaPts };
+    return { promBruto, promNeto, mejorBruto, peorBruto, hcSugerido, evolucion, porCampo, nRondas:conBruto.length, hcActual: rds[0]?.hc, marcaConteos, marcaPtsTotales, avgMarcaPts, tarjetaConteos, tarjetaTotal };
   };
 
   const stats = jugadorSel ? calcStats(jugadorSel) : null;
@@ -8200,6 +8258,45 @@ function EstadisticasScreen({ onExit, appStyle }) {
     }).sort((a,b) => b.ptsTotales - a.ptsTotales);
   }, [grupoSel, rondas, nRondasGrupo]);
 
+  // ── Calcular ranking de tarjetas para el grupo seleccionado ──
+  const rankingTarjetasGrupo = React.useMemo(() => {
+    if (!grupoSel || rondas.length === 0) return null;
+    const miembros = grupoSel.miembros;
+    return miembros.map(m => {
+      const mNombre = m.nombre.trim().toLowerCase();
+      const rondasDelJugador = rondas.filter(r => {
+        const names = (r.playerNames||[]).map(n => n.trim().toLowerCase());
+        const ids = r.playerIds||[];
+        return ids.includes(m.id) || names.includes(mNombre);
+      });
+      const rondasN = rondasDelJugador.slice(0, nRondasGrupo);
+      let tarjetaTotal = 0, rondasJugadas = 0;
+      const conteos = {};
+      TARJETAS.forEach(t => { conteos[t.key] = 0; });
+      rondasN.forEach(r => {
+        const names = (r.playerNames||[]).map(n => n.trim().toLowerCase());
+        const ids = r.playerIds||[];
+        let pi = -1;
+        ids.forEach((id, i) => { if (id === m.id && pi === -1) pi = i; });
+        if (pi === -1) names.forEach((n, i) => { if (n === mNombre && pi === -1) pi = i; });
+        if (pi === -1) return;
+        const opts = r.playerOptsArr?.[pi];
+        if (opts?.tarjetas === false) return;
+        rondasJugadas++;
+        const tObj = r.tarjetas || {};
+        TARJETAS.forEach(t => {
+          const val = tObj[t.key];
+          if (t.key === "peorscore") {
+            if (Array.isArray(val) ? val.includes(pi) : val === pi) { conteos[t.key]++; tarjetaTotal++; }
+          } else {
+            if (val === pi) { conteos[t.key]++; tarjetaTotal++; }
+          }
+        });
+      });
+      return { nombre: m.nombre, id: m.id, tarjetaTotal, rondasJugadas, totalRondasHist: rondasDelJugador.length, conteos };
+    }).sort((a,b) => b.tarjetaTotal - a.tarjetaTotal);
+  }, [grupoSel, rondas, nRondasGrupo]);
+
   return (
     <div style={{ ...appStyle, overflowY:"auto" }}>
       {/* Header */}
@@ -8213,7 +8310,7 @@ function EstadisticasScreen({ onExit, appStyle }) {
 
       {/* Tabs */}
       <div style={{ display:"flex", borderBottom:`2px solid ${D.border}`, background:D.surface }}>
-        {[["jugador","👤 Por jugador"],["grupo","🏌️ Marcas por grupo"]].map(([k,lbl]) => (
+        {[["jugador","👤 Por jugador"],["grupo","🏌️ Marcas"],["tarjetas","🃏 Tarjetas"]].map(([k,lbl]) => (
           <button key={k} onClick={() => setTabEst(k)}
             style={{ flex:1, padding:"11px 8px", border:"none", background:"transparent", fontSize:12, fontWeight:tabEst===k?800:500, color:tabEst===k?D.gold:D.textSub, borderBottom:tabEst===k?`3px solid ${D.gold}`:"3px solid transparent", cursor:"pointer" }}>
             {lbl}
@@ -8307,6 +8404,88 @@ function EstadisticasScreen({ onExit, appStyle }) {
                   </Card>
                 )}
                 {grupoSel && (!rankingMarcasGrupo || rankingMarcasGrupo.length === 0) && (
+                  <Card><div style={{ textAlign:"center", color:D.textSub, padding:24 }}>No se encontraron rondas del grupo {grupoSel.nombre} en el historial</div></Card>
+                )}
+              </>
+            )}
+          </>
+        )}
+
+        {/* ── TAB TARJETAS POR GRUPO ── */}
+        {!loading && tabEst === "tarjetas" && (
+          <>
+            {grupos.length === 0 ? (
+              <Card><div style={{ textAlign:"center", color:D.textSub, padding:24 }}>No hay grupos configurados aún</div></Card>
+            ) : (
+              <>
+                <Card>
+                  <SLabel>Seleccionar grupo</SLabel>
+                  <div style={{ display:"flex", flexWrap:"wrap", gap:6, marginBottom:12 }}>
+                    {grupos.map(g => (
+                      <button key={g._key} onClick={() => setGrupoSel(grupoSel?._key===g._key ? null : g)}
+                        style={{ padding:"7px 14px", border:`1px solid ${grupoSel?._key===g._key?"#E57373":D.border}`, borderRadius:20, background:grupoSel?._key===g._key?"#E5737322":"transparent", color:grupoSel?._key===g._key?"#E57373":D.textSub, fontSize:12, fontWeight:grupoSel?._key===g._key?700:400, cursor:"pointer" }}>
+                        {g.nombre}
+                      </button>
+                    ))}
+                  </div>
+                  {grupoSel && (
+                    <div>
+                      <div style={{ fontSize:10, color:D.textSub, marginBottom:6, fontWeight:700, textTransform:"uppercase", letterSpacing:1 }}>Últimas N rondas</div>
+                      <div style={{ display:"flex", gap:6 }}>
+                        {[5,10,15,20].map(n => (
+                          <button key={n} onClick={() => setNRondasGrupo(n)}
+                            style={{ padding:"6px 12px", border:`1px solid ${nRondasGrupo===n?"#E57373":D.border}`, borderRadius:10, background:nRondasGrupo===n?"#E5737322":"transparent", color:nRondasGrupo===n?"#E57373":D.textSub, fontSize:12, fontWeight:700, cursor:"pointer" }}>
+                            {n}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </Card>
+                {grupoSel && rankingTarjetasGrupo && rankingTarjetasGrupo.length > 0 && (
+                  <Card>
+                    <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14 }}>
+                      <div>
+                        <div style={{ fontSize:15, fontWeight:900, color:D.text }}>{grupoSel.nombre}</div>
+                        <div style={{ fontSize:11, color:D.textSub }}>Últimas {nRondasGrupo} rondas por jugador</div>
+                      </div>
+                      <div style={{ fontSize:22 }}>🃏</div>
+                    </div>
+                    <div style={{ display:"flex", flexWrap:"wrap", gap:5, marginBottom:14, padding:"8px 10px", background:D.bg, borderRadius:10 }}>
+                      {TARJETAS.map(t => (
+                        <div key={t.key} style={{ fontSize:10, color:D.textSub, background:D.surface, border:`1px solid ${D.border}`, borderRadius:8, padding:"3px 7px" }}>{t.label}</div>
+                      ))}
+                    </div>
+                    {rankingTarjetasGrupo.map((j, idx) => (
+                      <div key={j.id||j.nombre} style={{ display:"flex", flexDirection:"column", gap:4, padding:"10px 12px", marginBottom:8, background:idx===0?"#E5737322":D.bg, border:`1px solid ${idx===0?"#E57373":D.border}`, borderRadius:12 }}>
+                        <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+                          <div style={{ width:30, height:30, borderRadius:"50%", background:idx===0?"#B71C1C":idx===1?"#78909C":idx===2?"#A0522D":"#CCC", display:"flex", alignItems:"center", justifyContent:"center", fontSize:14, fontWeight:900, color:"#fff", flexShrink:0 }}>
+                            {idx===0?"🥇":idx===1?"🥈":idx===2?"🥉":<span style={{fontSize:12}}>{idx+1}</span>}
+                          </div>
+                          <div style={{ flex:1 }}>
+                            <div style={{ fontSize:13, fontWeight:800, color:D.text }}>{j.nombre}</div>
+                            <div style={{ fontSize:10, color:D.textSub }}>{j.rondasJugadas} de {Math.min(nRondasGrupo, j.totalRondasHist)} rondas · {j.totalRondasHist} en historial</div>
+                          </div>
+                          <div style={{ textAlign:"right" }}>
+                            <div style={{ fontSize:22, fontWeight:900, color:idx===0?"#E57373":D.text, lineHeight:1 }}>{j.tarjetaTotal}</div>
+                            <div style={{ fontSize:10, color:D.textSub }}>tarjetas</div>
+                          </div>
+                        </div>
+                        {j.tarjetaTotal > 0 && (
+                          <div style={{ display:"flex", flexWrap:"wrap", gap:5, paddingLeft:40, marginTop:2 }}>
+                            {TARJETAS.filter(t => j.conteos[t.key] > 0).map(t => (
+                              <div key={t.key} style={{ fontSize:10, padding:"2px 8px", background:D.surface, border:`1px solid ${D.border}`, borderRadius:8, color:D.textSub }}>
+                                {t.label} <span style={{ fontWeight:700, color:"#E57373" }}>×{j.conteos[t.key]}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {j.tarjetaTotal === 0 && <div style={{ fontSize:11, color:D.textDim, paddingLeft:40, fontStyle:"italic" }}>Sin tarjetas en este período</div>}
+                      </div>
+                    ))}
+                  </Card>
+                )}
+                {grupoSel && (!rankingTarjetasGrupo || rankingTarjetasGrupo.length === 0) && (
                   <Card><div style={{ textAlign:"center", color:D.textSub, padding:24 }}>No se encontraron rondas del grupo {grupoSel.nombre} en el historial</div></Card>
                 )}
               </>
@@ -8463,6 +8642,27 @@ function EstadisticasScreen({ onExit, appStyle }) {
                               </div>
                             ))
                           }
+                        </div>
+                      </Card>
+                    )}
+
+                    {/* Tarjetas del jugador */}
+                    {stats.tarjetaTotal > 0 && (
+                      <Card>
+                        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
+                          <SLabel style={{ margin:0 }}>🃏 Tarjetas ({nRondas} rondas)</SLabel>
+                          <div style={{ textAlign:"right" }}>
+                            <span style={{ fontSize:20, fontWeight:900, color:"#E57373" }}>{stats.tarjetaTotal}</span>
+                            <span style={{ fontSize:11, color:D.textSub }}> total</span>
+                          </div>
+                        </div>
+                        <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
+                          {TARJETAS.filter(t => stats.tarjetaConteos[t.key] > 0).map(t => (
+                            <div key={t.key} style={{ padding:"5px 10px", background:D.surface, border:`1px solid ${D.border}`, borderRadius:10, fontSize:11 }}>
+                              <span style={{ color:D.textSub }}>{t.label}</span>
+                              <span style={{ fontWeight:800, color:"#E57373", marginLeft:4 }}>×{stats.tarjetaConteos[t.key]}</span>
+                            </div>
+                          ))}
                         </div>
                       </Card>
                     )}
