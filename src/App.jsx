@@ -8295,7 +8295,8 @@ function EstadisticasScreen({ onExit, appStyle }) {
           }
         });
       });
-      return { nombre: m.nombre, id: m.id, tarjetaTotal, rondasJugadas, totalRondasHist: rondasDelJugador.length, conteos };
+      const avgTarjetas = rondasJugadas > 0 ? Math.round(tarjetaTotal / rondasJugadas * 10) / 10 : 0;
+      return { nombre: m.nombre, id: m.id, tarjetaTotal, avgTarjetas, rondasJugadas, totalRondasHist: rondasDelJugador.length, conteos };
     }).sort((a,b) => b.tarjetaTotal - a.tarjetaTotal);
   }, [grupoSel, rondas, nRondasGrupo]);
 
@@ -8470,7 +8471,7 @@ function EstadisticasScreen({ onExit, appStyle }) {
                           </div>
                           <div style={{ textAlign:"right" }}>
                             <div style={{ fontSize:22, fontWeight:900, color:idx===0?"#E57373":D.text, lineHeight:1 }}>{j.tarjetaTotal}</div>
-                            <div style={{ fontSize:10, color:D.textSub }}>tarjetas</div>
+                            <div style={{ fontSize:10, color:D.textSub }}>tarjetas · <span style={{ color:"#E57373", fontWeight:700 }}>{j.avgTarjetas}</span> avg</div>
                           </div>
                         </div>
                         {j.tarjetaTotal > 0 && (
