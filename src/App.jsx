@@ -9046,6 +9046,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
   const [expandedGrupoHist, setExpandedGrupoHist] = useState(null);   // grupoId
   const [histTab, setHistTab] = useState("rondas");
   const [confirmDeleteHist, setConfirmDeleteHist] = useState(null);
+  const [confirmReaplicarHC, setConfirmReaplicarHC] = useState(null); // id de ronda
 
   // Load historial from Firebase — Fase 3: lee de clubes/club_h19/historial
   useEffect(() => {
@@ -9578,6 +9579,17 @@ function AdminApp({ onExit, torneoConfig = null }) {
       set(clubRef(`historial/${rondaId}`), cleanHistData)
         .catch(err => alert("Error guardando historial: " + err.message));
       set(ref(db, `historial/${rondaId}`), cleanHistData).catch(() => {});  // dual-write
+      // Fase 4: aplicar ajustes de HC automáticamente al directorio
+      try {
+        const hcConCambio = hc.filter(u => u.delta !== 0);
+        if (hcConCambio.length > 0) {
+          const dirActualizado = dir.map(p => {
+            const upd = hcConCambio.find(u => u.id === p.id);
+            return upd ? { ...p, hc: upd.after } : p;
+          });
+          saveDir(dirActualizado);
+        }
+      } catch(e) { /* no interrumpir el flujo si falla el HC */ }
       // Si estamos en modo torneo, también guardar en torneos
       if (torneoConfig) {
         const torneoHistKey = `${torneoConfig.torneoId}_${torneoConfig.grupoId}`;
@@ -9596,9 +9608,9 @@ function AdminApp({ onExit, torneoConfig = null }) {
   };
 
   const confirmHC = () => {
-    if (!results) return;
-    const updated = dir.map(p => { const u=results.hcUpdates.find(u=>u.id===p.id); return u?{...p,hc:u.after}:p; });
-    saveDir(updated); setSel(new Set()); setScreen("sel");
+    // Los HC ya se aplicaron automáticamente al finalizar la ronda.
+    // Este botón ahora solo sirve para salir a la pantalla de selección.
+    setSel(new Set()); setScreen("sel");
   };
 
   const shareRonda = () => {
@@ -10142,7 +10154,40 @@ function AdminApp({ onExit, torneoConfig = null }) {
                       })}
                     </div>
                   )}
-                  <div style={{ marginTop:14, paddingTop:10, borderTop:`1px solid ${D.border}` }}>
+                  {r.hcUpdates && r.hcUpdates.some(u => u.delta !== 0) && (
+                    <div style={{ marginTop:12 }}>
+                      <div style={{ fontSize:11, fontWeight:700, color:D.textSub, marginBottom:6, textTransform:"uppercase", letterSpacing:1 }}>📊 Ajuste de handicaps</div>
+                      {r.hcUpdates.map((u, i) => (
+                        <div key={u.id||i} style={{ display:"flex", justifyContent:"space-between", fontSize:12, padding:"3px 0" }}>
+                          <span style={{ fontWeight:600 }}>{u.name}</span>
+                          <span style={{ color: u.delta > 0 ? D.danger : u.delta < 0 ? D.success : D.textSub, fontWeight:700 }}>
+                            {u.delta > 0 ? `+${u.delta}` : u.delta < 0 ? `${u.delta}` : "Sin cambio"} → HC {u.after}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <div style={{ marginTop:14, paddingTop:10, borderTop:`1px solid ${D.border}`, display:"flex", flexDirection:"column", gap:8 }}>
+                    {r.hcUpdates && r.hcUpdates.some(u => u.delta !== 0) && (
+                      confirmReaplicarHC === r.id ? (
+                        <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                          <span style={{ fontSize:12, color:D.warning||"#F59E0B", flex:1 }}>¿Re-aplicar estos ajustes de HC al directorio actual?</span>
+                          <button onClick={() => {
+                            const conCambio = r.hcUpdates.filter(u => u.delta !== 0);
+                            const dirActualizado = dir.map(p => {
+                              const upd = conCambio.find(u => u.id === p.id);
+                              return upd ? { ...p, hc: upd.after } : p;
+                            });
+                            saveDir(dirActualizado);
+                            setConfirmReaplicarHC(null);
+                            alert("✅ Handicaps actualizados correctamente.");
+                          }} style={{ padding:"6px 12px", border:`1px solid ${D.warning||"#F59E0B"}`, borderRadius:8, background:"transparent", color:D.warning||"#F59E0B", fontSize:11, fontWeight:700, cursor:"pointer" }}>Aplicar</button>
+                          <button onClick={() => setConfirmReaplicarHC(null)} style={{ padding:"6px 12px", border:`1px solid ${D.border}`, borderRadius:8, background:"transparent", color:D.textSub, fontSize:11, cursor:"pointer" }}>Cancelar</button>
+                        </div>
+                      ) : (
+                        <button onClick={() => setConfirmReaplicarHC(r.id)} style={{ width:"100%", padding:"8px", border:`1px solid ${D.warning||"#F59E0B"}44`, borderRadius:8, background:"transparent", color:D.warning||"#F59E0B", fontSize:12, cursor:"pointer" }}>⚡ Re-aplicar ajuste de HC</button>
+                      )
+                    )}
                     {confirmDeleteHist === r.id ? (
                       <div style={{ display:"flex", alignItems:"center", gap:8 }}>
                         <span style={{ fontSize:12, color:D.danger, flex:1 }}>¿Eliminar esta ronda del historial?</span>
@@ -11348,7 +11393,7 @@ function AdminApp({ onExit, torneoConfig = null }) {
               <div style={{ fontSize:12, color:D.textSub }}>El administrador general del torneo confirmará los handicaps y cerrará el torneo cuando todos los grupos terminen.</div>
             </div>
           ) : (
-            <Btn onClick={confirmHC}>Confirmar y guardar handicaps</Btn>
+            <Btn onClick={confirmHC}>✅ Handicaps actualizados · Terminar</Btn>
           )}
           {torneoConfig ? (
             <div style={{ display:"flex", flexDirection:"column", gap:8, marginTop:8 }}>
