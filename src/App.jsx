@@ -8793,10 +8793,13 @@ function EstadisticasScreen({ onExit, appStyle }) {
   const [whsHI, setWhsHI] = useState(null);
   const [rondaExpandida, setRondaExpandida] = useState(null); // índice de la ronda expandida en historial
   // ── Marcas por Grupo ──
-  const [tabEst, setTabEst] = useState("jugador"); // "jugador" | "grupo"
+  const [tabEst, setTabEst] = useState("jugador"); // "jugador" | "grupo" | "tarjetas" | "ric"
   const [grupos, setGrupos] = useState([]);
   const [grupoSel, setGrupoSel] = useState(null);
   const [nRondasGrupo, setNRondasGrupo] = useState(10);
+  // ── RIC tab ──
+  const [ricRanking, setRicRanking] = useState(null);
+  const [loadingRIC, setLoadingRIC] = useState(false);
 
   useEffect(() => {
     get(clubRef("grupos")).then(snap => {
@@ -8822,6 +8825,36 @@ function EstadisticasScreen({ onExit, appStyle }) {
       setLoading(false);
     }).catch(() => setLoading(false));
   }, []);
+
+  // ── Cargar RIC cuando se activa el tab ──
+  useEffect(() => {
+    if (tabEst !== "ric") return;
+    if (ricRanking !== null) return; // ya calculado
+    setLoadingRIC(true);
+    Promise.all([
+      get(clubRef("historial")),
+      get(clubRef("torneos")),
+      get(clubRef("directorio")),
+    ]).then(([histSnap, tornSnap, dirSnap]) => {
+      const historial = histSnap.exists()
+        ? Object.entries(histSnap.val()).map(([k,v]) => ({ ...v, rondaId: k }))
+        : [];
+      const historialTorneos = tornSnap.exists()
+        ? Object.entries(tornSnap.val()).filter(([,v]) => v.status === "finalizado").map(([k,v]) => ({ ...v, id: k }))
+        : [];
+      const dirData = dirSnap.exists() ? Object.entries(dirSnap.val()).map(([k,v]) => ({ ...v, id: k })) : [];
+      if (dirData.length === 0) { setLoadingRIC(false); setRicRanking([]); return; }
+      const crudos = dirData.map(j => calcRIC(j, historial, historialTorneos, dirData));
+      const normalizados = normalizarRICs(crudos);
+      // Adjuntar nombre al resultado
+      const conNombre = normalizados.map(r => {
+        const jug = dirData.find(d => d.id === r.jugadorId);
+        return { ...r, nombre: jug ? (jug.nombre || jug.name || r.jugadorId) : r.jugadorId, hc: jug?.hc ?? null };
+      }).sort((a,b) => b.ric - a.ric);
+      setRicRanking(conNombre);
+      setLoadingRIC(false);
+    }).catch(() => { setLoadingRIC(false); setRicRanking([]); });
+  }, [tabEst]);
 
   // Construir índice de jugadores (clave = nombre, para compatibilidad con selector)
   // Cada entrada guardará también su id canónico cuando esté disponible
@@ -9034,9 +9067,9 @@ function EstadisticasScreen({ onExit, appStyle }) {
 
       {/* Tabs */}
       <div style={{ display:"flex", borderBottom:`2px solid ${D.border}`, background:D.surface }}>
-        {[["jugador","👤 Por jugador"],["grupo","🏌️ Marcas"],["tarjetas","🃏 Tarjetas"]].map(([k,lbl]) => (
+        {[["jugador","👤 Por jugador"],["grupo","🏌️ Marcas"],["tarjetas","🃏 Tarjetas"],["ric","🎯 RIC"]].map(([k,lbl]) => (
           <button key={k} onClick={() => setTabEst(k)}
-            style={{ flex:1, padding:"11px 8px", border:"none", background:"transparent", fontSize:12, fontWeight:tabEst===k?800:500, color:tabEst===k?D.gold:D.textSub, borderBottom:tabEst===k?`3px solid ${D.gold}`:"3px solid transparent", cursor:"pointer" }}>
+            style={{ flex:1, padding:"11px 4px", border:"none", background:"transparent", fontSize:11, fontWeight:tabEst===k?800:500, color:tabEst===k?D.gold:D.textSub, borderBottom:tabEst===k?`3px solid ${D.gold}`:"3px solid transparent", cursor:"pointer" }}>
             {lbl}
           </button>
         ))}
@@ -9212,6 +9245,78 @@ function EstadisticasScreen({ onExit, appStyle }) {
                 {grupoSel && (!rankingTarjetasGrupo || rankingTarjetasGrupo.length === 0) && (
                   <Card><div style={{ textAlign:"center", color:D.textSub, padding:24 }}>No se encontraron rondas del grupo {grupoSel.nombre} en el historial</div></Card>
                 )}
+              </>
+            )}
+          </>
+        )}
+
+        {/* ── TAB RIC ── */}
+        {tabEst === "ric" && (
+          <>
+            {loadingRIC && (
+              <Card><div style={{ textAlign:"center", color:D.textSub, padding:24 }}>Calculando RIC de todos los jugadores...</div></Card>
+            )}
+            {!loadingRIC && ricRanking !== null && ricRanking.length === 0 && (
+              <Card><div style={{ textAlign:"center", color:D.textSub, padding:24 }}>No hay jugadores en el directorio</div></Card>
+            )}
+            {!loadingRIC && ricRanking && ricRanking.length > 0 && (
+              <>
+                <Card>
+                  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:4 }}>
+                    <div>
+                      <div style={{ fontSize:15, fontWeight:900, color:D.text }}>Rating Integral de Competitividad</div>
+                      <div style={{ fontSize:11, color:D.textSub }}>{ricRanking.length} jugadores · mayor a menor</div>
+                    </div>
+                    <div style={{ fontSize:22 }}>🎯</div>
+                  </div>
+                  <div style={{ fontSize:10, color:D.textDim, marginTop:6, padding:"6px 8px", background:D.bg, borderRadius:8 }}>
+                    RIC = HC Interno (45%) + WHC (25%) + Score (20%) + Dominancia (10%) · escala 0–100
+                  </div>
+                </Card>
+                {ricRanking.map((r, idx) => {
+                  const confColor = r.confiabilidad === "alta" ? "#4CAF50" : r.confiabilidad === "media" ? "#FF9800" : "#9E9E9E";
+                  const confLabel = r.confiabilidad === "alta" ? "●" : r.confiabilidad === "media" ? "◑" : "○";
+                  const isTop3 = idx < 3;
+                  const medalColor = idx===0?"#FFD700":idx===1?"#C0C0C0":"#CD7F32";
+                  return (
+                    <div key={r.jugadorId} style={{ padding:"10px 12px", marginBottom:6, background:isTop3?`${medalColor}18`:D.surface, border:`1px solid ${isTop3?medalColor:D.border}`, borderRadius:12 }}>
+                      <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+                        {/* Posición */}
+                        <div style={{ width:30, height:30, borderRadius:"50%", background:isTop3?medalColor:"#555", display:"flex", alignItems:"center", justifyContent:"center", fontSize:isTop3?16:12, fontWeight:900, color:isTop3?"#000":"#fff", flexShrink:0 }}>
+                          {idx===0?"🥇":idx===1?"🥈":idx===2?"🥉":idx+1}
+                        </div>
+                        {/* Nombre */}
+                        <div style={{ flex:1 }}>
+                          <div style={{ fontSize:14, fontWeight:800, color:D.text }}>{r.nombre}</div>
+                          <div style={{ fontSize:10, color:D.textSub }}>
+                            HC {r.hc ?? "—"} · {r.nRondas} ronda{r.nRondas!==1?"s":""}{r.nTorneos>0?` · ${r.nTorneos} torneo${r.nTorneos!==1?"s":""}`:""}
+                            {" "}·{" "}<span style={{ color:confColor, fontWeight:700 }}>{confLabel} {r.confiabilidad}</span>
+                          </div>
+                        </div>
+                        {/* RIC score */}
+                        <div style={{ textAlign:"right", flexShrink:0 }}>
+                          <div style={{ fontSize:24, fontWeight:900, color:isTop3?medalColor:D.gold, lineHeight:1 }}>{r.ric}</div>
+                          <div style={{ fontSize:10, color:D.textSub }}>RIC</div>
+                        </div>
+                      </div>
+                      {/* Componentes */}
+                      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr", gap:4, marginTop:8, paddingTop:8, borderTop:`1px solid ${D.border}` }}>
+                        {[
+                          { lbl:"HC Int.", val:r.hiNorm, pct:Math.round((r.pesos?.hi??0.45)*100) },
+                          { lbl:"WHC", val:r.whcValido ? r.whcNorm : "—", pct:Math.round((r.pesos?.whc??0)*100) },
+                          { lbl:"Score", val:r.scoreNorm, pct:Math.round((r.pesos?.score??0.20)*100) },
+                          { lbl:"Dom.", val:r.domNorm, pct:Math.round((r.pesos?.dom??0.10)*100) },
+                        ].map(c => (
+                          <div key={c.lbl} style={{ textAlign:"center", padding:"4px 2px", background:D.bg, borderRadius:6 }}>
+                            <div style={{ fontSize:9, color:D.textSub, marginBottom:2 }}>{c.lbl}</div>
+                            <div style={{ fontSize:13, fontWeight:800, color:D.text }}>{c.val === "—" ? "—" : c.val}</div>
+                            <div style={{ fontSize:9, color:D.textDim }}>{c.pct}%</div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
               </>
             )}
           </>
