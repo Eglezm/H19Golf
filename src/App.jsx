@@ -1481,8 +1481,26 @@ function normalizarRICs(ricCrudos) {
  * @param {number} nIteraciones
  * @returns {Array}               — array de grupos (cada grupo = array de jugadores)
  */
-function distribuirEnGruposRIC(jugadores, nGrupos, ricMap, nIteraciones = 500) {
+function distribuirEnGruposRIC(jugadores, nGrupos, ricMap, nIteraciones = 800) {
   if (jugadores.length < nGrupos) return [];
+
+  const getRIC = (p) => ricMap[p.id]?.ric ?? 50;
+
+  // ── NUEVA ESTRATEGIA: ordenar por RIC + perturbación aleatoria controlada ──
+  // Esto asegura que jugadores de RIC similar tiendan a quedar juntos,
+  // con suficiente aleatoriedad para no obtener siempre la misma distribución.
+
+  // Varianza interna total: Σ (RIC_i - avg_grupo)² para todos los jugadores
+  // Este es el criterio a MINIMIZAR. Nada que ver con igualar promedios de grupos.
+  const scoreDispersionInterna = (grupos) => {
+    let total = 0;
+    grupos.forEach(g => {
+      if (g.length === 0) return;
+      const avg = g.reduce((a, p) => a + getRIC(p), 0) / g.length;
+      g.forEach(p => { total += (getRIC(p) - avg) ** 2; });
+    });
+    return total;
+  };
 
   // Fisher-Yates
   const shuffle = (arr) => {
@@ -1507,33 +1525,55 @@ function distribuirEnGruposRIC(jugadores, nGrupos, ricMap, nIteraciones = 500) {
     return grupos;
   };
 
-  const getRIC = (p) => ricMap[p.id]?.ric ?? 50;
-
-  // Varianza de promedios de grupos (objetivo: minimizar)
-  const scoreDistribucion = (grupos) => {
-    const promedios = grupos.map(g => g.reduce((a,p)=>a+getRIC(p),0) / g.length);
-    const media = promedios.reduce((a,b)=>a+b,0) / promedios.length;
-    return promedios.reduce((a,p) => a + (p-media)**2, 0);
+  // ── ESTRATEGIA PRINCIPAL: Ordenar por RIC + jitter aleatorio ──
+  // Al ordenar de mayor a menor RIC y asignar en bloques consecutivos,
+  // los jugadores más similares terminan en el mismo grupo.
+  // El jitter introduce aleatoriedad sin destruir la similitud.
+  const hacerGruposOrdenados = (jitterFactor) => {
+    // Ordenar por RIC con ruido gaussiano controlado por jitterFactor
+    const conJitter = jugadores.map(p => ({
+      p,
+      ric: getRIC(p) + (Math.random() - 0.5) * 2 * jitterFactor,
+    }));
+    conJitter.sort((a, b) => b.ric - a.ric);
+    return hacerGrupos(conJitter.map(x => x.p));
   };
 
   let mejores = [];
-  const TOP_K = 10;
+  const TOP_K = 12;
 
-  for (let i = 0; i < nIteraciones; i++) {
-    const shuffled = shuffle(jugadores);
-    const grupos   = hacerGrupos(shuffled);
-    const score    = scoreDistribucion(grupos);
+  // Fase 1: 600 iteraciones con jitter pequeño (±5 pts) — búsqueda de alta calidad
+  for (let i = 0; i < 600; i++) {
+    const grupos = hacerGruposOrdenados(5);
+    const score  = scoreDispersionInterna(grupos);
     mejores.push({ grupos, score });
-    if (mejores.length > TOP_K * 3) {
-      mejores.sort((a,b)=>a.score-b.score);
+    if (mejores.length > TOP_K * 4) {
+      mejores.sort((a, b) => a.score - b.score);
       mejores = mejores.slice(0, TOP_K);
     }
   }
 
-  mejores.sort((a,b)=>a.score-b.score);
-  const topK = mejores.slice(0, Math.min(TOP_K, mejores.length));
-  // Elegir aleatoriamente entre las mejores para mantener variedad
-  const elegido = topK[Math.floor(Math.random() * topK.length)];
+  // Fase 2: 200 iteraciones con jitter mayor (±15 pts) — exploración para variedad
+  for (let i = 0; i < 200; i++) {
+    const grupos = hacerGruposOrdenados(15);
+    const score  = scoreDispersionInterna(grupos);
+    mejores.push({ grupos, score });
+    if (mejores.length > TOP_K * 4) {
+      mejores.sort((a, b) => a.score - b.score);
+      mejores = mejores.slice(0, TOP_K);
+    }
+  }
+
+  mejores.sort((a, b) => a.score - b.score);
+  const best = mejores[0].score;
+
+  // Umbral de tolerancia: aceptar soluciones dentro del 15% del óptimo
+  // Esto garantiza variedad sin sacrificar calidad de similitud
+  const tolerancia = best * 1.15 + 1; // +1 para evitar tolerancia=0 con score=0
+  const candidatos = mejores.filter(m => m.score <= tolerancia);
+
+  // Elegir aleatoriamente entre los candidatos aceptables
+  const elegido = candidatos[Math.floor(Math.random() * candidatos.length)];
   return elegido.grupos;
 }
 
@@ -1664,7 +1704,17 @@ function TorneoCrear({ onExit, onIniciarGrupo, appStyle, jugadorOrganizador }) {
   const ricGrupoStats = (grupo) => {
     const vals = grupo.players.map(p => ricMap[p.id]?.ric ?? 50);
     const avg = vals.reduce((a,b)=>a+b,0) / vals.length;
-    return { avg: Math.round(avg * 10) / 10 };
+    const min = Math.min(...vals);
+    const max = Math.max(...vals);
+    const spread = max - min;
+    const variance = vals.reduce((a,v) => a + (v - avg) ** 2, 0) / vals.length;
+    const stdDev = Math.sqrt(variance);
+    return {
+      avg: Math.round(avg * 10) / 10,
+      min, max,
+      spread: Math.round(spread * 10) / 10,
+      stdDev: Math.round(stdDev * 10) / 10,
+    };
   };
 
   useEffect(() => {
@@ -2070,44 +2120,64 @@ function TorneoCrear({ onExit, onIniciarGrupo, appStyle, jugadorOrganizador }) {
             {/* Preview RIC */}
             {previewRIC && (
               <Card style={{ border:`1px solid ${D.gold}44` }}>
-                <SLabel>Vista previa — Grupos balanceados por RIC</SLabel>
+                <SLabel>Vista previa — Grupos por similitud RIC</SLabel>
                 {(() => {
-                  // Calcular balance general
-                  const avgs = previewRIC.map(g => ricGrupoStats(g).avg);
-                  const globalAvg = avgs.reduce((a,b)=>a+b,0) / avgs.length;
-                  const diff = Math.max(...avgs) - Math.min(...avgs);
-                  const balanceLabel = diff < 5 ? "Excelente" : diff < 12 ? "Bueno" : "Aceptable";
-                  const balanceColor = diff < 5 ? D.success : diff < 12 ? D.gold : D.textSub;
+                  // Calidad = promedio de dispersión interna (stdDev) de todos los grupos
+                  // Cuanto menor el stdDev promedio, más similares son los jugadores de cada grupo
+                  const stats = previewRIC.map(g => ricGrupoStats(g));
+                  const avgStdDev = stats.reduce((a,s)=>a+s.stdDev,0) / stats.length;
+                  const similLabel = avgStdDev < 5 ? "Excelente" : avgStdDev < 12 ? "Bueno" : "Aceptable";
+                  const similColor = avgStdDev < 5 ? D.success : avgStdDev < 12 ? D.gold : D.textSub;
                   return (
-                    <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"8px 10px", background:D.surface, borderRadius:8, marginBottom:12, fontSize:12 }}>
-                      <span style={{ color:D.textSub }}>Balance general:</span>
-                      <span style={{ fontWeight:700, color:balanceColor }}>{balanceLabel} · Δ {diff.toFixed(1)} pts</span>
+                    <div style={{ padding:"8px 10px", background:D.surface, borderRadius:8, marginBottom:12, fontSize:12 }}>
+                      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                        <span style={{ color:D.textSub }}>Similitud interna:</span>
+                        <span style={{ fontWeight:700, color:similColor }}>{similLabel} · σ {avgStdDev.toFixed(1)} pts</span>
+                      </div>
+                      <div style={{ fontSize:10, color:D.textDim, marginTop:3 }}>
+                        σ = dispersión interna por grupo (menor = jugadores más parejos)
+                      </div>
                     </div>
                   );
                 })()}
                 {previewRIC.map((g, i) => {
-                  const { avg } = ricGrupoStats(g);
+                  const { avg, min, max, spread, stdDev } = ricGrupoStats(g);
+                  const similColor = stdDev < 5 ? D.success : stdDev < 12 ? D.gold : D.textSub;
+                  // Ordenar jugadores de mayor a menor RIC dentro del grupo
+                  const playersOrdenados = [...g.players].sort((a,b) => (ricMap[b.id]?.ric??50) - (ricMap[a.id]?.ric??50));
                   return (
-                    <div key={i} style={{ padding:"10px 0", borderBottom:`1px solid ${D.border}` }}>
-                      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:6 }}>
-                        <div style={{ fontSize:12, fontWeight:700, color:D.gold }}>{g.nombre}</div>
-                        <div style={{ fontSize:11, background:D.goldDim, color:D.gold, padding:"2px 8px", borderRadius:20, fontWeight:700 }}>
-                          RIC prom. {avg}
+                    <div key={i} style={{ marginBottom:10, padding:"10px 12px", background:D.bg, borderRadius:12, border:`1px solid ${D.border}` }}>
+                      {/* Header del grupo */}
+                      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:8 }}>
+                        <div>
+                          <div style={{ fontSize:13, fontWeight:800, color:D.gold }}>{g.nombre}</div>
+                          <div style={{ fontSize:10, color:D.textSub, marginTop:1 }}>
+                            {g.players.length} jugadores · prom. RIC {avg}
+                          </div>
+                        </div>
+                        <div style={{ textAlign:"right" }}>
+                          <div style={{ fontSize:10, fontWeight:700, color:similColor }}>σ {stdDev}</div>
+                          <div style={{ fontSize:9, color:D.textDim }}>min {min} · max {max}</div>
+                          <div style={{ fontSize:9, color:D.textDim }}>Δ {spread} pts</div>
                         </div>
                       </div>
-                      {g.players.map(p => {
+                      {/* Lista de jugadores ordenada de mayor a menor RIC */}
+                      {playersOrdenados.map((p, pi) => {
                         const rp = ricMap[p.id];
+                        const confColor = confiabilidadColor(rp?.confiabilidad);
+                        const confLbl   = confiabilidadLabel(rp?.confiabilidad);
                         return (
-                          <div key={p.id} style={{ display:"flex", alignItems:"center", gap:8, padding:"4px 0" }}>
-                            <Avatar name={p.name} id={p.id} size={20} />
-                            <div style={{ flex:1, fontSize:12 }}>{p.name}</div>
-                            <div style={{ fontSize:11, color:D.textSub }}>HC {p.hc}</div>
+                          <div key={p.id} style={{ display:"flex", alignItems:"center", gap:8, padding:"5px 0", borderTop: pi>0?`1px solid ${D.border}`:"none" }}>
+                            <Avatar name={p.name} id={p.id} size={22} />
+                            <div style={{ flex:1 }}>
+                              <div style={{ fontSize:12, fontWeight:600, color:D.text }}>{p.name}</div>
+                              <div style={{ fontSize:10, color:D.textSub }}>HC {p.hc}</div>
+                            </div>
                             {rp ? (
-                              <div style={{ display:"flex", flexDirection:"column", alignItems:"flex-end", gap:1 }}>
-                                <div style={{ fontSize:11, fontWeight:700, color:D.text }}>RIC {rp.ric}</div>
-                                <div style={{ fontSize:9, color:confiabilidadColor(rp.confiabilidad) }}>
-                                  {confiabilidadLabel(rp.confiabilidad)}
-                                  {!rp.whcValido && " · Provisional"}
+                              <div style={{ textAlign:"right" }}>
+                                <div style={{ fontSize:13, fontWeight:800, color:D.text }}>RIC {rp.ric}</div>
+                                <div style={{ fontSize:9, color:confColor }}>
+                                  {confLbl}{!rp.whcValido ? " · Prov." : ""}
                                 </div>
                               </div>
                             ) : (
@@ -2119,7 +2189,7 @@ function TorneoCrear({ onExit, onIniciarGrupo, appStyle, jugadorOrganizador }) {
                     </div>
                   );
                 })}
-                <div style={{ display:"flex", gap:8, marginTop:12 }}>
+                <div style={{ display:"flex", gap:8, marginTop:4 }}>
                   <button onClick={resortearRIC}
                     style={{ flex:1, padding:"10px", border:`1px solid ${D.border}`, borderRadius:10, background:"transparent", color:D.textSub, fontSize:12, cursor:"pointer" }}>
                     🔄 Volver a balancear
