@@ -8829,7 +8829,7 @@ function EstadisticasScreen({ onExit, appStyle }) {
   // ── Cargar RIC cuando se activa el tab ──
   useEffect(() => {
     if (tabEst !== "ric") return;
-    if (ricRanking !== null) return; // ya calculado
+    if (ricRanking !== null && ricRanking.length > 0) return; // ya calculado con datos
     setLoadingRIC(true);
     Promise.all([
       get(clubRef("historial")),
@@ -8842,14 +8842,16 @@ function EstadisticasScreen({ onExit, appStyle }) {
       const historialTorneos = tornSnap.exists()
         ? Object.entries(tornSnap.val()).filter(([,v]) => v.status === "finalizado").map(([k,v]) => ({ ...v, id: k }))
         : [];
-      const dirData = dirSnap.exists() ? Object.entries(dirSnap.val()).map(([k,v]) => ({ ...v, id: k })) : [];
+      // El directorio se guarda como { nextId, players: [...] }
+      const dirVal = dirSnap.exists() ? dirSnap.val() : null;
+      const dirData = dirVal ? (Array.isArray(dirVal.players) ? dirVal.players : []) : [];
       if (dirData.length === 0) { setLoadingRIC(false); setRicRanking([]); return; }
       const crudos = dirData.map(j => calcRIC(j, historial, historialTorneos, dirData));
       const normalizados = normalizarRICs(crudos);
       // Adjuntar nombre al resultado
       const conNombre = normalizados.map(r => {
-        const jug = dirData.find(d => d.id === r.jugadorId);
-        return { ...r, nombre: jug ? (jug.nombre || jug.name || r.jugadorId) : r.jugadorId, hc: jug?.hc ?? null };
+        const jug = dirData.find(d => String(d.id) === String(r.jugadorId));
+        return { ...r, nombre: jug ? (jug.nombre || jug.name || String(r.jugadorId)) : String(r.jugadorId), hc: jug?.hc ?? null };
       }).sort((a,b) => b.ric - a.ric);
       setRicRanking(conNombre);
       setLoadingRIC(false);
