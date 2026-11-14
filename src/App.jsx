@@ -1157,6 +1157,386 @@ function SpectatorView({ rondaId }) {
   );
 }
 
+// ════════════════════════════════════════════════════════════════
+// SISTEMA RIC — Rating Integral de Competitividad
+// Calcula el nivel competitivo de cada jugador (0–100)
+// SIN modificar handicaps, scores, marcas, tarjetas ni historial.
+// ════════════════════════════════════════════════════════════════
+
+// Pesos base del RIC (configurables)
+const RIC_PESOS_BASE = { hi: 0.45, whc: 0.25, score: 0.20, dom: 0.10 };
+
+// Cuántas rondas/torneos considerar para Score y Dominancia
+const RIC_N_RONDAS = 10;
+
+/**
+ * Extrae el índice del jugador dentro de una ronda del historial.
+ * Busca primero por ID, luego por nombre.
+ */
+function ric_piInRonda(ronda, jugadorId, jugadorNombre) {
+  const nombre = (jugadorNombre||"").trim().toLowerCase();
+  const ids = ronda.playerIds || [];
+  const names = (ronda.playerNames||[]).map(n=>(n||"").trim().toLowerCase());
+  let pi = -1;
+  ids.forEach((id, i) => { if (String(id) === String(jugadorId) && pi === -1) pi = i; });
+  if (pi === -1) names.forEach((n, i) => { if (n === nombre && pi === -1) pi = i; });
+  return pi;
+}
+
+/**
+ * Convierte un valor crudo al percentil dentro de un array de valores,
+ * con orientación configurable (invertida = menor es mejor).
+ * Resultado: 0–100.
+ */
+function ric_normalizar(valor, todos, invertir = false) {
+  if (todos.length === 0 || valor == null) return 50;
+  const sorted = [...todos].sort((a, b) => a - b);
+  const mn = sorted[0], mx = sorted[sorted.length - 1];
+  if (mx === mn) return 50;
+  // Suavizado con percentil (robusto ante outliers)
+  const p5 = sorted[Math.floor(sorted.length * 0.05)];
+  const p95 = sorted[Math.floor(sorted.length * 0.95)];
+  const lo = p5, hi = p95;
+  const rng = hi > lo ? hi - lo : mx - mn;
+  const norm = rng > 0 ? Math.max(0, Math.min(100, (valor - lo) / rng * 100)) : 50;
+  return Math.round((invertir ? 100 - norm : norm) * 10) / 10;
+}
+
+/**
+ * Calcula el RIC para UN jugador dado el historial completo.
+ *
+ * @param {Object} jugador          — entrada del directorio { id, name, hc, whs }
+ * @param {Array}  historial        — rondas sencillas (de clubRef("historial"))
+ * @param {Array}  historialTorneos — torneos finalizados (de clubRef("torneos"))
+ * @param {Array}  todosDirPlayers  — todos los jugadores del directorio (para normalización)
+ * @returns {Object} { ric, hiRaw, whcRaw, scoreRaw, domRaw, whcValido, confiabilidad, nRondas, nTorneos, pesos }
+ */
+function calcRIC(jugador, historial, historialTorneos, todosDirPlayers) {
+  // ── 1. RECOPILAR EVENTOS DEL JUGADOR ──────────────────────────────────────
+  // Un "evento" puede ser:
+  //   tipo "ronda"  → ronda sencilla (no pertenece a ningún torneo)
+  //   tipo "torneo" → torneo finalizado (el jugador participó en al menos 1 grupo)
+  //
+  // Para Score y Marcas: se usan rondas individuales (sencillas + las de torneos)
+  // Para Economía y Victorias: solo el consolidado (rondas sencillas + resumen torneo)
+
+  const jId   = jugador.id;
+  const jNom  = (jugador.name||"").trim().toLowerCase();
+
+  // IDs de torneos donde participó el jugador (para no contar rondas duplicadas)
+  const torneoIdsJugador = new Set();
+  const torneosJugador   = []; // { total, ganadorScore, fechaTs }
+
+  historialTorneos.forEach(t => {
+    const rg = t.resumenGlobal;
+    if (!rg?.jugadores) return;
+    const jEntry = rg.jugadores.find(j =>
+      String(j.id) === String(jId) ||
+      (j.name||"").trim().toLowerCase() === jNom
+    );
+    if (!jEntry) return;
+    torneoIdsJugador.add(t.id);
+    torneosJugador.push({
+      total:        jEntry.total ?? 0,
+      scoreMoney:   jEntry.scoreMoney ?? 0,
+      ganador:      rg.ganador && (rg.ganador.trim().toLowerCase() === jNom || rg.ganador.includes(jugador.name)) ? 1 : 0,
+      fechaTs:      t.resumenGlobal?.fechaTs || t.createdAt || 0,
+    });
+  });
+
+  // Rondas sencillas (excluir las que pertenecen a torneos ya contados)
+  // Nota: las rondas de torneo están en historialTorneos; el historial normal
+  // solo debería contener rondas sencillas. Aun así verificamos por rondaId.
+  const rondasSencillas = historial.filter(r => {
+    if (r.torneoId && torneoIdsJugador.has(r.torneoId)) return false;
+    const pi = ric_piInRonda(r, jId, jugador.name);
+    return pi >= 0;
+  });
+
+  // Rondas individuales del jugador (sencillas + las de cada torneo para Score/Marcas)
+  // Para estadísticas de golf (score, marcas, tarjetas):
+  const rondasIndividuales = [];
+
+  rondasSencillas.forEach(r => {
+    const pi = ric_piInRonda(r, jId, jugador.name);
+    if (pi < 0) return;
+    const opts = r.playerOptsArr?.[pi];
+    if (opts?.score === false) return;
+    const scores = r.scoresPorHoyo?.[pi] || [];
+    const bruto = scores.length > 0 ? scores.reduce((a,b)=>a+(b||0),0) : (r.jugadores?.[pi]?.bruto ?? null);
+    if (!bruto || bruto <= 0) return;
+    rondasIndividuales.push({ bruto, nHoles: r.nHoles || 9, fechaTs: r.fechaTs || 0, tipo: "sencilla" });
+  });
+
+  historialTorneos.forEach(t => {
+    if (!t.grupos) return;
+    Object.values(t.grupos).forEach(g => {
+      const gPlayers = Array.isArray(g.players) ? g.players : Object.values(g.players||{});
+      const pi = gPlayers.findIndex(p =>
+        String(p.id) === String(jId) ||
+        (p.name||"").trim().toLowerCase() === jNom
+      );
+      if (pi < 0) return;
+      const opts = g.playerOptsArr?.[pi] || (gPlayers[pi]?.opts);
+      if (opts?.score === false) return;
+      const scores = Array.isArray(g.scores) ? g.scores : Object.values(g.scores||{});
+      const rowRaw = scores[pi];
+      const row = Array.isArray(rowRaw) ? rowRaw : Object.values(rowRaw||{});
+      if (!row.length) return;
+      const bruto = row.reduce((a,b)=>a+(b||0),0);
+      if (!bruto || bruto <= 0) return;
+      rondasIndividuales.push({ bruto, nHoles: t.nHoles || 9, fechaTs: t.resumenGlobal?.fechaTs || t.createdAt || 0, tipo: "torneo" });
+    });
+  });
+
+  // Ordenar por fecha desc y tomar las últimas N para Score
+  rondasIndividuales.sort((a,b) => b.fechaTs - a.fechaTs);
+  const rondasScore = rondasIndividuales.slice(0, RIC_N_RONDAS);
+
+  // Eventos competitivos para Dominancia (últimos N): sencillas + torneos consolidados
+  const eventosEconomicos = [];
+  rondasSencillas.forEach(r => {
+    const pi = ric_piInRonda(r, jId, jugador.name);
+    if (pi < 0) return;
+    const j = r.jugadores?.[pi];
+    if (!j) return;
+    eventosEconomicos.push({
+      total: j.total ?? 0,
+      apuesta: r.apuesta || DEFAULT_APUESTA,
+      nJugadores: (r.playerNames||[]).length || 1,
+      ganador: r.ganador && (r.ganador.trim().toLowerCase().includes(jNom)) ? 1 : 0,
+      fechaTs: r.fechaTs || 0,
+    });
+  });
+  torneosJugador.forEach(t => {
+    eventosEconomicos.push({ ...t, apuesta: 50, nJugadores: 4, fechaTs: t.fechaTs });
+  });
+  eventosEconomicos.sort((a,b) => b.fechaTs - a.fechaTs);
+  const eventosDom = eventosEconomicos.slice(0, RIC_N_RONDAS);
+
+  const nRondas  = rondasSencillas.length;
+  const nTorneos = torneosJugador.length;
+  const nEventos = nRondas + nTorneos;
+
+  // ── 2. COMPONENTE HI (Handicap Interno) ───────────────────────────────────
+  // hi.raw = hc del jugador (valor directo — se normaliza después inversamente)
+  const hiRaw = jugador.hc ?? 0;
+
+  // ── 3. COMPONENTE WHC (World Handicap) ────────────────────────────────────
+  // whcRaw = HI calculado por whs_resumenJugador si está establecido, null si no
+  let whcRaw    = null;
+  let whcValido = false;
+  try {
+    const todasRondas = [
+      ...historial.map(r => ({ ...r })),
+      ...historialTorneos.flatMap(t =>
+        t.grupos ? Object.entries(t.grupos).map(([,g]) => ({
+          campo: t.campo, nHoles: t.nHoles, fechaTs: t.resumenGlobal?.fechaTs || t.createdAt || 0,
+          fecha: t.resumenGlobal?.fecha || "",
+          playerIds: (Array.isArray(g.players)?g.players:Object.values(g.players||{})).map(p=>p.id),
+          playerNames: (Array.isArray(g.players)?g.players:Object.values(g.players||{})).map(p=>p.name),
+          scoresPorHoyo: Array.isArray(g.scores)?g.scores:Object.values(g.scores||{}),
+          jugadores: (Array.isArray(g.players)?g.players:Object.values(g.players||{})).map((p,i)=>{
+            const sc = Array.isArray(g.scores)?g.scores[i]:Object.values(g.scores||{})[i];
+            const row = Array.isArray(sc)?sc:Object.values(sc||{});
+            return { name:p.name, bruto: row.reduce((a,b)=>a+(b||0),0) };
+          }),
+        })) : []
+      ),
+    ];
+    const whsRes = whs_resumenJugador(jugador.name, todasRondas, jugador.id);
+    if (whsRes?.hiEstablecido && whsRes.currentHI != null) {
+      whcRaw    = whsRes.currentHI;
+      whcValido = true;
+    }
+  } catch(e) { /* WHC no disponible */ }
+
+  // ── 4. COMPONENTE SCORE ───────────────────────────────────────────────────
+  // Normalizar scores de 9 y 18 hoyos comparando contra par estándar.
+  // Usamos "diferencia vs par por hoyo" para hacer comparables distintos formatos.
+  // La Huerta: par 9h = 31. Par estándar genérico: 36 (9h), 72 (18h).
+  let scoreRaw = null;
+  if (rondasScore.length > 0) {
+    const diffs = rondasScore.map(r => {
+      const parRef = r.nHoles <= 9 ? 36 : 72;
+      return r.bruto - parRef; // positivo = sobre par (peor), negativo = bajo par (mejor)
+    });
+    scoreRaw = diffs.reduce((a,b)=>a+b,0) / diffs.length;
+  }
+
+  // ── 5. COMPONENTE DOMINANCIA (D) ──────────────────────────────────────────
+  // D = 0.70 × EconNorm + 0.30 × VictoriasNorm
+  let domRaw = null;
+  if (eventosDom.length > 0) {
+    // Desempeño económico neto normalizado por apuesta × jugadores (evitar distorsión)
+    const econScores = eventosDOM_economico(eventosDom);
+    const econMedia = econScores.reduce((a,b)=>a+b,0) / econScores.length;
+
+    // Victorias (1 = ganó ese evento, 0 = no)
+    const victorias = eventosDom.map(e => e.ganador || 0);
+    const winRate = victorias.reduce((a,b)=>a+b,0) / victorias.length; // 0–1
+
+    domRaw = { econMedia, winRate, n: eventosDom.length };
+  }
+
+  // ── 6. CONFIABILIDAD ──────────────────────────────────────────────────────
+  let confiabilidad;
+  if (nEventos >= 8)      confiabilidad = "alta";
+  else if (nEventos >= 3) confiabilidad = "media";
+  else                    confiabilidad = "baja";
+
+  return {
+    jugadorId: jId,
+    hiRaw, whcRaw, scoreRaw, domRaw,
+    whcValido, confiabilidad,
+    nRondas, nTorneos,
+    rondasScore: rondasScore.length,
+  };
+}
+
+/** Calcula el score económico normalizado por apuesta de cada evento */
+function eventosDOM_economico(eventos) {
+  return eventos.map(e => {
+    const ref = (e.apuesta || DEFAULT_APUESTA) * (e.nJugadores || 1);
+    if (ref <= 0) return 0;
+    return e.total / ref; // ratio normalizado por tamaño de apuesta
+  });
+}
+
+/**
+ * Convierte los valores crudos de un grupo de jugadores a ratings 0–100
+ * y calcula el RIC final con redistribución de pesos cuando WHC no está disponible.
+ *
+ * @param {Array} ricCrudos — array de resultados de calcRIC()
+ * @returns {Array} — cada elemento tiene { jugadorId, ric, components, pesos, confiabilidad }
+ */
+function normalizarRICs(ricCrudos) {
+  if (!ricCrudos.length) return [];
+
+  // Extraer arrays para normalización grupal
+  const hiArr    = ricCrudos.map(r => r.hiRaw    ?? 0);
+  const whcArr   = ricCrudos.filter(r => r.whcValido).map(r => r.whcRaw);
+  const scoreArr = ricCrudos.filter(r => r.scoreRaw != null).map(r => r.scoreRaw);
+
+  // Dominancia: combinar econ y win rate usando los valores absolutos del grupo
+  const domEconArr = ricCrudos.map(r => r.domRaw?.econMedia ?? 0);
+  const domWinArr  = ricCrudos.map(r => r.domRaw?.winRate   ?? 0);
+
+  return ricCrudos.map(r => {
+    // HI: mayor HC = peor jugador → invertir
+    const hiNorm    = ric_normalizar(r.hiRaw ?? 0, hiArr, true);
+
+    // WHC: mayor WHC = peor jugador → invertir (solo si válido)
+    const whcNorm   = r.whcValido && whcArr.length > 1
+      ? ric_normalizar(r.whcRaw, whcArr, true)
+      : null;
+
+    // Score: mayor promedio = peor → invertir
+    const scoreNorm = r.scoreRaw != null && scoreArr.length > 1
+      ? ric_normalizar(r.scoreRaw, scoreArr, true)
+      : (r.scoreRaw != null ? 50 : null);
+
+    // Dominancia compuesta
+    const econNorm  = ric_normalizar(r.domRaw?.econMedia ?? 0, domEconArr, false);
+    const winNorm   = ric_normalizar(r.domRaw?.winRate   ?? 0, domWinArr,  false);
+    const domNorm   = r.domRaw != null
+      ? Math.round((0.70 * econNorm + 0.30 * winNorm) * 10) / 10
+      : null;
+
+    // Redistribución proporcional de pesos
+    const pesos = { ...RIC_PESOS_BASE };
+    const componentes = { hi: hiNorm, whc: whcNorm, score: scoreNorm, dom: domNorm };
+    const activos = Object.entries(pesos).filter(([k]) => componentes[k] != null);
+    const sumPesos = activos.reduce((a,[,v])=>a+v, 0);
+    const pesosFinales = {};
+    activos.forEach(([k,v]) => { pesosFinales[k] = sumPesos > 0 ? v / sumPesos : 0; });
+
+    // RIC final
+    let ric = 0;
+    activos.forEach(([k]) => { ric += componentes[k] * pesosFinales[k]; });
+    ric = Math.round(ric * 10) / 10;
+
+    return {
+      jugadorId:     r.jugadorId,
+      ric,
+      hiNorm, whcNorm, scoreNorm, domNorm,
+      pesos:         pesosFinales,
+      whcValido:     r.whcValido,
+      confiabilidad: r.confiabilidad,
+      nRondas:       r.nRondas,
+      nTorneos:      r.nTorneos,
+      rondasScore:   r.rondasScore,
+    };
+  });
+}
+
+/**
+ * Genera grupos equilibrados por RIC.
+ * Evalúa N combinaciones aleatorias, retorna una de las mejores
+ * (aleatoria entre las top K para mantener variedad).
+ *
+ * @param {Array}  jugadores      — jugadores con { id, name, hc, ... }
+ * @param {number} nGrupos
+ * @param {Object} ricMap         — { [id]: { ric } } resultado de normalizarRICs
+ * @param {number} nIteraciones
+ * @returns {Array}               — array de grupos (cada grupo = array de jugadores)
+ */
+function distribuirEnGruposRIC(jugadores, nGrupos, ricMap, nIteraciones = 500) {
+  if (jugadores.length < nGrupos) return [];
+
+  // Fisher-Yates
+  const shuffle = (arr) => {
+    const a = [...arr];
+    for (let i = a.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [a[i], a[j]] = [a[j], a[i]];
+    }
+    return a;
+  };
+
+  const hacerGrupos = (shuffled) => {
+    const base = Math.floor(shuffled.length / nGrupos);
+    const extra = shuffled.length % nGrupos;
+    const grupos = [];
+    let idx = 0;
+    for (let i = 0; i < nGrupos; i++) {
+      const size = base + (i < extra ? 1 : 0);
+      grupos.push(shuffled.slice(idx, idx + size));
+      idx += size;
+    }
+    return grupos;
+  };
+
+  const getRIC = (p) => ricMap[p.id]?.ric ?? 50;
+
+  // Varianza de promedios de grupos (objetivo: minimizar)
+  const scoreDistribucion = (grupos) => {
+    const promedios = grupos.map(g => g.reduce((a,p)=>a+getRIC(p),0) / g.length);
+    const media = promedios.reduce((a,b)=>a+b,0) / promedios.length;
+    return promedios.reduce((a,p) => a + (p-media)**2, 0);
+  };
+
+  let mejores = [];
+  const TOP_K = 10;
+
+  for (let i = 0; i < nIteraciones; i++) {
+    const shuffled = shuffle(jugadores);
+    const grupos   = hacerGrupos(shuffled);
+    const score    = scoreDistribucion(grupos);
+    mejores.push({ grupos, score });
+    if (mejores.length > TOP_K * 3) {
+      mejores.sort((a,b)=>a.score-b.score);
+      mejores = mejores.slice(0, TOP_K);
+    }
+  }
+
+  mejores.sort((a,b)=>a.score-b.score);
+  const topK = mejores.slice(0, Math.min(TOP_K, mejores.length));
+  // Elegir aleatoriamente entre las mejores para mantener variedad
+  const elegido = topK[Math.floor(Math.random() * topK.length)];
+  return elegido.grupos;
+}
+
 // ─── TORNEO: CREAR ────────────────────────────────
 function TorneoCrear({ onExit, onIniciarGrupo, appStyle, jugadorOrganizador }) {
   const [paso, setPaso] = useState(1); // 1=config, 2=grupos+jugadores, 3=compartir
@@ -1174,11 +1554,14 @@ function TorneoCrear({ onExit, onIniciarGrupo, appStyle, jugadorOrganizador }) {
   const [gruposClub, setGruposClub] = useState([]); // grupos del club para filtrar por grupo
   const [grupoFiltroSel, setGrupoFiltroSel] = useState(null); // grupo seleccionado para filtrar jugadores
   const [grupoActivo, setGrupoActivo] = useState(0);
-  // Grupos aleatorios
-  const [modoGrupos, setModoGrupos] = useState("manual"); // "manual" | "aleatorio"
-  const [selAleatorio, setSelAleatorio] = useState(new Set()); // jugadores seleccionados para sorteo
+  // Grupos aleatorios / RIC
+  const [modoGrupos, setModoGrupos] = useState("manual"); // "manual" | "aleatorio" | "ric"
+  const [selAleatorio, setSelAleatorio] = useState(new Set()); // jugadores seleccionados (compartido aleatorio + RIC)
   const [nGruposAleatorio, setNGruposAleatorio] = useState(3);
-  const [previewAleatorio, setPreviewAleatorio] = useState(null); // grupos generados para preview
+  const [previewAleatorio, setPreviewAleatorio] = useState(null); // grupos aleatorios para preview
+  const [previewRIC, setPreviewRIC] = useState(null);     // grupos RIC para preview
+  const [ricMap, setRicMap] = useState({});               // { [id]: { ric, ... } }
+  const [calculandoRIC, setCalculandoRIC] = useState(false);
 
   // Fisher-Yates shuffle — sorteo verdaderamente aleatorio
   const shuffleArray = (arr) => {
@@ -1218,8 +1601,70 @@ function TorneoCrear({ onExit, onIniciarGrupo, appStyle, jugadorOrganizador }) {
   const confirmarAleatorio = () => {
     if (!previewAleatorio) return;
     setGrupos(previewAleatorio.map(g => ({ ...g })));
-    setModoGrupos("manual"); // pasa a vista manual para editar hoyos si quiere
+    setModoGrupos("manual");
     setPreviewAleatorio(null);
+  };
+
+  // ── Lógica RIC ──
+  const calcularRIC = async () => {
+    setCalculandoRIC(true);
+    try {
+      const [histSnap, tornSnap] = await Promise.all([
+        get(clubRef("historial")),
+        get(clubRef("torneos")),
+      ]);
+      const historial = histSnap.exists()
+        ? Object.entries(histSnap.val()).map(([k,v]) => ({ ...v, rondaId: k }))
+        : [];
+      const historialTorneos = tornSnap.exists()
+        ? Object.entries(tornSnap.val())
+            .filter(([,v]) => v.status === "finalizado")
+            .map(([k,v]) => ({ ...v, id: k }))
+        : [];
+
+      const jugadores = dir.filter(p => selAleatorio.has(p.id));
+      const crudos = jugadores.map(j => calcRIC(j, historial, historialTorneos, dir));
+      const normalizados = normalizarRICs(crudos);
+      const mapa = {};
+      normalizados.forEach(r => { mapa[r.jugadorId] = r; });
+      setRicMap(mapa);
+
+      // Generar grupos balanceados
+      const gruposGen = distribuirEnGruposRIC(jugadores, nGruposAleatorio, mapa);
+      setPreviewRIC(gruposGen.map((ps, i) => ({
+        nombre: `Grupo ${i+1}`, id: null,
+        players: ps, hoyoSalida: i + 1,
+      })));
+    } catch(e) {
+      alert("Error calculando RIC: " + e.message);
+    }
+    setCalculandoRIC(false);
+  };
+
+  const resortearRIC = () => {
+    if (!Object.keys(ricMap).length) { calcularRIC(); return; }
+    const jugadores = dir.filter(p => selAleatorio.has(p.id));
+    const gruposGen = distribuirEnGruposRIC(jugadores, nGruposAleatorio, ricMap);
+    setPreviewRIC(gruposGen.map((ps, i) => ({
+      nombre: `Grupo ${i+1}`, id: null,
+      players: ps, hoyoSalida: i + 1,
+    })));
+  };
+
+  const confirmarRIC = () => {
+    if (!previewRIC) return;
+    setGrupos(previewRIC.map(g => ({ ...g })));
+    setModoGrupos("manual");
+    setPreviewRIC(null);
+  };
+
+  const confiabilidadColor = (c) => c === "alta" ? D.success : c === "media" ? D.gold : D.textSub;
+  const confiabilidadLabel = (c) => c === "alta" ? "Alta" : c === "media" ? "Media" : "Baja";
+
+  const ricGrupoStats = (grupo) => {
+    const vals = grupo.players.map(p => ricMap[p.id]?.ric ?? 50);
+    const avg = vals.reduce((a,b)=>a+b,0) / vals.length;
+    return { avg: Math.round(avg * 10) / 10 };
   };
 
   useEffect(() => {
@@ -1419,13 +1864,20 @@ function TorneoCrear({ onExit, onIniciarGrupo, appStyle, jugadorOrganizador }) {
           {/* Selector de modo */}
           <Card>
             <SLabel>Forma de crear grupos</SLabel>
-            <div style={{ display:"flex", gap:8 }}>
-              {[["manual","✋ Manual"],["aleatorio","🎲 Grupos Aleatorios"]].map(([k,l]) => (
-                <button key={k} onClick={() => setModoGrupos(k)}
-                  style={{ flex:1, padding:"10px", border:`1px solid ${modoGrupos===k?D.gold:D.border}`, borderRadius:10, background:modoGrupos===k?D.goldDim:"transparent", color:modoGrupos===k?D.gold:D.textSub, fontSize:12, fontWeight:700, cursor:"pointer" }}>
-                  {l}
-                </button>
-              ))}
+            <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+              <div style={{ display:"flex", gap:8 }}>
+                {[["manual","✋ Manual"],["aleatorio","🎲 Aleatorio"]].map(([k,l]) => (
+                  <button key={k} onClick={() => setModoGrupos(k)}
+                    style={{ flex:1, padding:"10px", border:`1px solid ${modoGrupos===k?D.gold:D.border}`, borderRadius:10, background:modoGrupos===k?D.goldDim:"transparent", color:modoGrupos===k?D.gold:D.textSub, fontSize:12, fontWeight:700, cursor:"pointer" }}>
+                    {l}
+                  </button>
+                ))}
+              </div>
+              <button onClick={() => setModoGrupos("ric")}
+                style={{ width:"100%", padding:"11px", border:`2px solid ${modoGrupos==="ric"?D.gold:D.border}`, borderRadius:10, background:modoGrupos==="ric"?D.goldDim:"transparent", color:modoGrupos==="ric"?D.gold:D.textSub, fontSize:12, fontWeight:700, cursor:"pointer", letterSpacing:0.3 }}>
+                🎯 Balanceada RIC
+                <span style={{ marginLeft:6, fontSize:10, opacity:0.7, fontWeight:400 }}>Basada en historial</span>
+              </button>
             </div>
           </Card>
 
@@ -1534,6 +1986,153 @@ function TorneoCrear({ onExit, onIniciarGrupo, appStyle, jugadorOrganizador }) {
               </Card>
             )}
           </>)}
+
+          {/* ── MODO RIC ── */}
+          {modoGrupos === "ric" && (<>
+            <Card>
+              <SLabel>Seleccionar jugadores participantes</SLabel>
+              <div style={{ fontSize:11, color:D.textSub, marginBottom:8 }}>
+                {"Seleccionados: " + selAleatorio.size + " de " + dirFiltrado.length}
+              </div>
+              <div style={{ display:"flex", gap:6, marginBottom:8 }}>
+                <button onClick={() => { setSelAleatorio(new Set(dirFiltrado.map(p=>p.id))); setPreviewRIC(null); }}
+                  style={{ fontSize:11, padding:"5px 10px", border:`1px solid ${D.gold}`, borderRadius:8, background:D.goldDim, color:D.gold, cursor:"pointer" }}>
+                  Todos
+                </button>
+                <button onClick={() => { setSelAleatorio(new Set()); setPreviewRIC(null); }}
+                  style={{ fontSize:11, padding:"5px 10px", border:`1px solid ${D.border}`, borderRadius:8, background:"transparent", color:D.textSub, cursor:"pointer" }}>
+                  Ninguno
+                </button>
+              </div>
+              <div style={{ maxHeight:240, overflowY:"auto" }}>
+                {dirFiltrado.slice().sort((a,b)=>a.name.localeCompare(b.name)).map(p => {
+                  const sel = selAleatorio.has(p.id);
+                  const rp = ricMap[p.id];
+                  return (
+                    <div key={p.id} onClick={() => {
+                      const s = new Set(selAleatorio);
+                      sel ? s.delete(p.id) : s.add(p.id);
+                      setSelAleatorio(s);
+                      setPreviewRIC(null);
+                    }} style={{ display:"flex", alignItems:"center", gap:10, padding:"8px 0", borderBottom:`1px solid ${D.border}`, cursor:"pointer" }}>
+                      <div style={{ width:22, height:22, borderRadius:6, border:`2px solid ${sel?D.gold:D.border}`, background:sel?D.goldDim:"transparent", display:"flex", alignItems:"center", justifyContent:"center", fontSize:12, color:D.gold, fontWeight:700 }}>
+                        {sel ? "✓" : ""}
+                      </div>
+                      <Avatar name={p.name} id={p.id} size={26} />
+                      <div style={{ flex:1 }}>
+                        <div style={{ fontSize:13, fontWeight:600 }}>{p.name}</div>
+                        {rp && (
+                          <div style={{ fontSize:10, color:D.textSub }}>
+                            RIC {rp.ric}
+                            <span style={{ marginLeft:6, color:confiabilidadColor(rp.confiabilidad), fontWeight:600 }}>
+                              ({confiabilidadLabel(rp.confiabilidad)})
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                      <div style={{ fontSize:11, color:D.textSub }}>HC {p.hc}</div>
+                    </div>
+                  );
+                })}
+              </div>
+            </Card>
+
+            {selAleatorio.size >= 2 && (
+              <Card>
+                <SLabel>Número de grupos</SLabel>
+                {selAleatorio.size < nGruposAleatorio && (
+                  <div style={{ padding:8, background:D.redBg, borderRadius:8, fontSize:11, color:D.danger, marginBottom:8 }}>
+                    ⚠️ No hay suficientes jugadores ({selAleatorio.size}) para {nGruposAleatorio} grupos
+                  </div>
+                )}
+                <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:12 }}>
+                  <button onClick={() => { setNGruposAleatorio(n=>Math.max(2,n-1)); setPreviewRIC(null); }}
+                    style={{ width:36,height:36,borderRadius:"50%",border:`1px solid ${D.border}`,background:D.surface,color:D.text,fontSize:20,cursor:"pointer",fontWeight:700 }}>-</button>
+                  <div style={{ flex:1, textAlign:"center" }}>
+                    <div style={{ fontSize:36, fontWeight:900, color:D.gold }}>{nGruposAleatorio}</div>
+                    <div style={{ fontSize:10, color:D.textSub }}>grupos</div>
+                  </div>
+                  <button onClick={() => { setNGruposAleatorio(n=>Math.min(selAleatorio.size,n+1)); setPreviewRIC(null); }}
+                    style={{ width:36,height:36,borderRadius:"50%",border:`1px solid ${D.gold}`,background:D.goldDim,color:D.gold,fontSize:20,cursor:"pointer",fontWeight:700 }}>+</button>
+                </div>
+                {/* Info sobre RIC */}
+                <div style={{ padding:"10px 12px", background:D.surface, borderRadius:10, marginBottom:12, fontSize:11, color:D.textSub, lineHeight:1.5 }}>
+                  <div style={{ fontWeight:700, color:D.text, marginBottom:4 }}>¿Cómo funciona la distribución RIC?</div>
+                  El sistema calcula el Rating Integral de Competitividad de cada jugador usando su historial (HC, WHC, scores, dominancia) y equilibra los grupos para minimizar la diferencia de nivel entre ellos.
+                </div>
+                <button onClick={calcularRIC} disabled={selAleatorio.size < nGruposAleatorio || calculandoRIC}
+                  style={{ width:"100%", padding:"12px", border:`1px solid ${D.gold}`, borderRadius:10, background:D.goldDim, color:D.gold, fontSize:13, fontWeight:700, cursor:"pointer", opacity:selAleatorio.size<nGruposAleatorio||calculandoRIC?0.5:1 }}>
+                  {calculandoRIC ? "⏳ Calculando RIC…" : "🎯 Calcular y balancear grupos"}
+                </button>
+              </Card>
+            )}
+
+            {/* Preview RIC */}
+            {previewRIC && (
+              <Card style={{ border:`1px solid ${D.gold}44` }}>
+                <SLabel>Vista previa — Grupos balanceados por RIC</SLabel>
+                {(() => {
+                  // Calcular balance general
+                  const avgs = previewRIC.map(g => ricGrupoStats(g).avg);
+                  const globalAvg = avgs.reduce((a,b)=>a+b,0) / avgs.length;
+                  const diff = Math.max(...avgs) - Math.min(...avgs);
+                  const balanceLabel = diff < 5 ? "Excelente" : diff < 12 ? "Bueno" : "Aceptable";
+                  const balanceColor = diff < 5 ? D.success : diff < 12 ? D.gold : D.textSub;
+                  return (
+                    <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"8px 10px", background:D.surface, borderRadius:8, marginBottom:12, fontSize:12 }}>
+                      <span style={{ color:D.textSub }}>Balance general:</span>
+                      <span style={{ fontWeight:700, color:balanceColor }}>{balanceLabel} · Δ {diff.toFixed(1)} pts</span>
+                    </div>
+                  );
+                })()}
+                {previewRIC.map((g, i) => {
+                  const { avg } = ricGrupoStats(g);
+                  return (
+                    <div key={i} style={{ padding:"10px 0", borderBottom:`1px solid ${D.border}` }}>
+                      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:6 }}>
+                        <div style={{ fontSize:12, fontWeight:700, color:D.gold }}>{g.nombre}</div>
+                        <div style={{ fontSize:11, background:D.goldDim, color:D.gold, padding:"2px 8px", borderRadius:20, fontWeight:700 }}>
+                          RIC prom. {avg}
+                        </div>
+                      </div>
+                      {g.players.map(p => {
+                        const rp = ricMap[p.id];
+                        return (
+                          <div key={p.id} style={{ display:"flex", alignItems:"center", gap:8, padding:"4px 0" }}>
+                            <Avatar name={p.name} id={p.id} size={20} />
+                            <div style={{ flex:1, fontSize:12 }}>{p.name}</div>
+                            <div style={{ fontSize:11, color:D.textSub }}>HC {p.hc}</div>
+                            {rp ? (
+                              <div style={{ display:"flex", flexDirection:"column", alignItems:"flex-end", gap:1 }}>
+                                <div style={{ fontSize:11, fontWeight:700, color:D.text }}>RIC {rp.ric}</div>
+                                <div style={{ fontSize:9, color:confiabilidadColor(rp.confiabilidad) }}>
+                                  {confiabilidadLabel(rp.confiabilidad)}
+                                  {!rp.whcValido && " · Provisional"}
+                                </div>
+                              </div>
+                            ) : (
+                              <div style={{ fontSize:10, color:D.textSub }}>—</div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })}
+                <div style={{ display:"flex", gap:8, marginTop:12 }}>
+                  <button onClick={resortearRIC}
+                    style={{ flex:1, padding:"10px", border:`1px solid ${D.border}`, borderRadius:10, background:"transparent", color:D.textSub, fontSize:12, cursor:"pointer" }}>
+                    🔄 Volver a balancear
+                  </button>
+                  <button onClick={confirmarRIC}
+                    style={{ flex:1, padding:"10px", border:"none", borderRadius:10, background:D.gold, color:"#000", fontSize:12, fontWeight:700, cursor:"pointer" }}>
+                    ✓ Confirmar grupos
+                  </button>
+                </div>
+              </Card>
+            )}
+          </>)}
+
           {/* ── MODO MANUAL ── */}
           {modoGrupos === "manual" && (<>
           {/* Tabs de grupos */}
@@ -6080,7 +6679,7 @@ function JugadorSalidaGrupalScreen({ jugador, appStyle, onVolver, onIniciarSalid
 }
 
 // ─── ESTADÍSTICAS PANEL (jugador fijo, sin selector) ─────────────────────────
-function EstadisticasJugadorPanel({ jugador, todasRondas, loading }) {
+function EstadisticasJugadorPanel({ jugador, todasRondas, loading, ricData }) {
   const [nRondas, setNRondas]       = React.useState(10);
   const [campoFiltro, setCampoFiltro] = React.useState("todos");
   const [rondaExpandida, setRondaExpandida] = React.useState(null);
@@ -6315,6 +6914,55 @@ function EstadisticasJugadorPanel({ jugador, todasRondas, loading }) {
             </div>
           )}
         </div>
+
+        {/* RIC */}
+        {ricData && (() => {
+          const confColor = ricData.confiabilidad==="alta"?"#4CAF50":ricData.confiabilidad==="media"?D.gold:D.textSub;
+          const pesos = ricData.pesos || {};
+          const componentes = [
+            { label:"HC Interno", val:ricData.hiNorm,    pct:Math.round((pesos.hi||0)*100),    desc:"45% base" },
+            { label:"WHC",        val:ricData.whcNorm,   pct:Math.round((pesos.whc||0)*100),   desc:"25% base" },
+            { label:"Score",      val:ricData.scoreNorm, pct:Math.round((pesos.score||0)*100), desc:"20% base" },
+            { label:"Dominancia", val:ricData.domNorm,   pct:Math.round((pesos.dom||0)*100),   desc:"10% base" },
+          ];
+          return (
+            <div style={{ background:"#1A1500", border:`2px solid ${D.gold}55`, borderRadius:12, padding:"14px 16px" }}>
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:12 }}>
+                <div>
+                  <div style={{ fontSize:12, fontWeight:700, color:D.gold }}>🎯 Rating RIC</div>
+                  <div style={{ fontSize:10, color:D.textSub }}>Rating Integral de Competitividad</div>
+                  <div style={{ fontSize:10, color:confColor, marginTop:4, fontWeight:700 }}>
+                    Confiabilidad {ricData.confiabilidad==="alta"?"Alta":ricData.confiabilidad==="media"?"Media":"Baja"}
+                    {" · "}{ricData.nRondas} rondas · {ricData.nTorneos} torneos
+                    {!ricData.whcValido && " · Provisional"}
+                  </div>
+                </div>
+                <div style={{ fontSize:40, fontWeight:900, color:D.gold, lineHeight:1 }}>{ricData.ric}</div>
+              </div>
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
+                {componentes.map(c => (
+                  <div key={c.label} style={{ background:"rgba(255,255,255,0.05)", borderRadius:10, padding:"10px 12px" }}>
+                    <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:4 }}>
+                      <div style={{ fontSize:11, color:D.textSub }}>{c.label}</div>
+                      <div style={{ fontSize:9, color:D.textSub }}>{c.pct}%</div>
+                    </div>
+                    <div style={{ fontSize:22, fontWeight:900, color: c.val != null ? D.text : D.textSub }}>
+                      {c.val != null ? c.val : "—"}
+                    </div>
+                    {c.val == null && (
+                      <div style={{ fontSize:9, color:D.textSub, marginTop:2 }}>Sin datos</div>
+                    )}
+                  </div>
+                ))}
+              </div>
+              {!ricData.whcValido && (
+                <div style={{ marginTop:10, fontSize:10, color:D.textSub, padding:"6px 10px", background:"rgba(255,255,255,0.03)", borderRadius:8 }}>
+                  WHC excluido — pesos redistribuidos temporalmente (HI 60% · Score 26.7% · Dom 13.3%). Se normalizará al completar 54 hoyos.
+                </div>
+              )}
+            </div>
+          );
+        })()}
 
         {/* Marcas */}
         {stats.marcaPtsTotales > 0 && (
@@ -6564,7 +7212,7 @@ function EstadisticasJugadorPanel({ jugador, todasRondas, loading }) {
 }
 
 // ─── JUGADOR PERFIL TAB (con cambio de NIP) ───────────────────────────────────
-function JugadorPerfilTab({ jugador, onEditarPerfil, whsEstablecido, whsHI, whsHoyos, onJugadorActualizado }) {
+function JugadorPerfilTab({ jugador, onEditarPerfil, whsEstablecido, whsHI, whsHoyos, onJugadorActualizado, ricData }) {
   const [showCambiarNip, setShowCambiarNip] = React.useState(false);
   const [nipActual, setNipActual]   = React.useState("");
   const [nipNuevo, setNipNuevo]     = React.useState("");
@@ -6645,6 +7293,19 @@ function JugadorPerfilTab({ jugador, onEditarPerfil, whsEstablecido, whsHI, whsH
             <span style={{ fontSize:13, color:D.text, fontWeight:600 }}>{v}</span>
           </div>
         ))}
+        {/* Fila RIC */}
+        {ricData && (
+          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", paddingBottom:8, borderBottom:`1px solid ${D.border}44` }}>
+            <span style={{ fontSize:13, color:D.textSub }}>RIC</span>
+            <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+              <span style={{ fontSize:16, fontWeight:800, color:D.gold }}>{ricData.ric}</span>
+              <span style={{ fontSize:10, color: ricData.confiabilidad==="alta"?"#4CAF50":ricData.confiabilidad==="media"?D.gold:D.textSub, background:"rgba(255,255,255,0.05)", borderRadius:6, padding:"2px 7px", fontWeight:700 }}>
+                {ricData.confiabilidad==="alta"?"Alta":ricData.confiabilidad==="media"?"Media":"Baja"}
+                {!ricData.whcValido && " · Provisional"}
+              </span>
+            </div>
+          </div>
+        )}
         {!jugador.email && (
           <div style={{ fontSize:11, color:D.gold, padding:"6px 0 2px", lineHeight:1.5 }}>
             💡 Agrega tu correo en "Editar mis datos" para poder recuperar tu NIP sin depender del administrador.
@@ -6720,12 +7381,28 @@ function JugadorHomeScreen({ jugador: jugadorInicial, appStyle, onExit, onCrearT
     try { return JSON.parse(localStorage.getItem("h19-jugador-torneo")||"null"); } catch(e) { return null; }
   });
 
+  const [todasTorneos, setTodasTorneos] = React.useState([]);
+  const [ricData, setRicData] = React.useState(null); // { ric, hiNorm, whcNorm, scoreNorm, domNorm, whcValido, confiabilidad, nRondas, nTorneos }
+
   const cargarHistorial = React.useCallback(() => {
     setLoading(true);
-    get(clubRef("historial")).then(snap => {
-      if (!snap.exists()) { setLoading(false); return; }
-      const todas = Object.values(snap.val());
+    Promise.all([get(clubRef("historial")), get(clubRef("torneos")), get(clubRef("directorio"))]).then(([snap, tornSnap, dirSnap]) => {
+      const todas = snap.exists() ? Object.values(snap.val()) : [];
+      const torneos = tornSnap.exists()
+        ? Object.entries(tornSnap.val()).filter(([,v]) => v.status==="finalizado").map(([k,v]) => ({ ...v, id:k }))
+        : [];
+      const dirAll = dirSnap.exists() ? (dirSnap.val().players || []) : [];
+      setTodasTorneos(torneos);
       setTodasRondas(todas);
+
+      // Calcular RIC del jugador
+      try {
+        const crudo = calcRIC(jugador, todas, torneos, dirAll);
+        const normalizado = normalizarRICs([crudo]);
+        setRicData(normalizado[0] || null);
+      } catch(e) { /* RIC no crítico */ }
+
+      if (!snap.exists()) { setLoading(false); return; }
       const idNum = parseInt(String(jugador.id).replace(/\D/g,""), 10);
       const misRondas = todas
         .filter(r => {
@@ -6815,6 +7492,7 @@ function JugadorHomeScreen({ jugador: jugadorInicial, appStyle, onExit, onCrearT
             <div style={{ fontSize:12, color:D.textSub }}>
               HC {jugador.hc}
               {whsEstablecido && whsHI != null && <span style={{ color:"#4CAF50", marginLeft:6 }}>· WHS {whsHI.toFixed(1)}</span>}
+              {ricData && <span style={{ color:D.gold, marginLeft:6 }}>· RIC {ricData.ric}</span>}
               {" · "}{fmtPlayerId(jugador.id)} · Chacales Team
             </div>
           </div>
@@ -6870,6 +7548,49 @@ function JugadorHomeScreen({ jugador: jugadorInicial, appStyle, onExit, onCrearT
                 </div>
               )}
             </div>
+            {ricData && (() => {
+              const confColor = ricData.confiabilidad === "alta" ? "#4CAF50" : ricData.confiabilidad === "media" ? D.gold : D.textSub;
+              const confLabel = ricData.confiabilidad === "alta" ? "Alta" : ricData.confiabilidad === "media" ? "Media" : "Baja";
+              const pesos = ricData.pesos || {};
+              return (
+                <div style={{ background:"#1A1500", border:`2px solid ${D.gold}55`, borderRadius:12, padding:"14px 16px" }}>
+                  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
+                    <div>
+                      <div style={{ fontSize:12, fontWeight:700, color:D.gold }}>🎯 Rating RIC</div>
+                      <div style={{ fontSize:10, color:D.textSub, marginTop:2 }}>Rating Integral de Competitividad</div>
+                    </div>
+                    <div style={{ textAlign:"right" }}>
+                      <div style={{ fontSize:32, fontWeight:900, color:D.gold }}>{ricData.ric}</div>
+                      <div style={{ fontSize:10, color:confColor, fontWeight:700 }}>
+                        Confiabilidad {confLabel}
+                        {!ricData.whcValido && " · Provisional"}
+                      </div>
+                    </div>
+                  </div>
+                  <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:6 }}>
+                    {[
+                      { key:"hi",    label:"HC",    val:ricData.hiNorm,    pct: Math.round((pesos.hi||0)*100) },
+                      { key:"whc",   label:"WHC",   val:ricData.whcNorm,   pct: Math.round((pesos.whc||0)*100) },
+                      { key:"score", label:"Score", val:ricData.scoreNorm, pct: Math.round((pesos.score||0)*100) },
+                      { key:"dom",   label:"Dom.",  val:ricData.domNorm,   pct: Math.round((pesos.dom||0)*100) },
+                    ].map(({ key, label, val, pct }) => (
+                      <div key={key} style={{ background:"rgba(255,255,255,0.05)", borderRadius:8, padding:"8px 6px", textAlign:"center" }}>
+                        <div style={{ fontSize:9, color:D.textSub, textTransform:"uppercase", letterSpacing:0.5 }}>{label}</div>
+                        <div style={{ fontSize:17, fontWeight:900, color: val != null ? D.text : D.textSub, marginTop:3 }}>
+                          {val != null ? val : "—"}
+                        </div>
+                        <div style={{ fontSize:8, color:D.textSub, marginTop:1 }}>{pct}%</div>
+                      </div>
+                    ))}
+                  </div>
+                  {!ricData.whcValido && (
+                    <div style={{ marginTop:8, fontSize:10, color:D.textSub, padding:"6px 10px", background:"rgba(255,255,255,0.03)", borderRadius:8 }}>
+                      ⚠️ Sin WHC válido — pesos redistribuidos. Se incorporará al completar 54 hoyos.
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
             {avgScore && (
               <div style={{ background:D.surface, border:`1px solid ${D.border}`, borderRadius:12, padding:"12px 16px", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
                 <div style={{ fontSize:13, color:D.textSub }}>Score promedio</div>
@@ -6956,7 +7677,7 @@ function JugadorHomeScreen({ jugador: jugadorInicial, appStyle, onExit, onCrearT
 
         {/* RONDAS */}
         {tab === "estadisticas" && (
-          <EstadisticasJugadorPanel jugador={jugador} todasRondas={todasRondas} loading={loading} />
+          <EstadisticasJugadorPanel jugador={jugador} todasRondas={todasRondas} loading={loading} ricData={ricData} />
         )}
 
         {/* PERFIL */}
@@ -6966,7 +7687,7 @@ function JugadorHomeScreen({ jugador: jugadorInicial, appStyle, onExit, onCrearT
               onSaved={(jActualizado) => { setJugador(jActualizado); setEditandoPerfil(false); }}
               onCancel={() => setEditandoPerfil(false)} />
           ) : (
-            <JugadorPerfilTab jugador={jugador} onEditarPerfil={() => setEditandoPerfil(true)} whsEstablecido={whsEstablecido} whsHI={whsHI} whsHoyos={whsHoyos} onJugadorActualizado={j => setJugador(j)} />
+            <JugadorPerfilTab jugador={jugador} onEditarPerfil={() => setEditandoPerfil(true)} whsEstablecido={whsEstablecido} whsHI={whsHI} whsHoyos={whsHoyos} onJugadorActualizado={j => setJugador(j)} ricData={ricData} />
           )
         )}
 
@@ -9133,28 +9854,53 @@ function AdminApp({ onExit, torneoConfig = null }) {
 
   // Cargar HI WHS para todos los jugadores
   const [whsHIMap, setWhsHIMap] = useState({});
+  const [ricMapAdmin, setRicMapAdmin] = useState({}); // { [jugadorId]: ricNormalizado }
   useEffect(() => {
-    get(clubRef("historial")).then(snap => {
+    Promise.all([get(clubRef("historial")), get(clubRef("torneos"))]).then(([snap, tornSnap]) => {
       if (!snap.exists()) return;
       const rondas = Object.values(snap.val());
+      const torneos = tornSnap.exists()
+        ? Object.entries(tornSnap.val()).filter(([,v]) => v.status==="finalizado").map(([k,v]) => ({ ...v, id:k }))
+        : [];
+
+      // WHC map
       const nombres = [...new Set(rondas.flatMap(r => r.playerNames || []))];
       const hiMap = {};
       nombres.forEach(nombre => {
         try {
           const result = whs_resumenJugador(nombre, rondas);
           hiMap[nombre] = {
-            hi: result.currentHI,
-            lowHI: result.lowHI,
-            hiEstablecido: result.hiEstablecido,
-            totalHoyos: result.totalHoyosAcumulados,
+            hi: result.currentHI, lowHI: result.lowHI,
+            hiEstablecido: result.hiEstablecido, totalHoyos: result.totalHoyosAcumulados,
           };
         } catch(e) {
           hiMap[nombre] = { hi: null, lowHI: null, hiEstablecido: false, totalHoyos: 0 };
         }
       });
       setWhsHIMap(hiMap);
+
+      // RIC map — calcular para todos los jugadores del directorio (usar `dir` si ya cargó)
+      // Lo calculamos de forma diferida cuando tengamos `dir` disponible (re-ejecuta cuando dir cambie)
     }).catch(() => {});
   }, []);
+
+  // Calcular RIC admin cuando tengamos dir + historial
+  useEffect(() => {
+    if (dir.length === 0) return;
+    Promise.all([get(clubRef("historial")), get(clubRef("torneos"))]).then(([snap, tornSnap]) => {
+      const rondas = snap.exists() ? Object.values(snap.val()) : [];
+      const torneos = tornSnap.exists()
+        ? Object.entries(tornSnap.val()).filter(([,v]) => v.status==="finalizado").map(([k,v]) => ({ ...v, id:k }))
+        : [];
+      try {
+        const crudos = dir.map(j => calcRIC(j, rondas, torneos, dir));
+        const normalizados = normalizarRICs(crudos);
+        const mapa = {};
+        normalizados.forEach(r => { mapa[r.jugadorId] = r; });
+        setRicMapAdmin(mapa);
+      } catch(e) {}
+    }).catch(() => {});
+  }, [dir]);
 
   // Check localStorage for saved ronda
   useEffect(() => {
@@ -9903,6 +10649,22 @@ function AdminApp({ onExit, torneoConfig = null }) {
                         )}
                       </div>
                     )}
+                    {ricMapAdmin[p.id] && (() => {
+                      const rp = ricMapAdmin[p.id];
+                      const confColor = rp.confiabilidad==="alta"?"#4CAF50":rp.confiabilidad==="media"?D.gold:D.textSub;
+                      return (
+                        <div style={{ display:"flex", alignItems:"center", gap:4 }}>
+                          <div style={{ width:1, height:10, background:D.border }} />
+                          <div style={{ fontSize:11, color:D.gold, fontWeight:700 }}>
+                            RIC {rp.ric}
+                            <span style={{ fontSize:9, color:confColor, marginLeft:4, fontWeight:400 }}>
+                              {rp.confiabilidad==="alta"?"●":rp.confiabilidad==="media"?"◑":"○"}
+                              {!rp.whcValido && " P"}
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })()}
                   </div>
                 )}
               </div>
@@ -10174,13 +10936,23 @@ function AdminApp({ onExit, torneoConfig = null }) {
                           <span style={{ fontSize:12, color:D.warning||"#F59E0B", flex:1 }}>¿Re-aplicar estos ajustes de HC al directorio actual?</span>
                           <button onClick={() => {
                             const conCambio = r.hcUpdates.filter(u => u.delta !== 0);
+                            // Solo aplicar si el HC actual difiere del 'after' esperado
+                            const pendientes = conCambio.filter(u => {
+                              const jugador = dir.find(p => p.id === u.id);
+                              return jugador && jugador.hc !== u.after;
+                            });
+                            if (pendientes.length === 0) {
+                              alert("ℹ️ Los handicaps de esta ronda ya están aplicados correctamente.");
+                              setConfirmReaplicarHC(null);
+                              return;
+                            }
                             const dirActualizado = dir.map(p => {
-                              const upd = conCambio.find(u => u.id === p.id);
+                              const upd = pendientes.find(u => u.id === p.id);
                               return upd ? { ...p, hc: upd.after } : p;
                             });
                             saveDir(dirActualizado);
                             setConfirmReaplicarHC(null);
-                            alert("✅ Handicaps actualizados correctamente.");
+                            alert(`✅ Handicaps actualizados: ${pendientes.map(u => `${u.name} → HC ${u.after}`).join(", ")}`);
                           }} style={{ padding:"6px 12px", border:`1px solid ${D.warning||"#F59E0B"}`, borderRadius:8, background:"transparent", color:D.warning||"#F59E0B", fontSize:11, fontWeight:700, cursor:"pointer" }}>Aplicar</button>
                           <button onClick={() => setConfirmReaplicarHC(null)} style={{ padding:"6px 12px", border:`1px solid ${D.border}`, borderRadius:8, background:"transparent", color:D.textSub, fontSize:11, cursor:"pointer" }}>Cancelar</button>
                         </div>
