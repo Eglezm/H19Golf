@@ -1333,10 +1333,10 @@ function calcRIC(jugador, historial, historialTorneos, todosDirPlayers) {
         t.grupos ? Object.entries(t.grupos).map(([,g]) => ({
           campo: t.campo, nHoles: t.nHoles, fechaTs: t.resumenGlobal?.fechaTs || t.createdAt || 0,
           fecha: t.resumenGlobal?.fecha || "",
-          playerIds: (Array.isArray(g.players)?g.players:Object.values(g.players||{})).map(p=>p.id),
-          playerNames: (Array.isArray(g.players)?g.players:Object.values(g.players||{})).map(p=>p.name),
+          playerIds: (Array.isArray(g.players)?g.players:Object.values(g.players||{})).filter(x=>x!=null&&typeof x==="object").map(p=>p.id),
+          playerNames: (Array.isArray(g.players)?g.players:Object.values(g.players||{})).filter(x=>x!=null&&typeof x==="object").map(p=>p.name),
           scoresPorHoyo: Array.isArray(g.scores)?g.scores:Object.values(g.scores||{}),
-          jugadores: (Array.isArray(g.players)?g.players:Object.values(g.players||{})).map((p,i)=>{
+          jugadores: (Array.isArray(g.players)?g.players:Object.values(g.players||{})).filter(x=>x!=null&&typeof x==="object").map((p,i)=>{
             const sc = Array.isArray(g.scores)?g.scores[i]:Object.values(g.scores||{})[i];
             const row = Array.isArray(sc)?sc:Object.values(sc||{});
             return { name:p.name, bruto: row.reduce((a,b)=>a+(b||0),0) };
@@ -2577,7 +2577,7 @@ function CerrarTorneoPanel({ torneoId, torneo, grupos, allPlayers, ranked, pars,
       let grpOffset = 0;
       for (const [gid, g] of grupos) {
         try {
-          const rawGPs = (Array.isArray(g.players)?g.players:Object.values(g.players||{}));
+          const rawGPs = (Array.isArray(g.players)?g.players:Object.values(g.players||{})).filter(x=>x!=null&&typeof x==="object");
           // Usar los jugadores de allPlayersLocal para preservar opts correctos
           const gPsLocal = allPlayersLocal.slice(grpOffset, grpOffset + rawGPs.length);
           const gScRaw = Array.isArray(g.scores)?g.scores:Object.values(g.scores||{});
@@ -2591,7 +2591,7 @@ function CerrarTorneoPanel({ torneoId, torneo, grupos, allPlayers, ranked, pars,
             marcas: gMarcas, tarjetas: g.tarjetas||null,
           });
           grpOffset += rawGPs.length;
-        } catch(e) { grpOffset += (Array.isArray(g.players)?g.players:Object.values(g.players||{})).length; }
+        } catch(e) { grpOffset += (Array.isArray(g.players)?g.players:Object.values(g.players||{})).filter(x=>x!=null&&typeof x==="object").length; }
       }
 
       if (guardarHC && hcUpdates) {
@@ -2816,7 +2816,7 @@ function TorneoSpectator({ torneoId, appStyle, isAdmin = false, canClose = false
   const marcasMoneyMap = {};
   const tarjetasMoneyMap = {};
   grupos.forEach(([gid, g]) => {
-    const gPlayers = (Array.isArray(g.players) ? g.players : Object.values(g.players||{})).map(p=>({...p, opts: p.opts || {score:true,marcas:true,tarjetas:true}}));
+    const gPlayers = (Array.isArray(g.players) ? g.players : Object.values(g.players||{})).filter(x => x != null && typeof x === "object").map(p=>({...p, hc: p.hc ?? 0, opts: p.opts || {score:true,marcas:true,tarjetas:true}}));
     const gMarcas = g.marcas ? (Array.isArray(g.marcas) ? g.marcas : Object.values(g.marcas)).map(h=>h?({...h,multi:Array.isArray(h.multi)?h.multi:Object.values(h.multi||{})}):h) : null;
     const gTarjetas = normalizeTarjetas(g.tarjetas);
     if (gMarcas && gPlayers.length > 0) {
@@ -2874,7 +2874,7 @@ function TorneoSpectator({ torneoId, appStyle, isAdmin = false, canClose = false
     // Recolectar todos los jugadores con anaconda (de cualquier grupo)
     const anacondas = [];
     grupos.forEach(([gid, g]) => {
-      const gPlayersRaw = Array.isArray(g.players) ? g.players : Object.values(g.players||{});
+      const gPlayersRaw = (Array.isArray(g.players) ? g.players : Object.values(g.players||{})).filter(x => x != null && typeof x === "object");
       const gTarjetas = normalizeTarjetas(g.tarjetas);
       const owner = gTarjetas.anaconda;
       if (owner === null || owner === undefined) return;
@@ -2900,7 +2900,7 @@ function TorneoSpectator({ torneoId, appStyle, isAdmin = false, canClose = false
   const rankedWithMoney = ranked.map((p) => {
     const scoreM = moneyGlobal[allPlayers.findIndex(ap => ap.grupoId===p.grupoId && ap.id===p.id)] || 0;
     const grupoData = torneo.grupos?.[p.grupoId];
-    const gPlayers = grupoData ? (Array.isArray(grupoData.players) ? grupoData.players : Object.values(grupoData.players||{})) : [];
+    const gPlayers = grupoData ? (Array.isArray(grupoData.players) ? grupoData.players : Object.values(grupoData.players||{})).filter(x => x != null && typeof x === "object") : [];
     const piInGrupo = gPlayers.findIndex(gp => gp.id === p.id);
     const marcasM = marcasMoneyMap[`${p.grupoId}-${piInGrupo}`] || 0;
     const tarjetasLocalesM = tarjetasMoneyMap[`${p.grupoId}-${piInGrupo}`] || 0;
