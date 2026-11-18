@@ -2577,12 +2577,15 @@ function CerrarTorneoPanel({ torneoId, torneo, grupos, allPlayers, ranked, pars,
       let grpOffset = 0;
       for (const [gid, g] of grupos) {
         try {
-          const rawGPs = (Array.isArray(g.players)?g.players:Object.values(g.players||{})).filter(x=>x!=null&&typeof x==="object");
+          const rawGPsAll = (Array.isArray(g.players)?g.players:Object.values(g.players||{}));
+          const rawGPs = rawGPsAll.filter(x=>x!=null&&typeof x==="object");
           // Usar los jugadores de allPlayersLocal para preservar opts correctos
           const gPsLocal = allPlayersLocal.slice(grpOffset, grpOffset + rawGPs.length);
           const gScRaw = Array.isArray(g.scores)?g.scores:Object.values(g.scores||{});
           const gMarcas = g.marcas?(Array.isArray(g.marcas)?g.marcas:Object.values(g.marcas)).map(h=>h?({...h,multi:Array.isArray(h.multi)?h.multi:Object.values(h.multi||{})}):h):null;
-          const gFullScores = gPsLocal.map((p,pi)=>{ const r=Array.isArray(gScRaw[pi])?gScRaw[pi]:Object.values(gScRaw[pi]||{}); return pars.map((par,h)=>{const v=r[h];return(v===null||v===undefined)?par:v;}); });
+          // CRÍTICO: usar índice original de Firebase para scores (antes de filtrar nulls)
+          const rawGPsOrigIdx = rawGPsAll.map((p,i) => (p!=null&&typeof p==="object") ? i : -1).filter(i=>i>=0);
+          const gFullScores = gPsLocal.map((_,li)=>{ const origIdx = rawGPsOrigIdx[li]; const r=Array.isArray(gScRaw[origIdx])?gScRaw[origIdx]:Object.values(gScRaw[origIdx]||{}); return pars.map((par,h)=>{const v=r[h];return(v===null||v===undefined)?par:v;}); });
           const ganRes = calcMoney(gPsLocal, gFullScores, torneo.apuesta||50);
           await set(ref(db, `torneos/${torneoId}/grupos/${gid}/resumenFinal`), {
             ganador: ganRes.fi.map(i=>gPsLocal[i].name).join(" · "),
@@ -2771,20 +2774,23 @@ function TorneoSpectator({ torneoId, appStyle, isAdmin = false, canClose = false
   const allPlayers = grupos.flatMap(([gid, g]) => {
     if (!g || !g.players) return [];
     const gPlayersRaw = Array.isArray(g.players) ? g.players : Object.values(g.players||{});
-    // Filtrar entradas null/undefined que pueden quedar en Firebase cuando se edita el grupo
-    const gPlayers = gPlayersRaw.filter(p => p != null && typeof p === "object");
-    if (gPlayers.length === 0) return [];
     const gScoresRaw = Array.isArray(g.scores) ? g.scores : Object.values(g.scores||{});
     const grupoConfig = torneo.gruposConfig
       ? (Array.isArray(torneo.gruposConfig) ? torneo.gruposConfig : Object.values(torneo.gruposConfig)).find(gc => gc.id === gid)
       : null;
     const hoyoSalida = g.hoyoSalida || grupoConfig?.hoyoSalida || 1;
-    return gPlayers.map((p, pi) => {
-      const rowRaw = gScoresRaw[pi];
-      const row = toArr(rowRaw);
-      const scores = Array(nHolesSafe).fill(null).map((_, h) => row[h] ?? null);
-      return { ...p, hc: p.hc ?? 0, grupoId:gid, grupoNombre: g.nombre || `Grupo ${gid.slice(-3)}`, scores, marcas: g.marcas, tarjetas: g.tarjetas, grupoStatus: g.status, hoyoSalida };
-    });
+    // CRÍTICO: mantener índice original para que scores[i] corresponda a players[i]
+    // No filtrar antes de mapear — filtrar después preservando el índice correcto de scores
+    return gPlayersRaw
+      .map((p, pi) => {
+        // Saltar entradas null/undefined que pueden quedar en Firebase cuando se edita el grupo
+        if (p == null || typeof p !== "object") return null;
+        const rowRaw = gScoresRaw[pi]; // índice original = correcto
+        const row = toArr(rowRaw);
+        const scores = Array(nHolesSafe).fill(null).map((_, h) => row[h] ?? null);
+        return { ...p, hc: p.hc ?? 0, grupoId:gid, grupoNombre: g.nombre || `Grupo ${gid.slice(-3)}`, scores, marcas: g.marcas, tarjetas: g.tarjetas, grupoStatus: g.status, hoyoSalida };
+      })
+      .filter(p => p != null);
   });
 
   const fmtVs = (v) => v === null ? "-" : v === 0 ? "E" : v > 0 ? `+${v}` : `${v}`;
