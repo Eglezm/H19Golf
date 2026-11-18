@@ -471,6 +471,9 @@ function calcMarcasPts(players, marcas) {
 }
 
 function calcMarcasResumen(players, marcas) {
+  // Protección: filtrar nulls — Firebase puede dejar huecos en arrays cuando se editan grupos
+  const safeP = (Array.isArray(players) ? players : Object.values(players||{}))
+    .map(p => p != null && typeof p === "object" ? p : null);
   const playsMarcas = (p) => p ? (p.opts ? p.opts.marcas !== false : true) : false;
   const eventos = [];
   const marcasArr = Array.isArray(marcas) ? marcas : Object.values(marcas||{});
@@ -478,12 +481,12 @@ function calcMarcasResumen(players, marcas) {
     if (!h) return;
     const multi = Array.isArray(h.multi) ? h.multi : Object.values(h.multi||{});
     MARCAS_MULTI.forEach(m => {
-      players.forEach((p, pi) => {
-        if (multi[pi]?.[m.key] && playsMarcas(p)) eventos.push({ hole:hi+1, label:m.label, playerName:p.name });
+      safeP.forEach((p, pi) => {
+        if (p && multi[pi]?.[m.key] && playsMarcas(p)) eventos.push({ hole:hi+1, label:m.label, playerName:p.name });
       });
     });
-    if (h.oyes !== null && h.oyes !== undefined && playsMarcas(players[h.oyes])) eventos.push({ hole:hi+1, label:"⛳ O'Yes", playerName:players[h.oyes]?.name||"—" });
-    if (h.regulation !== null && h.regulation !== undefined && playsMarcas(players[h.regulation])) eventos.push({ hole:hi+1, label:"✅ Regulation", playerName:players[h.regulation]?.name||"—" });
+    if (h.oyes !== null && h.oyes !== undefined && playsMarcas(safeP[h.oyes])) eventos.push({ hole:hi+1, label:"⛳ O'Yes", playerName:safeP[h.oyes]?.name||"—" });
+    if (h.regulation !== null && h.regulation !== undefined && playsMarcas(safeP[h.regulation])) eventos.push({ hole:hi+1, label:"✅ Regulation", playerName:safeP[h.regulation]?.name||"—" });
   });
   return eventos.sort((a,b) => a.hole - b.hole);
 }
