@@ -597,6 +597,7 @@ function calcHC(players, scores, si = [], nHoles = 18) {
   let ganadorHC0 = false;
   ganadores.forEach(wi => {
     const w = safeP[wi];
+    if (!w) return; // índice fuera de rango — ignorar
     if ((w.hc ?? 0) === 0) {
       ganadorHC0 = true;
     } else {
@@ -2465,8 +2466,11 @@ function CerrarTorneoPanel({ torneoId, torneo, grupos, allPlayers, ranked, pars,
 
     const r = calcMoney(playersGlobal, scoresGlobal, torneo.apuesta||50, 0, torneo.nHoles||18);
     // Solo contar jugadores que participan en score para la regla 10+
-    const playsScoreCount = playersGlobal.filter(p => p.opts?.score !== false).length;
-    const siParaHC = (playsScoreCount >= 10 && r.fi.length === 1) ? r.si : [];
+    const conScoreIdxGlobal = playersGlobal.map((p,i) => p.opts?.score !== false ? i : -1).filter(i=>i>=0);
+    const playsScoreCount = conScoreIdxGlobal.length;
+    // CRÍTICO: remapear índices si (del array completo) al subconjunto filtrado
+    const remapSi = (siArr) => siArr.map(origIdx => conScoreIdxGlobal.indexOf(origIdx)).filter(i=>i>=0);
+    const siParaHC = (playsScoreCount >= 10 && r.fi.length === 1) ? remapSi(r.si) : [];
     // Solo calcular HC para jugadores con score
     const hc = calcHC(playersGlobal.filter(p => p.opts?.score !== false),
                       scoresGlobal.filter((_,i) => playersGlobal[i].opts?.score !== false),
@@ -10426,8 +10430,11 @@ function AdminApp({ onExit, torneoConfig = null }) {
     const castigosFinales = getCastigos();
     const extraPotAbandonos = castigosFinales.filter(c=>c.conCastigo).reduce((a,c)=>a+c.scorePago,0);
     const r = calcMoney(players, fullScores, apuesta, extraPotAbandonos, nHoles);
-    const playsScoreCount = players.filter(p => p.opts ? p.opts.score !== false : true).length;
-    const siParaHC = (playsScoreCount >= 10 && r.fi.length === 1) ? r.si : [];
+    // CRÍTICO: remapear índices si (del array completo) al subconjunto filtrado por score
+    const conScoreIdxLocal = players.map((p,i) => (p.opts ? p.opts.score !== false : true) ? i : -1).filter(i=>i>=0);
+    const playsScoreCount = conScoreIdxLocal.length;
+    const remapSiLocal = (siArr) => siArr.map(origIdx => conScoreIdxLocal.indexOf(origIdx)).filter(i=>i>=0);
+    const siParaHC = (playsScoreCount >= 10 && r.fi.length === 1) ? remapSiLocal(r.si) : [];
     // Solo calcular HC para jugadores que apuestan (score !== false)
     const playersParaHC = players.filter(p => p.opts?.score !== false);
     const scoresParaHC = fullScores.filter((_, i) => players[i].opts?.score !== false);
