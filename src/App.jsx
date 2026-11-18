@@ -2677,22 +2677,36 @@ function CerrarTorneoPanel({ torneoId, torneo, grupos, allPlayers, ranked, pars,
 // ─── TORNEO: SPECTATOR ────────────────────────────────
 // ─── ERROR BOUNDARY ────────────────────────────────
 class ErrorBoundary extends React.Component {
-  constructor(props) { super(props); this.state = { error: null }; }
+  constructor(props) { super(props); this.state = { error: null, info: null }; }
   static getDerivedStateFromError(e) { return { error: e }; }
-  componentDidCatch(e) { console.error("ErrorBoundary:", e); }
+  componentDidCatch(e, info) { console.error("ErrorBoundary:", e, info); this.setState({ info }); }
   render() {
-    if (this.state.error) return (
-      <div style={{ padding:24, textAlign:"center" }}>
-        <div style={{ fontSize:28, marginBottom:8 }}>⚠️</div>
-        <div style={{ color:"#C62828", fontWeight:700, marginBottom:8 }}>Error en la aplicación</div>
-        <div style={{ fontSize:11, color:"#666", background:"#f5f5f5", padding:12, borderRadius:8, textAlign:"left", wordBreak:"break-all", marginBottom:12 }}>
-          {this.state.error.message || String(this.state.error)}
+    if (this.state.error) {
+      const msg = this.state.error.message || String(this.state.error);
+      const stack = this.state.error.stack || "";
+      const compStack = this.state.info?.componentStack || "";
+      const fullText = `ERROR: ${msg}\n\nSTACK:\n${stack}\n\nCOMPONENT STACK:\n${compStack}`;
+      return (
+        <div style={{ padding:20, textAlign:"center" }}>
+          <div style={{ fontSize:28, marginBottom:8 }}>⚠️</div>
+          <div style={{ color:"#C62828", fontWeight:700, marginBottom:8, fontSize:15 }}>Error en la aplicación</div>
+          <div style={{ fontSize:12, color:"#C62828", background:"#fff0f0", padding:10, borderRadius:8, textAlign:"left", wordBreak:"break-all", marginBottom:8, border:"1px solid #ffcccc" }}>
+            {msg}
+          </div>
+          <div style={{ fontSize:10, color:"#555", background:"#f5f5f5", padding:10, borderRadius:8, textAlign:"left", wordBreak:"break-all", marginBottom:12, maxHeight:180, overflowY:"auto", fontFamily:"monospace", whiteSpace:"pre-wrap" }}>
+            {stack.split("\n").slice(0,8).join("\n")}
+          </div>
+          <div style={{ display:"flex", gap:8, justifyContent:"center" }}>
+            <button onClick={() => { try { navigator.clipboard.writeText(fullText); } catch(e){} }} style={{ padding:"8px 14px", background:"#555", color:"#fff", border:"none", borderRadius:8, cursor:"pointer", fontSize:12 }}>
+              📋 Copiar error
+            </button>
+            <button onClick={() => window.location.reload()} style={{ padding:"8px 14px", background:"#1A5C24", color:"#fff", border:"none", borderRadius:8, cursor:"pointer", fontWeight:700, fontSize:12 }}>
+              🔄 Recargar
+            </button>
+          </div>
         </div>
-        <button onClick={() => window.location.reload()} style={{ padding:"10px 20px", background:"#1A5C24", color:"#fff", border:"none", borderRadius:8, cursor:"pointer", fontWeight:700 }}>
-          🔄 Recargar
-        </button>
-      </div>
-    );
+      );
+    }
     return this.props.children;
   }
 }
