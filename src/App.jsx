@@ -2516,7 +2516,8 @@ function CerrarTorneoPanel({ torneoId, torneo, grupos, allPlayers, ranked, pars,
       let offset = 0;
       grupos.forEach(([gid,g]) => {
         // Tomar jugadores desde allPlayersLocal para preservar opts reales
-        const gPlCount = (Array.isArray(g.players)?g.players:Object.values(g.players||{})).length;
+        // CRÍTICO: contar solo jugadores no-null para alinear con allPlayersLocal (que ya tiene nulls filtrados)
+        const gPlCount = (Array.isArray(g.players)?g.players:Object.values(g.players||{})).filter(x=>x!=null&&typeof x==="object").length;
         const gPs = allPlayersLocal.slice(offset, offset + gPlCount);
         const gMarcas = g.marcas?(Array.isArray(g.marcas)?g.marcas:Object.values(g.marcas)).map(h=>h?({...h,multi:Array.isArray(h.multi)?h.multi:Object.values(h.multi||{})}):h):null;
         const gTarjetas = g.tarjetas||null;
