@@ -126,6 +126,7 @@ const CAMPOS = {
   elcristo:  { nombre: "El Cristo Golf & Country Club",      pares: [5,3,4,4,4,4,3,4,5,5,3,4,4,4,5,4,3,4] },
   cuernavaca:{ nombre: "Club de Golf de Cuernavaca",         pares: [4,4,5,4,3,4,3,4,4,4,4,5,4,3,4,3,4,4] },
   xalapa:    { nombre: "Club de Golf Xalapa",                pares: [4,4,5,4,5,3,4,4,3,4,3,4,5,3,4,5,3,4] },
+  cordobes:  { nombre: "Club Campestre Cordobés",            pares: [4,3,5,4,3,5,4,4,4,4,3,5,5,3,4,4,4,4] },
   otro:      { nombre: "Otro campo",                         pares: null },
 };
 
