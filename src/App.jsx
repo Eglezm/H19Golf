@@ -131,7 +131,7 @@ const CAMPOS = {
 
 // Distancia en yardas entre 2 coordenadas GPS (fórmula de Haversine)
 // HC efectivo según número de hoyos (9 hoyos = HC/2 redondeado arriba)
-const hcEf = (hc, nHoles) => nHoles <= 9 ? Math.ceil(hc / 2) : hc;
+const hcEf = (hc, nHoles) => { const h = hc ?? 0; return nHoles <= 9 ? Math.ceil(h / 2) : h; };
 
 function distanciaYardas(lat1, lng1, lat2, lng2) {
   const R = 6371000; // radio de la Tierra en metros
@@ -3141,6 +3141,7 @@ function TorneoSpectator({ torneoId, appStyle, isAdmin = false, canClose = false
               <SLabel>🏌️ {g.nombre || `Grupo ${gid.slice(-3)}`} · Hoyo {(g.hole||0)+1}</SLabel>
               {/* Score por jugador */}
               {gPlayers.map((p, pi) => {
+                if (!p || typeof p !== "object") return null;
                 const sc = gScores[pi] || [];
                 const jugados = toArr(sc).filter(s=>s!==null&&s!==undefined);
                 const bruto = jugados.length > 0 ? jugados.reduce((a,b)=>a+b,0) : null;
@@ -3155,7 +3156,8 @@ function TorneoSpectator({ torneoId, appStyle, isAdmin = false, canClose = false
               })}
               {/* Marcas del grupo */}
               {gMarcas && (() => {
-                const eventos = calcMarcasResumen(gPlayers, gMarcas);
+                const gPlayersClean = gPlayers.filter(p => p != null && typeof p === "object");
+                const eventos = calcMarcasResumen(gPlayersClean, gMarcas);
                 return eventos.length > 0 ? (
                   <div style={{ marginTop:10, paddingTop:10, borderTop:`1px solid ${D.border}` }}>
                     <div style={{ fontSize:10, fontWeight:700, color:D.gold, textTransform:"uppercase", letterSpacing:1, marginBottom:6 }}>⭐ Marcas</div>
