@@ -2450,12 +2450,12 @@ function CerrarTorneoPanel({ torneoId, torneo, grupos, allPlayers, ranked, pars,
 
     // Para calcular HC necesitamos los scores completos
     // Usamos fullScores aproximados (reemplazando null con par)
-    const playersGlobal = allPlayers.map(p => ({
-      ...p, id: p.id || p.name,
+    const playersGlobal = allPlayers.filter(p => p != null).map(p => ({
+      ...p, id: p.id || p.name, hc: p.hc ?? 0,
       opts: p.opts || {score:true,marcas:true,tarjetas:true}
     }));
-    const scoresGlobal = allPlayers.map(p => pars.map((par,h) => {
-      const v = p.scores[h];
+    const scoresGlobal = allPlayers.filter(p => p != null).map(p => pars.map((par,h) => {
+      const v = p.scores?.[h];
       return (v===null||v===undefined) ? par : v;
     }));
 
@@ -2481,12 +2481,12 @@ function CerrarTorneoPanel({ torneoId, torneo, grupos, allPlayers, ranked, pars,
       // ── Construir datos globales de todos los jugadores ──
       // Usamos el prop allPlayers (ya tiene opts correctos de Firebase + scores)
       // y añadimos fullScores (reemplazando null con par) para el cálculo.
-      const allPlayersCalc = allPlayers.map(p => {
+      const allPlayersCalc = allPlayers.filter(p => p != null).map(p => {
         const fullScores = pars.map((par, h) => {
-          const v = p.scores[h];
+          const v = p.scores?.[h];
           return (v === null || v === undefined) ? par : v;
         });
-        return { ...p, fullScores };
+        return { ...p, hc: p.hc ?? 0, fullScores };
       });
       // Alias para compatibilidad con el código que sigue
       const allPlayersLocal = allPlayersCalc;
@@ -2756,7 +2756,10 @@ function TorneoSpectator({ torneoId, appStyle, isAdmin = false, canClose = false
 
   const allPlayers = grupos.flatMap(([gid, g]) => {
     if (!g || !g.players) return [];
-    const gPlayers = Array.isArray(g.players) ? g.players : Object.values(g.players||{});
+    const gPlayersRaw = Array.isArray(g.players) ? g.players : Object.values(g.players||{});
+    // Filtrar entradas null/undefined que pueden quedar en Firebase cuando se edita el grupo
+    const gPlayers = gPlayersRaw.filter(p => p != null && typeof p === "object");
+    if (gPlayers.length === 0) return [];
     const gScoresRaw = Array.isArray(g.scores) ? g.scores : Object.values(g.scores||{});
     const grupoConfig = torneo.gruposConfig
       ? (Array.isArray(torneo.gruposConfig) ? torneo.gruposConfig : Object.values(torneo.gruposConfig)).find(gc => gc.id === gid)
@@ -2766,7 +2769,7 @@ function TorneoSpectator({ torneoId, appStyle, isAdmin = false, canClose = false
       const rowRaw = gScoresRaw[pi];
       const row = toArr(rowRaw);
       const scores = Array(nHolesSafe).fill(null).map((_, h) => row[h] ?? null);
-      return { ...p, grupoId:gid, grupoNombre: g.nombre || `Grupo ${gid.slice(-3)}`, scores, marcas: g.marcas, tarjetas: g.tarjetas, grupoStatus: g.status, hoyoSalida };
+      return { ...p, hc: p.hc ?? 0, grupoId:gid, grupoNombre: g.nombre || `Grupo ${gid.slice(-3)}`, scores, marcas: g.marcas, tarjetas: g.tarjetas, grupoStatus: g.status, hoyoSalida };
     });
   });
 
