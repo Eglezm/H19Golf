@@ -456,7 +456,8 @@ function Pill({ active, danger, onClick, children }) {
 
 function calcMarcasPts(players, marcas) {
   const marcasArr = Array.isArray(marcas) ? marcas : Object.values(marcas||{});
-  return players.map((p, pi) => {
+  const safeP = players.map(p => p != null && typeof p === "object" ? p : {});
+  return safeP.map((p, pi) => {
     let pts = 0;
     marcasArr.forEach(h => {
       if (!h) return;
@@ -488,16 +489,16 @@ function calcMarcasResumen(players, marcas) {
 }
 
 function calcMarcasMoney(players, marcas, marcaVal) {
-  const pts = calcMarcasPts(players, marcas);
-  // Jugador sin apuesta (score:false) tampoco participa en marcas
-  const playsMarcas = players.map(p => {
+  const safeP = players.map(p => p != null && typeof p === "object" ? p : { opts:{score:false,marcas:false} });
+  const pts = calcMarcasPts(safeP, marcas);
+  const playsMarcas = safeP.map(p => {
     if (p.opts?.score === false) return false;
     return p.opts ? p.opts.marcas !== false : true;
   });
-  return players.map((_, i) => {
+  return safeP.map((_, i) => {
     if (!playsMarcas[i]) return 0;
     let b = 0;
-    players.forEach((_, j) => {
+    safeP.forEach((_, j) => {
       if (i !== j && playsMarcas[j]) { b += pts[i]*marcaVal; b -= pts[j]*marcaVal; }
     });
     return b;
@@ -505,29 +506,26 @@ function calcMarcasMoney(players, marcas, marcaVal) {
 }
 
 function calcTarjetasMoney(players, tarjetas, tarjetaVal) {
-  // count: cuántas tarjetas tiene cada jugador (incluyendo peorscore que puede ser array)
-  // anaconda se excluye aquí porque paga a todo el torneo (global), no solo al grupo
-  const count = players.map((_, i) => {
+  const safeP = players.map(p => p != null && typeof p === "object" ? p : { opts:{score:false,tarjetas:false} });
+  const count = safeP.map((_, i) => {
     let c = 0;
     TARJETAS.forEach(t => {
-      if (t.key === "anaconda") return; // anaconda paga global, no local
+      if (t.key === "anaconda") return;
       const owner = tarjetas[t.key];
       if (Array.isArray(owner)) {
-        // Si hay empate (peorscore), se divide la tarjeta entre los empatados
         if (owner.includes(i)) c += 1 / owner.length;
       } else if (owner === i) c += 1;
     });
     return c;
   });
-  // Un jugador sin apuesta (score:false) tampoco participa en tarjetas
-  const playsTarjetas = players.map(p => {
+  const playsTarjetas = safeP.map(p => {
     if (p.opts?.score === false) return false;
     return p.opts ? p.opts.tarjetas !== false : true;
   });
-  return players.map((_, i) => {
+  return safeP.map((_, i) => {
     if (!playsTarjetas[i]) return 0;
     let b = 0;
-    players.forEach((_, j) => {
+    safeP.forEach((_, j) => {
       if (i !== j && playsTarjetas[j]) { b -= count[i]*tarjetaVal; b += count[j]*tarjetaVal; }
     });
     return Math.round(b);
@@ -535,12 +533,15 @@ function calcTarjetasMoney(players, tarjetas, tarjetaVal) {
 }
 
 function calcMoney(players, scores, apuesta, extraPot = 0, nHoles = 18) {
-  const playsScore = players.map(p => p.opts ? p.opts.score !== false : true);
-  const idxIn = players.map((_, i) => i).filter(i => playsScore[i]);
+  // Protección: filtrar nulls manteniendo índices sincronizados
+  const safeP = players.map(p => p != null && typeof p === "object" ? p : { hc:0, opts:{score:false,marcas:false,tarjetas:false} });
+  const safeSc = scores.map((s,i) => Array.isArray(s) ? s : []);
+  const playsScore = safeP.map(p => p.opts ? p.opts.score !== false : true);
+  const idxIn = safeP.map((_, i) => i).filter(i => playsScore[i]);
   const n = idxIn.length;
   // HC proporcional: 9 hoyos = HC/2, 18 hoyos = HC completo
-  const hcEfectivo = (p) => nHoles <= 9 ? Math.ceil(p.hc / 2) : p.hc;
-  const nets = players.map((p, i) => scores[i].reduce((a, b) => a+b, 0) - hcEfectivo(p));
+  const hcEfectivo = (p) => nHoles <= 9 ? Math.ceil((p.hc ?? 0) / 2) : (p.hc ?? 0);
+  const nets = safeP.map((p, i) => (safeSc[i].length ? safeSc[i].reduce((a, b) => a+(b||0), 0) : 0) - hcEfectivo(p));
   if (n < 2) {
     return { nets, fi:[], si:[], pot:0, money: players.map(() => 0) };
   }
@@ -554,7 +555,7 @@ function calcMoney(players, scores, apuesta, extraPot = 0, nHoles = 18) {
   const loserIdxs = idxIn.filter(i => nets[i] !== f);
   // Perdedores activos + pozo extra de abandonados
   const totalFromLosers = apuesta * loserIdxs.length + extraPot;
-  return { nets, fi, si, pot, money: players.map((_, i) => {
+  return { nets, fi, si, pot, money: safeP.map((_, i) => {
     if (!playsScore[i]) return 0;
     if (n <= 9) {
       if (fi.includes(i)) return Math.round(totalFromLosers / fi.length);
@@ -572,13 +573,16 @@ function calcMoney(players, scores, apuesta, extraPot = 0, nHoles = 18) {
 }
 
 function calcHC(players, scores, si = [], nHoles = 18) {
-  const hcEfectivo = (p) => nHoles <= 9 ? Math.ceil(p.hc / 2) : p.hc;
-  const nets = players.map((p, i) => scores[i].reduce((a, b) => a+b, 0) - hcEfectivo(p));
+  // Protección: reemplazar nulls por objetos vacíos
+  const safeP = players.map(p => p != null && typeof p === "object" ? p : { hc:0, id:`_null_${Math.random()}`, name:"" });
+  const safeSc = scores.map(s => Array.isArray(s) ? s : []);
+  const hcEfectivo = (p) => nHoles <= 9 ? Math.ceil((p?.hc ?? 0) / 2) : (p?.hc ?? 0);
+  const nets = safeP.map((p, i) => (safeSc[i].length ? safeSc[i].reduce((a, b) => a+(b||0), 0) : 0) - hcEfectivo(p));
   const fnet = Math.min(...nets);
   const fi = nets.reduce((a, v, i) => v===fnet ? [...a,i] : a, []);
   const ganadores = [...new Set([...fi, ...si])];
   const deltas = {};
-  players.forEach(p => { deltas[p.id] = 0; });
+  safeP.forEach(p => { deltas[p.id] = 0; });
 
   // Escala 18h siempre:
   // HC 0 gana  → no baja, los demás suben +1 (18h) o +2 (9h), tope 10
@@ -589,31 +593,28 @@ function calcHC(players, scores, si = [], nHoles = 18) {
 
   let ganadorHC0 = false;
   ganadores.forEach(wi => {
-    const w = players[wi];
-    if (w.hc === 0) {
+    const w = safeP[wi];
+    if ((w.hc ?? 0) === 0) {
       ganadorHC0 = true;
-      // HC 0 no cambia
     } else {
-      // HC 1+ baja deltaGanadorBaja
       deltas[w.id] -= deltaGanadorBaja;
     }
   });
 
   if (ganadorHC0) {
-    // Todos los NO ganadores suben (si están bajo el tope)
-    players.forEach((p, i) => {
-      if (!ganadores.includes(i) && p.hc < hcTope) {
-        const nuevoHC = p.hc + deltaPerderSube;
-        deltas[p.id] = Math.min(nuevoHC, hcTope) - p.hc;
+    safeP.forEach((p, i) => {
+      if (!ganadores.includes(i) && (p.hc ?? 0) < hcTope) {
+        const nuevoHC = (p.hc ?? 0) + deltaPerderSube;
+        deltas[p.id] = Math.min(nuevoHC, hcTope) - (p.hc ?? 0);
       }
     });
   }
 
-  return players.map(p => ({
+  return safeP.map(p => ({
     ...p,
-    before: p.hc,
-    delta: deltas[p.id],
-    after: Math.max(0, p.hc + deltas[p.id]),
+    before: p.hc ?? 0,
+    delta: deltas[p.id] ?? 0,
+    after: Math.max(0, (p.hc ?? 0) + (deltas[p.id] ?? 0)),
   }));
 }
 
